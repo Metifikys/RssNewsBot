@@ -1,0 +1,78 @@
+plugins {
+    id 'org.jetbrains.kotlin.jvm' version '2.0.21'
+    id 'org.jetbrains.kotlin.plugin.serialization' version '2.0.21'
+    id 'com.gradleup.shadow' version '8.3.6'
+    id 'jacoco'
+}
+
+group = 'metifikys'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation 'org.jetbrains.kotlin:kotlin-test'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    testImplementation 'io.mockk:mockk:1.13.10'
+
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.jsoup:jsoup:1.18.1'
+
+    implementation 'com.rometools:rome:1.15.0'
+    implementation 'com.rometools:rome-modules:1.15.0'
+
+    implementation 'org.xerial:sqlite-jdbc:3.41.2.2'
+    implementation 'org.jetbrains.exposed:exposed-core:0.56.0'
+    implementation 'org.jetbrains.exposed:exposed-dao:0.56.0'
+    implementation 'org.jetbrains.exposed:exposed-jdbc:0.56.0'
+    implementation 'org.jetbrains.exposed:exposed-java-time:0.56.0'
+
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3'
+
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.16.1'
+    implementation 'com.fasterxml.jackson.module:jackson-module-kotlin:2.16.1'
+
+    // Structured logging — replaces println/e.printStackTrace() with proper log management
+    implementation 'ch.qos.logback:logback-classic:1.5.6'
+    implementation 'io.github.oshai:kotlin-logging-jvm:7.0.3'
+}
+
+// Dependency locking — prevents silent supply-chain attacks via transitive dependency changes.
+// Run `./gradlew dependencies --write-locks` to generate / refresh the lock file.
+dependencyLocking {
+    lockAllConfigurations()
+}
+
+kotlin {
+    jvmToolchain(17)
+}
+
+test {
+    useJUnitPlatform()
+    finalizedBy jacocoTestReport
+}
+
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks {
+    shadowJar {
+        archiveClassifier.set('')
+        manifest {
+            attributes['Main-Class'] = 'metifikys.MainKt'
+        }
+    }
+}

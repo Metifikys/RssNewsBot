@@ -1,0 +1,183 @@
+telegram:
+  # Set via env var TELEGRAM_BOT_TOKEN or replace the placeholder below
+  botToken: "YOUR_TELEGRAM_BOT_TOKEN"
+
+openai:
+  # Set via env var OPENAI_API_KEY or replace the placeholder below
+  apiKey: "YOUR_OPENAI_API_KEY"
+  model: "gpt-5-mini-2025-08-07"
+  batchModel: "gpt-5-mini-2025-08-07"
+
+# Optional OpenRouter provider.
+# Generic sync summarize/render paths switch to OpenRouter when this block is present.
+# Step 1 `eventExtractor` also sends every 2nd request here, so you can A/B test a free model.
+# The Batch API always stays on the `openai:` block above — OpenRouter has no compatible Batch API.
+openrouter:
+  # Set via env var OPENROUTER_API_KEY or replace the placeholder below
+  apiKey: "YOUR_OPENROUTER_API_KEY"
+  model: "provider/your-free-model"      # prefixed model name, e.g. some-provider/free-tier-model
+  baseUrl: "https://openrouter.ai/api/v1" # optional; this is the default
+  httpReferer: "https://github.com/your/repo"  # optional attribution header
+  xTitle: "RssNewsBot"                        # optional attribution header
+
+# Optional Anthropic provider.
+# When this block is present, categories may opt into Anthropic for any LLM use case
+# (extract / render / batch / summarize / batchFallback) via per-category `llm.*` overrides,
+# and feeds may declare `summarize: anthropic`. Unlike OpenRouter, Anthropic exposes a native
+# Message Batches API, so `batch` and `batchFallback` overrides BOTH support provider: anthropic.
+anthropic:
+  # Set via env var ANTHROPIC_API_KEY or replace the placeholder below
+  apiKey: "YOUR_ANTHROPIC_API_KEY"
+  model: "claude-sonnet-4-6"               # default sync model
+  batchModel: "claude-sonnet-4-6"          # default batch model (defaults to `model` when omitted)
+  baseUrl: "https://api.anthropic.com/v1"  # optional; this is the default
+  anthropicVersion: "2023-06-01"           # optional; required Anthropic-Version header
+  maxTokens: 4096                          # optional; per-request output cap
+
+database:
+  path: "news.db"
+
+scheduler:
+  intervalMinutes: 10
+
+# Optional: per-cycle processing knobs.
+processing:
+  staleTimeoutHours: 3
+  minArticles: 15
+  # Three-tier batch routing thresholds (per category, driven by pending batch count):
+  #   pending <  primaryMaxPending                          → primary batch (`llm.batch`)
+  #   primaryMaxPending ≤ pending < primary + secondary     → `llm.batchFallback` (sync alt LLM, if configured)
+  #   pending ≥ primary + secondary                          → sync render fallback (`llm.render`)
+  # When a category has no `batchFallback`, the secondary band collapses — sync render fires
+  # at primaryMaxPending. Defaults below match the historical hardcoded behaviour.
+  primaryMaxPending: 2     # primary batch capacity before promoting to fallback
+  secondaryMaxPending: 1   # additional capacity on the fallback before sync render
+
+# Optional: include previous digest summaries as context to avoid repeating
+# already-covered news. Summaries are stored in the database and injected
+# into the LLM prompt so it can focus on genuinely new developments.
+summaryHistory:
+  maxCount: 3          # number of previous digests to include (default: 3)
+  retentionDays: 14    # days to keep old summaries in DB (default: 14)
+
+categories:
+  tech:
+    emoji: "💻"
+    channelId: "@my_tech_channel"    # public channel username or "-1001234567890" for private
+    feeds:
+      - https://hnrss.org/newest?points=120
+      - https://techcrunch.com/feed/
+  gaming:
+    emoji: "🎮"
+    channelId: "@my_gaming_channel"
+    # When true, each bullet is sent as a Telegram photo+caption (single post) if the
+    # first linked article has an image extracted from RSS. Defaults to false.
+    enableImages: true
+    feeds:
+      - https://kotaku.com/feed
+    # Optional: per-use-case provider+model overrides. The provider name points at one of
+    # the top-level blocks (`openai:` / `openrouter:`) which carries the credentials and
+    # baseUrl; the override only swaps the model and (for sync paths) the endpoint.
+    # Any key may be omitted — omitted use cases fall back to the global defaults:
+    #   extract → openai.model + openrouter.model alternating every 2nd request
+    #   extractAlternate → optional explicit "B" side of the Step 1 A/B pair. Requires `extract`
+    #     to be set. When both are present, every 2nd extract request is routed here instead of
+    #     the auto-derived openrouter default. When only `extract` is set, alternation is
+    #     suppressed (legacy behaviour). Setting this without `extract` is rejected at load time.
+    #   render  → openrouter.model when openrouter: is set, else openai.model
+    #   batch   → openai.batchModel (provider must be 'openai' for now — OpenRouter has no Batch API)
+    #   summarize → per-feed `summarize:` provider with that provider's global model
+    #   batchFallback → optional sync override; when set AND one batch is already pending for this
+    #     category, the next cycle bypasses batch submission and uses this LLM synchronously.
+    #     Layered on top of the existing >=2 backpressure logic; any provider is valid here.
+    #
+    # `batch` flag on extract / extractAlternate:
+    #   Adding `batch: true` to an `extract` or `extractAlternate` entry opts Step 1 into the
+    #   provider's Batch API (50 % cheaper, async). The cycle loop is NOT blocked — submit returns
+    #   immediately and Step 2 fires later via callback once the batch result arrives. Other
+    #   categories in the same cycle proceed normally.
+    #   - Requires provider: openai or provider: anthropic (OpenRouter has no Batch API).
+    #   - Mixed mode is valid: `extract.batch=true` + `extractAlternate.batch=false` alternates
+    #     between cheap async cycles and fast sync cycles. Note: two distinct events can land in
+    #     quick succession when a previous async batch completes while a sync cycle is running.
+    #   - `batch: true` on render / batch / summarize / batchFallback is silently ignored.
+    # Example:
+    llm:
+      extract:          { provider: openai,     model: gpt-5-mini-2025-08-07 }
+      extractAlternate: { provider: anthropic,  model: claude-haiku-4-5-20251001, batch: true }
+      render:           { provider: openrouter, model: x-ai/grok-4 }
+      batch:            { provider: openai,     model: gpt-5-mini-2025-08-07 }
+      summarize:        { provider: openai,     model: gpt-5-mini-2025-08-07 }
+      batchFallback:    { provider: anthropic,  model: claude-haiku-4-5-20251001 }
+    # Optional: two-step dedup pipeline. Step 1 (sync JSON-mode) extracts structured events
+    # and shortlists only new/updated ones; Step 2 (Batch API) renders only the shortlist.
+    # Remove this block to fall back to the legacy single-step flow.
+    dedup:
+      # Path to the YAML file with extract + render prompts (relative to the working directory).
+      # Copy prompts/games-dedup.example.yaml to prompts/games-dedup.yaml and customise it.
+      promptFile: "prompts/games-dedup.yaml"
+      # How many days of already-covered events to inject as Step 1 context.
+      contextDays: 7
+      # Maximum number of covered-event rows embedded in Step 1. Keep under ~150 for cost.
+      maxContextEvents: 200
+      # Optional: editorial-quality gate applied AFTER Step 1 and BEFORE Step 2 render.
+      # See telegram_posting_improvement_plan.md §4 for rationale. Leave ranker.enabled=false
+      # to keep the legacy behaviour (Step 1's raw shortlist is passed straight to render).
+      digest:
+        ranker:
+          enabled: true
+          newsworthinessWeight: 0.6     # digestFit weight is (1 - this)
+        minStrongItems: 4               # skip publish if fewer strong items survive
+        maxDigestItems: 6               # hard cap on final shortlist
+        maxWaitHours: 4                 # if no digest for this long, relax minStrongItems
+        minItemsOnForcePublish: 2       # minimum used after maxWaitHours has elapsed
+        maxPerFranchise: 2              # diversity cap per franchise
+        maxPerSubject: 1                # diversity cap per game/subject
+        minDigestFit: 3                 # drop items below this digestFit score
+        newsworthinessOverride: 8       # …unless their newsworthiness >= this
+        meaningfulUpdateCooldownMinutes: 90  # suppress near-immediate follow-ups unless they are truly major
+      # Optional: inline prompt overrides — any non-null field takes priority over the file.
+      # prompts:
+      #   extractSystem: "..."
+      #   extractUser: "..."
+      #   renderSystem: "..."
+      #   renderUser: "..."
+  politics:
+    emoji: "🏛️"
+    channelId: "@my_politics_channel"
+    # Optional: system prompt for per-article LLM summarization (used by feeds with `summarize:` set).
+    # Falls back to a generic built-in default ("Summarize in 3-5 sentences...") when absent.
+    # summarizePrompt: "Stisle resume na ukrainskiy v 3-5 rechen, zberihai tsifry ta nazvy."
+    #
+    # Optional: log-only embedding-based dedup detector. Embeds each new article via
+    # OpenAI text-embedding-3-small and brute-force-scans recent vectors in the same
+    # category. Above-threshold matches surface in the log as `[SemanticDedup][HIT]`
+    # lines — the detector NEVER mutates article state, NEVER filters the digest. Use
+    # it to collect real similarity stats on your corpus before deciding the right
+    # threshold. Off by default; opt in per category. Cost is ~$0.02/1M tokens.
+    semanticDedup:
+      enabled: true
+      model: "text-embedding-3-small"   # OpenAI embeddings model id
+      windowDays: 14                    # lookback window for candidate neighbours
+      threshold: 0.92                   # cosine ≥ this → [HIT] marker in the log
+      topK: 5                           # log this many nearest neighbours per article
+      maxRecent: 2000                   # cap on recent vectors loaded per cycle per category
+      # Optional hard-filter: when set, a new article whose top-1 neighbour is already in
+      # status PROCESSED (i.e. was sent to Telegram in a previous digest) AND whose cosine
+      # meets `hardThreshold` is marked DUPLICATE (with `duplicate_of` pointing at the
+      # canonical row) and skipped before the LLM ever sees it. Matches against UNPROCESSED
+      # or PROCESSING neighbours are NOT rejected — the Step 1 event extractor still owns
+      # within-batch dedup of unsent articles. Leave null to keep detector log-only.
+      # Must be >= `threshold`. Suggested production values from the stat-collection phase:
+      #   gaming / tech: 0.85
+      #   politics:      0.78
+      hardThreshold: 0.85
+    feeds:
+      # Plain-string form: just the URL, no extras.
+      - https://www.pravda.com.ua/rss/
+      # Object form: enable per-article LLM summary using the OpenRouter provider.
+      # The summary is stored on the `articles.summary` column and used in place of the
+      # raw RSS description for downstream digest prompts.
+      # - url: https://example.com/feed
+      #   fetchFullContent: true       # optional: fetch the full article body before summarizing
+      #   summarize: openrouter         # one of: openai | openrouter
