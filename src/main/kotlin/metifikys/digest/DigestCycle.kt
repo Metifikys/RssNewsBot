@@ -80,6 +80,7 @@ class DigestCycle(
             db.deleteOlderThan(1500)
             db.deleteOldSummaries(config.summaryHistory.retentionDays)
             db.pruneOldCoveredEvents(config.summaryHistory.retentionDays)
+            db.pruneOldEventEmbeddings(config.summaryHistory.retentionDays)
             db.deleteOldRejectedEvents()
         } catch (e: Exception) {
             errorLog.recordError(null, "[Cycle]", e)

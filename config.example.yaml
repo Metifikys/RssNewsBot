@@ -162,6 +162,14 @@ categories:
       threshold: 0.92                   # cosine ≥ this → [HIT] marker in the log
       topK: 5                           # log this many nearest neighbours per article
       maxRecent: 2000                   # cap on recent vectors loaded per cycle per category
+      # Optional log-only EVENT-level pass (Layer 3.5). Runs AFTER Step 1 event extraction:
+      # embeds each shortlisted event (subject + coreFact) by `event_key` and brute-force
+      # cosine-scans recently-covered events in the same category. Surfaces
+      # `[EventSemanticDedup][HIT]` lines when cosine >= eventThreshold. Analyze-only — it
+      # NEVER drops events or filters the digest (calibrate eventThreshold first, like the
+      # article-level pass above). Reuses model/windowDays/topK/maxRecent. Off by default.
+      eventEnabled: true
+      eventThreshold: 0.92              # cosine ≥ this → [EventSemanticDedup][HIT] in the log
       # Optional hard-filter: when set, a new article whose top-1 neighbour is already in
       # status PROCESSED (i.e. was sent to Telegram in a previous digest) AND whose cosine
       # meets `hardThreshold` is marked DUPLICATE (with `duplicate_of` pointing at the

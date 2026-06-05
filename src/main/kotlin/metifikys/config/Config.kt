@@ -336,6 +336,17 @@ data class SemanticDedupConfig(
     /** Cap on recent vectors loaded into memory per category per cycle (bounds the brute-force scan). */
     val maxRecent: Int = 2000,
     /**
+     * Master switch for the *event-level* embedding analyzer (Layer 3.5). When true, after
+     * Step 1 (event extraction) produces a shortlist, each shortlisted event is embedded by
+     * `event_key` and brute-force cosine-scanned against recently-covered events in the same
+     * category. Log-only: surfaces `[EventSemanticDedup][HIT]` lines, NEVER removes or
+     * marks anything. Independent of [enabled] (the article-level Layer-2 pass). Reuses
+     * [model], [windowDays], [topK], and [maxRecent].
+     */
+    val eventEnabled: Boolean = false,
+    /** Cosine threshold above which an event-level match is logged with the `[HIT]` marker. */
+    val eventThreshold: Double = 0.92,
+    /**
      * Cosine threshold for the *hard* reject. When non-null AND a new article's top-1
      * neighbour is already in status PROCESSED (sent to Telegram) AND their cosine
      * meets this threshold, the new article is marked [metifikys.model.ArticleStatus.DUPLICATE]
@@ -463,6 +474,9 @@ object ConfigLoader {
                 }
                 require(sd.model.isNotBlank()) {
                     "Category '$name' semanticDedup.model must not be blank"
+                }
+                require(sd.eventThreshold in 0.0..1.0) {
+                    "Category '$name' semanticDedup.eventThreshold must be in [0.0, 1.0] (got ${sd.eventThreshold})"
                 }
                 sd.hardThreshold?.let { ht ->
                     require(ht in 0.0..1.0) {

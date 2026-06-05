@@ -115,6 +115,35 @@ object ArticleEmbeddingsTable : Table("article_embeddings") {
     override val primaryKey = PrimaryKey(articleId)
 }
 
+/**
+ * Per-event embedding vectors, one row per distinct `(category, event_key)`. Written by the
+ * log-only event-level analyzer ([metifikys.digest.EventSemanticAnalyzer]) for every event it
+ * sees on a shortlist, and scanned next cycle as the "previously-covered" candidate set.
+ *
+ * Mirrors [ArticleEmbeddingsTable] but keyed by `event_key` instead of an article id, so the
+ * event-level pass operates on Step 1's structured output rather than raw articles. Vector is
+ * little-endian Float32 bytes (`dim * 4`); see [metifikys.digest.VectorMath].
+ */
+object EventEmbeddingsTable : Table("event_embeddings") {
+    val id = integer("id").autoIncrement()
+    val category = varchar("category", 100).index()
+    val eventKey = varchar("event_key", 3000)
+    /** Step 1's short event label, kept so the analyzer can log subject-match flags. */
+    val subject = varchar("subject", 500).default("")
+    /** Step 1's franchise label, kept so the analyzer can log franchise-match flags. */
+    val franchise = varchar("franchise", 200).default("")
+    val model = varchar("model", 100)
+    val dim = integer("dim")
+    val vector = blob("vector")
+    val createdAt = datetime("created_at").index()
+
+    override val primaryKey = PrimaryKey(id)
+
+    init {
+        uniqueIndex("idx_event_embeddings_cat_key", category, eventKey)
+    }
+}
+
 object SummariesTable : Table("summaries") {
     val id = integer("id").autoIncrement()
     val category = varchar("category", 100).index()
@@ -221,6 +250,22 @@ data class EmbeddingRow(
     val status: String
 )
 
+/**
+ * One row from [EventEmbeddingsTable]. Returned by [NewsDatabase.fetchRecentEventEmbeddings]
+ * as the candidate set for the log-only event-level analyzer's cosine scan. Unlike
+ * [EmbeddingRow] there is no status to gate on — the event-level pass is analyze-only and
+ * never rejects, so it only needs the key, model, vector, and recency.
+ */
+data class EventEmbeddingRow(
+    val category: String,
+    val eventKey: String,
+    val subject: String,
+    val franchise: String,
+    val model: String,
+    val vector: ByteArray,
+    val createdAt: LocalDateTime
+)
+
 data class CoveredEventRow(
     val category: String,
     val eventKey: String,
@@ -248,7 +293,7 @@ class NewsDatabase(dbPath: String) {
         transaction {
             SchemaUtils.createMissingTablesAndColumns(
                 ArticlesTable, PendingBatchesTable, SummariesTable, CoveredEventsTable, RejectedEventsTable,
-                LlmCallsTable, ArticleEmbeddingsTable
+                LlmCallsTable, ArticleEmbeddingsTable, EventEmbeddingsTable
             )
         }
         migrateArticleStatuses(jdbcUrl)
@@ -873,6 +918,91 @@ class NewsDatabase(dbPath: String) {
         val cutoff = LocalDateTime.now().minusDays(retentionDays)
         transaction {
             ArticleEmbeddingsTable.deleteWhere { createdAt less cutoff }
+        }
+    }
+
+    // ── Event embeddings (log-only event-level analyzer) ─────────────────────
+
+    /**
+     * Persists a single event embedding, upserted by `(category, event_key)`. Idempotent:
+     * if a row already exists for the pair it is replaced with the new model/dim/vector and
+     * `created_at` is refreshed (so recency reflects the latest sighting of the event).
+     */
+    fun saveEventEmbedding(
+        category: String,
+        eventKey: String,
+        subject: String,
+        franchise: String,
+        model: String,
+        vector: ByteArray
+    ) {
+        val dim = vector.size / 4
+        transaction {
+            val updated = EventEmbeddingsTable.update(
+                { (EventEmbeddingsTable.category eq category) and (EventEmbeddingsTable.eventKey eq eventKey) }
+            ) {
+                it[EventEmbeddingsTable.subject] = subject
+                it[EventEmbeddingsTable.franchise] = franchise
+                it[EventEmbeddingsTable.model] = model
+                it[EventEmbeddingsTable.dim] = dim
+                it[EventEmbeddingsTable.vector] = org.jetbrains.exposed.sql.statements.api.ExposedBlob(vector)
+                it[createdAt] = LocalDateTime.now()
+            }
+            if (updated == 0) {
+                EventEmbeddingsTable.insertIgnore {
+                    it[EventEmbeddingsTable.category] = category
+                    it[EventEmbeddingsTable.eventKey] = eventKey
+                    it[EventEmbeddingsTable.subject] = subject
+                    it[EventEmbeddingsTable.franchise] = franchise
+                    it[EventEmbeddingsTable.model] = model
+                    it[EventEmbeddingsTable.dim] = dim
+                    it[EventEmbeddingsTable.vector] = org.jetbrains.exposed.sql.statements.api.ExposedBlob(vector)
+                    it[createdAt] = LocalDateTime.now()
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns up to [limit] event embeddings in [category] whose `created_at` is within
+     * [sinceDays] days, newest-first. Candidate set for the event-level analyzer's
+     * brute-force cosine scan against previously-covered events.
+     */
+    fun fetchRecentEventEmbeddings(category: String, sinceDays: Long, limit: Int): List<EventEmbeddingRow> {
+        if (limit <= 0) return emptyList()
+        val cutoff = LocalDateTime.now().minusDays(sinceDays)
+        return transaction {
+            EventEmbeddingsTable
+                .select(
+                    EventEmbeddingsTable.category, EventEmbeddingsTable.eventKey,
+                    EventEmbeddingsTable.subject, EventEmbeddingsTable.franchise,
+                    EventEmbeddingsTable.model, EventEmbeddingsTable.vector, EventEmbeddingsTable.createdAt
+                )
+                .where {
+                    (EventEmbeddingsTable.category eq category) and
+                        (EventEmbeddingsTable.createdAt greaterEq cutoff)
+                }
+                .orderBy(EventEmbeddingsTable.createdAt, SortOrder.DESC)
+                .limit(limit)
+                .map {
+                    EventEmbeddingRow(
+                        category = it[EventEmbeddingsTable.category],
+                        eventKey = it[EventEmbeddingsTable.eventKey],
+                        subject = it[EventEmbeddingsTable.subject],
+                        franchise = it[EventEmbeddingsTable.franchise],
+                        model = it[EventEmbeddingsTable.model],
+                        vector = it[EventEmbeddingsTable.vector].bytes,
+                        createdAt = it[EventEmbeddingsTable.createdAt]
+                    )
+                }
+        }
+    }
+
+    /** Deletes event embedding rows older than [retentionDays] (by `created_at`). */
+    fun pruneOldEventEmbeddings(retentionDays: Long) {
+        val cutoff = LocalDateTime.now().minusDays(retentionDays)
+        transaction {
+            EventEmbeddingsTable.deleteWhere { createdAt less cutoff }
         }
     }
 }

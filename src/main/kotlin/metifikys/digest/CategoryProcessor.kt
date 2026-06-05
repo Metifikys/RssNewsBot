@@ -43,7 +43,14 @@ class CategoryProcessor(
      * one built per-category from [llmClientsFactory]. Production code leaves this null.
      */
     private val eventExtractor: EventExtractor? = null,
-    private val errorLog: CycleErrorLog = CycleErrorLog()
+    private val errorLog: CycleErrorLog = CycleErrorLog(),
+    /**
+     * Optional log-only event-level embedding analyzer (Layer 3.5). When non-null, runs on
+     * every non-empty shortlist about to be rendered — embeds events by `event_key` and logs
+     * near-duplicates against recently-covered events. Never mutates state. Null in tests /
+     * when no category has opted in via `semanticDedup.eventEnabled`.
+     */
+    private val eventSemanticAnalyzer: EventSemanticAnalyzer? = null
 ) {
 
     private companion object {
@@ -318,6 +325,13 @@ class CategoryProcessor(
         isBatchingStuck: Boolean,
         useBatchFallback: Boolean = false
     ) {
+        // Layer 3.5: log-only event-level embedding analysis. This is the single chokepoint
+        // every non-empty shortlist passes through (sync Ready, extract-batch callback, and
+        // startup resume all converge here), so one call covers all routes. Analyze-only.
+        if (shortlist != null) {
+            eventSemanticAnalyzer?.analyzeAndLog(name, shortlist)
+        }
+
         val effectiveArticles = if ((isBatchingStuck || useBatchFallback) && shortlist == null) {
             articles.take(SYNC_FALLBACK_CAP)
         } else {

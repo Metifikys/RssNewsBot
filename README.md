@@ -151,6 +151,9 @@ EventExtractor (Step 1, JSON mode) ────────────┤  Laye
        ├─ ShortlistRanker.rank ────────────────┤  Layer 4
        │                                       │
        ▼                                       │
+EventSemanticAnalyzer ─► [HIT] (log-only) ─────┤  Layer 3.5
+       │                                       │
+       ▼                                       │
 PromptBuilder ─► LlmClient (Batch or sync)     │
        │                                       │
        ▼                                       │
@@ -320,6 +323,34 @@ Applied **after Step 1's URL filter, before Step 2 render**. Driven by `dedup.di
   `minItemsOnForcePublish` as the floor (so quiet days still get a digest eventually).
 
 All drops are logged as `[Category:X][Ranker] drop <eventKey>: <reason>` for QA.
+
+### Layer 3.5 — Event-level semantic analyzer (log-only)
+
+Implemented in [`EventSemanticAnalyzer`](src/main/kotlin/metifikys/digest/EventSemanticAnalyzer.kt).
+The **event-level counterpart of Layer 2's article-level `SemanticDedupDetector`** — it embeds
+Step 1's *structured events* instead of raw articles.
+
+For each category whose `semanticDedup.eventEnabled: true`, once the finalized shortlist is
+about to be rendered (the single chokepoint in `CategoryProcessor.submitOrSync`, so the sync,
+extract-batch, and startup-resume routes all pass through it):
+
+1. Embed each shortlist event's `subject + coreFact`, keyed by `event_key`, via the same
+   OpenAI `/v1/embeddings` client (reusing `model` / `windowDays` / `topK` / `maxRecent`).
+2. L2-normalize and brute-force cosine-scan recent **previously-covered** event vectors in the
+   same category (`event_embeddings` table, candidate set excludes the current shortlist's own
+   keys).
+3. Log one line per event: `[EventSemanticDedup][HIT]` when `top_sim ≥ eventThreshold`,
+   `[EventSemanticDedup]` otherwise.
+4. Persist the event's vector so it becomes a candidate next cycle.
+
+**Analyze-only:** it never drops events, mutates state, or filters the digest — a
+stat-collection phase (mirroring how Layer 2 shipped log-only first) to calibrate
+`eventThreshold` before any hard filter is considered. Failures are caught and logged so the
+detector can never break a cycle.
+
+> Note: vectors are persisted for every shortlisted event regardless of Telegram delivery
+> success, so the candidate set is "events we shortlisted" — a close proxy for "previously
+> covered" during this calibration phase.
 
 ### Extra: URL whitelist after Step 2 ("prompt injection defence in depth")
 
@@ -679,6 +710,8 @@ semanticDedup:            # embedding detector opt-in
   topK: 5
   maxRecent: 2000
   hardThreshold: 0.85     # ≥ this AND neighbour PROCESSED → mark DUPLICATE
+  eventEnabled: true      # Layer 3.5 event-level analyzer (log-only)
+  eventThreshold: 0.92    # cosine ≥ this → [EventSemanticDedup][HIT] log
 ```
 
 ---
@@ -694,7 +727,8 @@ semanticDedup:            # embedding detector opt-in
 
 The test suite covers AI clients (OpenAI/Anthropic + their Batch APIs), config parsing &
 validation, the database layer, semantic dedup (`SemanticDedupDetectorTest.kt` exercises hit
-/ reject thresholds, hard-filter status gating, candidate scoring), vector math, RSS
+/ reject thresholds, hard-filter status gating, candidate scoring; `EventSemanticAnalyzerTest.kt`
+covers the log-only event-level pass), vector math, RSS
 fetching with SSRF rejection, Telegram sender, and end-to-end cycle behaviour with mocked
 providers.
 
@@ -711,6 +745,7 @@ providers.
 | `rejected_events`    | Step 1's rejected/duplicate extractions kept 30 days for prompt-tuning retrospectives |
 | `llm_calls`          | Per-call token + USD ledger feeding the `/status` cost panel             |
 | `article_embeddings` | One vector per article (Float32 little-endian blob, `dim * 4` bytes)     |
+| `event_embeddings`   | One vector per `(category, event_key)` for the log-only event-level analyzer (Float32 LE blob) |
 
 Pruning runs at the tail of every cycle:
 

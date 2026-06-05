@@ -13,6 +13,7 @@ import metifikys.digest.CategoryProcessor
 import metifikys.digest.CycleErrorLog
 import metifikys.digest.DigestCycle
 import metifikys.digest.DigestDeliverer
+import metifikys.digest.EventSemanticAnalyzer
 import metifikys.digest.SemanticDedupDetector
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
@@ -52,6 +53,15 @@ class NewsBot(
     semanticDedupDetector: SemanticDedupDetector? =
         if (config.categories.values.any { it.semanticDedup?.enabled == true }) {
             SemanticDedupDetector(config, db, Embedder(LlmEndpoint.forOpenAI(config), llmCallRecorder))
+        } else null,
+    /**
+     * Optional log-only event-level embedding analyzer (Layer 3.5). Constructed by default
+     * when at least one category has `semanticDedup.eventEnabled=true`; null otherwise so no
+     * embedding client is created when nothing uses it.
+     */
+    eventSemanticAnalyzer: EventSemanticAnalyzer? =
+        if (config.categories.values.any { it.semanticDedup?.eventEnabled == true }) {
+            EventSemanticAnalyzer(config, db, Embedder(LlmEndpoint.forOpenAI(config), llmCallRecorder))
         } else null
 ) {
 
@@ -72,7 +82,8 @@ class NewsBot(
         promptLoader = promptLoader,
         deliverer = deliverer,
         eventExtractor = eventExtractor,
-        errorLog = errorLog
+        errorLog = errorLog,
+        eventSemanticAnalyzer = eventSemanticAnalyzer
     )
 
     private val digestCycle = DigestCycle(
@@ -119,6 +130,15 @@ class NewsBot(
             val withHardFilter = config.categories.values.count { it.semanticDedup?.hardThreshold != null }
             val mode = if (withHardFilter > 0) "log + hard-filter ($withHardFilter)" else "log-only"
             logger.info { "[SemanticDedup] $mode detector enabled for ${sdCats.size} category(ies): $sdCats" }
+        }
+        val eventSdCats = config.categories
+            .filter { (_, c) -> c.semanticDedup?.eventEnabled == true }
+            .map { (n, c) ->
+                val sd = c.semanticDedup!!
+                "$n[model=${sd.model} eventThr=${sd.eventThreshold} window=${sd.windowDays}d topK=${sd.topK}]"
+            }
+        if (eventSdCats.isNotEmpty()) {
+            logger.info { "[EventSemanticDedup] log-only analyzer enabled for ${eventSdCats.size} category(ies): $eventSdCats" }
         }
         val overrides = config.categories.flatMap { (n, c) ->
             val ovr = c.llm ?: return@flatMap emptyList()
