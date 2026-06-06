@@ -475,7 +475,7 @@ class ConfigLoaderBranchesTest {
     // ─── applyEnvOverrides: processing & database validation ───────────────────
 
     @Test
-    fun `processing primaryMaxPending of zero throws`() {
+    fun `processing primaryMaxPending of zero is allowed and disables primary batch`() {
         val yaml = """
             telegram:
               botToken: "t"
@@ -487,6 +487,30 @@ class ConfigLoaderBranchesTest {
               intervalMinutes: 60
             processing:
               primaryMaxPending: 0
+            categories:
+              sports:
+                emoji: "⚽"
+                channelId: "@sports"
+                feeds:
+                  - https://example.com/rss
+        """.trimIndent()
+        val config = load(yaml)
+        assertEquals(0, config.processing.primaryMaxPending)
+    }
+
+    @Test
+    fun `processing primaryMaxPending negative throws`() {
+        val yaml = """
+            telegram:
+              botToken: "t"
+            openai:
+              apiKey: "sk"
+            database:
+              path: "/tmp/test.db"
+            scheduler:
+              intervalMinutes: 60
+            processing:
+              primaryMaxPending: -1
             categories:
               sports:
                 emoji: "⚽"
@@ -620,7 +644,7 @@ class ConfigLoaderBranchesTest {
                     model: "or-batch"
         """.trimIndent()
         val ex = assertThrows<IllegalArgumentException> { load(yaml) }
-        assertTrue(ex.message!!.contains("OpenRouter has no Batch API"))
+        assertTrue(ex.message!!.contains("no Batch API"))
     }
 
     @Test

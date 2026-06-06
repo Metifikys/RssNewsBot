@@ -19,7 +19,7 @@ data class LlmEndpoint(
     val provider: Provider = Provider.OPENAI_COMPATIBLE,
     val extraHeaders: Map<String, String> = emptyMap()
 ) {
-    enum class Provider { OPENAI_COMPATIBLE, ANTHROPIC }
+    enum class Provider { OPENAI_COMPATIBLE, ANTHROPIC, CLAUDE_CLI }
 
     companion object {
         /**
@@ -61,6 +61,21 @@ data class LlmEndpoint(
                 model = a.model,
                 provider = Provider.ANTHROPIC,
                 extraHeaders = mapOf("anthropic-version" to a.anthropicVersion)
+            )
+        }
+
+        /**
+         * Local `claude -p` CLI provider. [baseUrl] is a constant sentinel (not a URL) so
+         * the factory's `(baseUrl, model, batchCapable)` cache key stays stable; auth is
+         * the CLI's own login so [apiKey] is empty. Returns null when no claudeCli: block.
+         */
+        fun forClaudeCli(config: AppConfig): LlmEndpoint? {
+            config.claudeCli ?: return null
+            return LlmEndpoint(
+                baseUrl = "claude-cli",
+                apiKey = "",
+                model = config.claudeCli.model,
+                provider = Provider.CLAUDE_CLI
             )
         }
     }

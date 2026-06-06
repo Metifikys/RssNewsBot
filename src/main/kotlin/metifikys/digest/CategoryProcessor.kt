@@ -87,11 +87,16 @@ class CategoryProcessor(
             //   pending ≥ syncCutoff                              → sync render fallback (isBatchingStuck)
             // When the category has no `batchFallback`, the secondary band collapses and the
             // sync cutoff drops to `primaryMaxPending` — preserving the original two-tier behaviour.
+            // When primaryMaxPending == 0 OR the category sets `skipBatch: true`, the primary
+            // Batch API is disabled outright: no primary batch is ever submitted, render runs
+            // synchronously (via batchFallback when configured, else the sync render client),
+            // and the backpressure heuristic is moot (pending stays 0).
             val primaryMaxPending = config.processing.primaryMaxPending
             val secondaryMaxPending = config.processing.secondaryMaxPending
+            val batchingDisabled = primaryMaxPending == 0 || categoryConfig.skipBatch || categoryConfig.skipBatch
             val hasBatchFallback = categoryConfig.llm?.batchFallback != null
             val syncCutoff = if (hasBatchFallback) primaryMaxPending + secondaryMaxPending else primaryMaxPending
-            val isBatchingStuck = pendingForCategory >= syncCutoff
+            val isBatchingStuck = !batchingDisabled && pendingForCategory >= syncCutoff
             if (isBatchingStuck && articles.size < 2 * config.processing.minArticles) {
                 logger.warn {
                     "[Category:$name] backpressure: pending=$pendingForCategory ≥ syncCutoff=$syncCutoff, " +
@@ -99,9 +104,10 @@ class CategoryProcessor(
                 }
                 continue
             }
-            val useBatchFallback = !isBatchingStuck &&
-                hasBatchFallback &&
-                pendingForCategory >= primaryMaxPending
+            val useBatchFallback = hasBatchFallback &&
+                (batchingDisabled || (!isBatchingStuck && pendingForCategory >= primaryMaxPending))
+            // primaryMaxPending == 0 with no batchFallback configured → render via the sync client.
+            val bypassPrimaryBatch = isBatchingStuck || (batchingDisabled && !useBatchFallback)
 
             val previousSummaries = if (historyMaxCount > 0) {
                 db.fetchRecentSummaries(name, historyMaxCount)
@@ -244,7 +250,7 @@ class CategoryProcessor(
                     resolvedDedup = resolvedDedup,
                     previousSummaries = emptyList(),  // shortlist already encodes the editorial decision
                     chunkLabel = "",
-                    isBatchingStuck = isBatchingStuck,
+                    isBatchingStuck = bypassPrimaryBatch,
                     useBatchFallback = useBatchFallback
                 )
             } else {
@@ -261,7 +267,7 @@ class CategoryProcessor(
                         resolvedDedup = null,
                         previousSummaries = previousSummaries,
                         chunkLabel = chunkLabel,
-                        isBatchingStuck = isBatchingStuck,
+                        isBatchingStuck = bypassPrimaryBatch,
                         useBatchFallback = useBatchFallback
                     )
                 }
@@ -287,10 +293,13 @@ class CategoryProcessor(
         val pendingForCategory = db.countPendingBatchesForCategory(name)
         val primaryMaxPending = config.processing.primaryMaxPending
         val secondaryMaxPending = config.processing.secondaryMaxPending
+        val batchingDisabled = primaryMaxPending == 0 || categoryConfig.skipBatch
         val hasBatchFallback = categoryConfig.llm?.batchFallback != null
         val syncCutoff = if (hasBatchFallback) primaryMaxPending + secondaryMaxPending else primaryMaxPending
-        val isBatchingStuck = pendingForCategory >= syncCutoff
-        val useBatchFallback = !isBatchingStuck && hasBatchFallback && pendingForCategory >= primaryMaxPending
+        val isBatchingStuck = !batchingDisabled && pendingForCategory >= syncCutoff
+        val useBatchFallback = hasBatchFallback &&
+            (batchingDisabled || (!isBatchingStuck && pendingForCategory >= primaryMaxPending))
+        val bypassPrimaryBatch = isBatchingStuck || (batchingDisabled && !useBatchFallback)
         submitOrSync(
             name = name,
             categoryConfig = categoryConfig,
@@ -299,7 +308,7 @@ class CategoryProcessor(
             resolvedDedup = resolvedDedup,
             previousSummaries = emptyList(),
             chunkLabel = "",
-            isBatchingStuck = isBatchingStuck,
+            isBatchingStuck = bypassPrimaryBatch,
             useBatchFallback = useBatchFallback
         )
     }

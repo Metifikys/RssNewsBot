@@ -4,6 +4,7 @@ import io.mockk.mockk
 import metifikys.config.AnthropicConfig
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
+import metifikys.config.ClaudeCliConfig
 import metifikys.config.CategoryLlmOverrides
 import metifikys.config.DatabaseConfig
 import metifikys.config.FeedConfig
@@ -28,6 +29,8 @@ class LlmClientsFactoryTest {
     private fun config(
         withOpenRouter: Boolean = true,
         withAnthropic: Boolean = false,
+        withClaudeCli: Boolean = false,
+        claudeCliModel: String = "claude-cli-default",
         categories: Map<String, CategoryConfig> = emptyMap()
     ) = AppConfig(
         telegram = TelegramConfig(botToken = "tok"),
@@ -38,6 +41,7 @@ class LlmClientsFactoryTest {
             model = "claude-default",
             batchModel = "claude-batch-default"
         ) else null,
+        claudeCli = if (withClaudeCli) ClaudeCliConfig(command = "claude", model = claudeCliModel) else null,
         database = DatabaseConfig(path = ":memory:"),
         scheduler = SchedulerConfig(intervalMinutes = 60),
         categories = categories
@@ -299,6 +303,55 @@ class LlmClientsFactoryTest {
             client.resumeBatch("any")
         }
         assertEquals(true, ex.message?.contains("AnthropicWithBatch"))
+    }
+
+    // ── Claude CLI provider ───────────────────────────────────────────────────
+
+    @Test
+    fun `forRender with claudecli override returns ClaudeCli on cli endpoint`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true), db)
+        val cat = cat(CategoryLlmOverrides(render = LlmOverride("claudecli", "claude-sonnet-4-6")))
+        val client = factory.forRender(cat)
+        assertEquals("claude-cli", client.endpoint.baseUrl)
+        assertEquals("claude-sonnet-4-6", client.endpoint.model)
+        assertEquals(LlmEndpoint.Provider.CLAUDE_CLI, client.endpoint.provider)
+        assertTrue(client is ClaudeCli)
+    }
+
+    @Test
+    fun `forRender with claudecli override and blank model keeps cli default model`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true, claudeCliModel = ""), db)
+        val cat = cat(CategoryLlmOverrides(render = LlmOverride("claudecli", "")))
+        val client = factory.forRender(cat)
+        assertEquals("claude-cli", client.endpoint.baseUrl)
+        assertEquals("", client.endpoint.model)
+        assertTrue(client is ClaudeCli)
+    }
+
+    @Test
+    fun `forSummarize with feed provider claudecli uses ClaudeCli`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true), db)
+        val client = factory.forSummarize(cat(), "claudecli")
+        assertEquals("claude-cli", client.endpoint.baseUrl)
+        assertEquals("claude-cli-default", client.endpoint.model)
+        assertTrue(client is ClaudeCli)
+    }
+
+    @Test
+    fun `overrideEndpoint with claudecli provider but no claudeCli block throws`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = false), db)
+        val cat = cat(CategoryLlmOverrides(render = LlmOverride("claudecli", "x")))
+        val ex = assertThrows<IllegalStateException> { factory.forRender(cat) }
+        assertTrue(ex.message?.contains("claudecli") == true)
+    }
+
+    @Test
+    fun `claudecli sync client throws on resumeBatch`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true), db)
+        val cat = cat(CategoryLlmOverrides(render = LlmOverride("claudecli", "x")))
+        val client = factory.forRender(cat)
+        val ex = assertThrows<UnsupportedOperationException> { client.resumeBatch("any") }
+        assertTrue(ex.message?.contains("Batch API") == true)
     }
 
     // ── Branch coverage: forBatchFallback ─────────────────────────────────────

@@ -93,6 +93,8 @@ class LlmClientsFactory(
                 ?: error("feed.summarize=openrouter but no openrouter: block configured")
             "anthropic" -> LlmEndpoint.forAnthropic(config)
                 ?: error("feed.summarize=anthropic but no anthropic: block configured")
+            "claudecli" -> LlmEndpoint.forClaudeCli(config)
+                ?: error("feed.summarize=claudecli but no claudeCli: block configured")
             else -> error("Unknown summarize provider '$feedProvider'")
         }
         return meter(client(ep, batchCapable = false), category, LlmUseCase.SUMMARIZE)
@@ -122,6 +124,12 @@ class LlmClientsFactory(
                     if (batchCapable) OpenAIWithBatch(ep, db)
                     else OpenAI(ep, batchUnsupportedReason = unsupportedReasonFor(ep))
                 }
+                LlmEndpoint.Provider.CLAUDE_CLI -> {
+                    val cli = config.claudeCli
+                        ?: error("Claude CLI endpoint constructed without claudeCli: config block")
+                    require(!batchCapable) { "Claude CLI provider has no Batch API — it cannot be batch-capable" }
+                    ClaudeCli(ep, cli.command, cli.timeoutSeconds)
+                }
             }
         }
 
@@ -146,6 +154,12 @@ class LlmClientsFactory(
             val a = LlmEndpoint.forAnthropic(config)
                 ?: error("Override uses provider 'anthropic' but no anthropic: block configured")
             a.copy(model = o.model)
+        }
+        "claudecli" -> {
+            val c = LlmEndpoint.forClaudeCli(config)
+                ?: error("Override uses provider 'claudecli' but no claudeCli: block configured")
+            // Blank model means "CLI default" — keep the endpoint's model rather than overriding with "".
+            if (o.model.isBlank()) c else c.copy(model = o.model)
         }
         else -> error("Unknown override provider '${o.provider}' (validated upstream)")
     }

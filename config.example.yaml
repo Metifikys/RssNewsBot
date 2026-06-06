@@ -34,6 +34,25 @@ anthropic:
   anthropicVersion: "2023-06-01"           # optional; required Anthropic-Version header
   maxTokens: 4096                          # optional; per-request output cap
 
+# Optional Claude CLI provider — shells out to the local `claude -p` (Claude Code print mode).
+# There is NO apiKey: the subprocess authenticates with the machine's existing `claude` login
+# (Pro/Max subscription or whatever the CLI is configured with), so this can be far cheaper than
+# per-token API billing. When present, categories may opt in for any SYNC use case
+# (extract / extractAlternate / render / summarize / batchFallback) via `llm.*` overrides
+# (use `provider: claudecli`), and feeds may declare `summarize: claudecli`. There is no Batch
+# API for a CLI, so `llm.batch: claudecli` (and `batch: true` on extract) is rejected at load time.
+# Requires the `claude` binary to be installed, on PATH, and logged in.
+# claudeCli:
+#   command: "claude"      # executable name or absolute path; must be on PATH
+#   model: ""              # blank = let the CLI pick its default model; or e.g. "claude-sonnet-4-6"
+#   timeoutSeconds: 300    # force-kill ceiling for a single invocation
+#
+# Example category usage (model may be left blank to use the CLI default):
+#   llm:
+#     render:    { provider: claudecli, model: "" }
+#     summarize: { provider: claudecli, model: claude-sonnet-4-6 }
+# …or per feed:  - { url: https://example.com/feed, summarize: claudecli }
+
 database:
   path: "news.db"
 
@@ -50,7 +69,10 @@ processing:
   #   pending ≥ primary + secondary                          → sync render fallback (`llm.render`)
   # When a category has no `batchFallback`, the secondary band collapses — sync render fires
   # at primaryMaxPending. Defaults below match the historical hardcoded behaviour.
-  primaryMaxPending: 2     # primary batch capacity before promoting to fallback
+  # Set primaryMaxPending: 0 to disable the primary render Batch API entirely — every render
+  # then goes synchronously (via `llm.batchFallback` if configured, else the sync render client).
+  # (The Step-1 extract batch is separate; disable it by using a non-batch extract endpoint.)
+  primaryMaxPending: 2     # primary batch capacity before promoting to fallback (0 = batch off)
   secondaryMaxPending: 1   # additional capacity on the fallback before sync render
 
 # Optional: include previous digest summaries as context to avoid repeating
@@ -73,11 +95,18 @@ categories:
     # When true, each bullet is sent as a Telegram photo+caption (single post) if the
     # first linked article has an image extracted from RSS. Defaults to false.
     enableImages: true
+    # When true, this category NEVER uses the Batch API — Step 2 render always runs
+    # synchronously via `llm.render` (or `llm.batchFallback` if configured). Use it for
+    # always-publish-now categories, or one routed through a sync-only provider like the
+    # Claude CLI (provider: claudecli). Cannot be combined with llm.batch or `batch: true`
+    # on extract/extractAlternate (rejected at load). Defaults to false.
+    # skipBatch: true
     feeds:
       - https://kotaku.com/feed
     # Optional: per-use-case provider+model overrides. The provider name points at one of
-    # the top-level blocks (`openai:` / `openrouter:`) which carries the credentials and
-    # baseUrl; the override only swaps the model and (for sync paths) the endpoint.
+    # the top-level blocks (`openai:` / `openrouter:` / `anthropic:` / `claudeCli:`) which
+    # carries the credentials/baseUrl (or, for claudecli, the CLI command); the override only
+    # swaps the model and (for sync paths) the endpoint.
     # Any key may be omitted — omitted use cases fall back to the global defaults:
     #   extract → openai.model + openrouter.model alternating every 2nd request
     #   extractAlternate → optional explicit "B" side of the Step 1 A/B pair. Requires `extract`

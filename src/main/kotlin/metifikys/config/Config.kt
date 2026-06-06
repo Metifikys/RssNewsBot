@@ -23,6 +23,11 @@ data class ProcessingConfig(
      * the next cycle to `llm.batchFallback`. At pending >= this, the next cycle
      * promotes to the second tier (or directly to sync render when no fallback
      * is configured for the category).
+     *
+     * Set to `0` to disable the primary render Batch API entirely: every render goes
+     * synchronously (via `llm.batchFallback` when the category configures one, otherwise
+     * via the sync render client). The Step-1 extract batch is unaffected — disable that
+     * by pointing the extract LLM at a non-batch endpoint.
      */
     val primaryMaxPending: Int = 2,
     /**
@@ -48,6 +53,7 @@ data class AppConfig(
     val openai: OpenAIConfig,
     val openrouter: OpenRouterConfig? = null,
     val anthropic: AnthropicConfig? = null,
+    val claudeCli: ClaudeCliConfig? = null,
     val database: DatabaseConfig,
     val scheduler: SchedulerConfig,
     val categories: Map<String, CategoryConfig>,
@@ -118,6 +124,24 @@ data class AnthropicConfig(
     val maxTokens: Int = 4096
 )
 
+/**
+ * Optional Claude CLI provider. When this block is present, categories may opt into
+ * the local `claude -p` CLI (Claude Code print mode) for any sync LLM use case
+ * (extract / extractAlternate / render / summarize / batchFallback) via
+ * [CategoryLlmOverrides], and feeds may declare `summarize: claudecli`. There is no
+ * `apiKey` — the subprocess authenticates with the machine's existing `claude` login.
+ * The Batch API is NOT supported (a CLI has no batch endpoint), so `llm.batch:
+ * claudecli` is rejected at load time, exactly like OpenRouter.
+ */
+data class ClaudeCliConfig(
+    /** Executable name or path; must be on PATH (or absolute). */
+    val command: String = "claude",
+    /** Model id passed via `--model`. Blank ⇒ let the CLI pick its default model. */
+    val model: String = "",
+    /** Hard ceiling for a single invocation before the process is force-killed. */
+    val timeoutSeconds: Long = 300
+)
+
 data class DatabaseConfig(
     val path: String
 )
@@ -172,7 +196,7 @@ data class FeedConfig(
     val summarize: String? = null
 ) {
     companion object {
-        val SUMMARIZE_PROVIDERS = setOf("openai", "openrouter", "anthropic")
+        val SUMMARIZE_PROVIDERS = setOf("openai", "openrouter", "anthropic", "claudecli")
     }
 }
 
@@ -188,6 +212,16 @@ data class CategoryConfig(
      * bullet is sent as plain text. Defaults to false — opt-in per category.
      */
     val enableImages: Boolean = false,
+    /**
+     * When true, this category never touches any Batch API — Step 2 render (and the legacy
+     * single-step path) always run synchronously via the `render` client, or via
+     * `llm.batchFallback` when that override is configured. Use it for categories that must
+     * publish immediately, or that route through a sync-only provider such as the Claude CLI
+     * (`provider: claudecli`), which has no Batch API. Conflicts with any batch override
+     * (`llm.batch`, or `batch: true` on `extract`/`extractAlternate`) and is rejected at load
+     * time if combined with one. Defaults to false — categories batch as before.
+     */
+    val skipBatch: Boolean = false,
     /**
      * Opt-in two-step dedup pipeline for this category. When non-null and all four
      * prompts (extract.system/user + render.system/user) resolve, the bot runs a
@@ -417,9 +451,13 @@ object ConfigLoader {
             require(anthropic.anthropicVersion.isNotBlank()) { "Anthropic anthropicVersion must not be empty" }
             require(anthropic.maxTokens > 0) { "Anthropic maxTokens must be positive" }
         }
+        config.claudeCli?.let { cli ->
+            require(cli.command.isNotBlank()) { "claudeCli.command must not be blank" }
+            require(cli.timeoutSeconds > 0) { "claudeCli.timeoutSeconds must be positive (got ${cli.timeoutSeconds})" }
+        }
 
-        require(config.processing.primaryMaxPending >= 1) {
-            "processing.primaryMaxPending must be >= 1 (got ${config.processing.primaryMaxPending}); 0 disables batch entirely"
+        require(config.processing.primaryMaxPending >= 0) {
+            "processing.primaryMaxPending must be >= 0 (got ${config.processing.primaryMaxPending}); 0 disables the primary render Batch API (always sync / batchFallback)"
         }
         require(config.processing.secondaryMaxPending >= 0) {
             "processing.secondaryMaxPending must be >= 0 (got ${config.processing.secondaryMaxPending})"
@@ -458,6 +496,11 @@ object ConfigLoader {
                         "Category '$name' feed '${feed.url}' requested Anthropic summarization but no anthropic: block is configured"
                     }
                 }
+                if (feed.summarize == "claudecli") {
+                    require(config.claudeCli != null) {
+                        "Category '$name' feed '${feed.url}' requested Claude CLI summarization but no claudeCli: block is configured"
+                    }
+                }
             }
             category.semanticDedup?.let { sd ->
                 require(sd.threshold in 0.0..1.0) {
@@ -489,28 +532,39 @@ object ConfigLoader {
                 }
             }
             category.llm?.let { ovr ->
-                validateOverride(name, "extract", ovr.extract, openRouter, anthropic)
-                validateOverride(name, "extractAlternate", ovr.extractAlternate, openRouter, anthropic)
+                validateOverride(name, "extract", ovr.extract, openRouter, anthropic, config.claudeCli)
+                validateOverride(name, "extractAlternate", ovr.extractAlternate, openRouter, anthropic, config.claudeCli)
                 require(ovr.extractAlternate == null || ovr.extract != null) {
                     "Category '$name' llm.extractAlternate is set but llm.extract is not — extractAlternate is the 'B' side of an A/B pair and requires the 'A' side"
                 }
                 ovr.extract?.let { e ->
-                    require(!(e.batch && e.provider == "openrouter")) {
-                        "Category '$name' llm.extract: batch=true is not supported for provider 'openrouter' (OpenRouter has no Batch API)"
+                    require(!(e.batch && e.provider in setOf("openrouter", "claudecli"))) {
+                        "Category '$name' llm.extract: batch=true is not supported for provider '${e.provider}' (no Batch API)"
                     }
                 }
                 ovr.extractAlternate?.let { e ->
-                    require(!(e.batch && e.provider == "openrouter")) {
-                        "Category '$name' llm.extractAlternate: batch=true is not supported for provider 'openrouter' (OpenRouter has no Batch API)"
+                    require(!(e.batch && e.provider in setOf("openrouter", "claudecli"))) {
+                        "Category '$name' llm.extractAlternate: batch=true is not supported for provider '${e.provider}' (no Batch API)"
                     }
                 }
-                validateOverride(name, "render", ovr.render, openRouter, anthropic)
-                validateOverride(name, "batch", ovr.batch, openRouter, anthropic)
-                validateOverride(name, "summarize", ovr.summarize, openRouter, anthropic)
-                validateOverride(name, "batchFallback", ovr.batchFallback, openRouter, anthropic)
+                validateOverride(name, "render", ovr.render, openRouter, anthropic, config.claudeCli)
+                validateOverride(name, "batch", ovr.batch, openRouter, anthropic, config.claudeCli)
+                validateOverride(name, "summarize", ovr.summarize, openRouter, anthropic, config.claudeCli)
+                validateOverride(name, "batchFallback", ovr.batchFallback, openRouter, anthropic, config.claudeCli)
                 ovr.batch?.let { b ->
                     require(b.provider in setOf("openai", "anthropic")) {
-                        "Category '$name' llm.batch: batch override only supports provider: openai or anthropic (OpenRouter has no Batch API)"
+                        "Category '$name' llm.batch: batch override only supports provider: openai or anthropic (OpenRouter and Claude CLI have no Batch API)"
+                    }
+                }
+                if (category.skipBatch) {
+                    require(ovr.batch == null) {
+                        "Category '$name' sets skipBatch: true but also configures llm.batch — remove one (skipBatch means the category never uses the Batch API)"
+                    }
+                    require(ovr.extract?.batch != true) {
+                        "Category '$name' sets skipBatch: true but also llm.extract.batch: true — skipBatch means no Batch API at all"
+                    }
+                    require(ovr.extractAlternate?.batch != true) {
+                        "Category '$name' sets skipBatch: true but also llm.extractAlternate.batch: true — skipBatch means no Batch API at all"
                     }
                 }
             }
@@ -529,13 +583,15 @@ object ConfigLoader {
         useCase: String,
         ovr: LlmOverride?,
         openRouter: OpenRouterConfig?,
-        anthropic: AnthropicConfig?
+        anthropic: AnthropicConfig?,
+        claudeCli: ClaudeCliConfig?
     ) {
         if (ovr == null) return
-        require(ovr.provider in setOf("openai", "openrouter", "anthropic")) {
-            "Category '$category' llm.$useCase: provider must be 'openai', 'openrouter', or 'anthropic', got '${ovr.provider}'"
+        require(ovr.provider in setOf("openai", "openrouter", "anthropic", "claudecli")) {
+            "Category '$category' llm.$useCase: provider must be 'openai', 'openrouter', 'anthropic', or 'claudecli', got '${ovr.provider}'"
         }
-        require(ovr.model.isNotBlank()) {
+        // claudecli is the one provider where a blank model is valid (it means "CLI default").
+        require(ovr.provider == "claudecli" || ovr.model.isNotBlank()) {
             "Category '$category' llm.$useCase: model must not be blank"
         }
         if (ovr.provider == "openrouter") {
@@ -546,6 +602,11 @@ object ConfigLoader {
         if (ovr.provider == "anthropic") {
             require(anthropic != null) {
                 "Category '$category' llm.$useCase: provider 'anthropic' requires top-level anthropic: block"
+            }
+        }
+        if (ovr.provider == "claudecli") {
+            require(claudeCli != null) {
+                "Category '$category' llm.$useCase: provider 'claudecli' requires top-level claudeCli: block"
             }
         }
     }

@@ -126,7 +126,7 @@ class CategoryLlmOverridesTest {
                       extract: { provider: foo, model: bar }
             """)
         }
-        assertEquals(true, ex.message?.contains("must be 'openai', 'openrouter', or 'anthropic'"))
+        assertEquals(true, ex.message?.contains("must be 'openai', 'openrouter', 'anthropic', or 'claudecli'"))
     }
 
     @Test
@@ -373,7 +373,7 @@ class CategoryLlmOverridesTest {
                       batchFallback: { provider: foo, model: bar }
             """)
         }
-        assertEquals(true, ex.message?.contains("must be 'openai', 'openrouter', or 'anthropic'"))
+        assertEquals(true, ex.message?.contains("must be 'openai', 'openrouter', 'anthropic', or 'claudecli'"))
     }
 
     @Test
@@ -423,5 +423,87 @@ class CategoryLlmOverridesTest {
         assertEquals("claude-x", a.batchModel)  // defaults to model when omitted
         assertEquals("https://api.anthropic.com/v1", a.baseUrl)
         assertEquals("2023-06-01", a.anthropicVersion)
+    }
+
+    // ── skipBatch ──────────────────────────────────────────────────────────────
+
+    @Test
+    fun `skipBatch parses and defaults to false`() {
+        val config = load("""
+            telegram:
+              botToken: "tok"
+            openai:
+              apiKey: "sk-test"
+            database:
+              path: "test.db"
+            scheduler:
+              intervalMinutes: 60
+            categories:
+              live:
+                emoji: "⚡"
+                channelId: "@live"
+                skipBatch: true
+                feeds:
+                  - https://example.com/feed
+              normal:
+                emoji: "📰"
+                channelId: "@normal"
+                feeds:
+                  - https://example.com/feed2
+        """)
+        assertEquals(true, config.categories["live"]?.skipBatch)
+        assertEquals(false, config.categories["normal"]?.skipBatch)
+    }
+
+    @Test
+    fun `skipBatch combined with llm batch is rejected`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    skipBatch: true
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      batch: { provider: openai, model: gpt-batch }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("skipBatch"))
+    }
+
+    @Test
+    fun `skipBatch combined with extract batch true is rejected`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    skipBatch: true
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      extract: { provider: openai, model: gpt-x, batch: true }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("skipBatch"))
     }
 }
