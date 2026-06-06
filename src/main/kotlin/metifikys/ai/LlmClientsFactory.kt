@@ -95,6 +95,8 @@ class LlmClientsFactory(
                 ?: error("feed.summarize=anthropic but no anthropic: block configured")
             "claudecli" -> LlmEndpoint.forClaudeCli(config)
                 ?: error("feed.summarize=claudecli but no claudeCli: block configured")
+            "codexcli" -> LlmEndpoint.forCodexCli(config)
+                ?: error("feed.summarize=codexcli but no codexCli: block configured")
             else -> error("Unknown summarize provider '$feedProvider'")
         }
         return meter(client(ep, batchCapable = false), category, LlmUseCase.SUMMARIZE)
@@ -130,6 +132,12 @@ class LlmClientsFactory(
                     require(!batchCapable) { "Claude CLI provider has no Batch API — it cannot be batch-capable" }
                     ClaudeCli(ep, cli.command, cli.timeoutSeconds)
                 }
+                LlmEndpoint.Provider.CODEX_CLI -> {
+                    val cli = config.codexCli
+                        ?: error("Codex CLI endpoint constructed without codexCli: config block")
+                    require(!batchCapable) { "Codex CLI provider has no Batch API — it cannot be batch-capable" }
+                    CodexCli(ep, cli.command, cli.timeoutSeconds)
+                }
             }
         }
 
@@ -158,6 +166,12 @@ class LlmClientsFactory(
         "claudecli" -> {
             val c = LlmEndpoint.forClaudeCli(config)
                 ?: error("Override uses provider 'claudecli' but no claudeCli: block configured")
+            // Blank model means "CLI default" — keep the endpoint's model rather than overriding with "".
+            if (o.model.isBlank()) c else c.copy(model = o.model)
+        }
+        "codexcli" -> {
+            val c = LlmEndpoint.forCodexCli(config)
+                ?: error("Override uses provider 'codexcli' but no codexCli: block configured")
             // Blank model means "CLI default" — keep the endpoint's model rather than overriding with "".
             if (o.model.isBlank()) c else c.copy(model = o.model)
         }

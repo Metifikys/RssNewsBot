@@ -142,6 +142,7 @@ class MeteredLlmClient(
         internal fun providerKeyOf(endpoint: LlmEndpoint): String = when (endpoint.provider) {
             LlmEndpoint.Provider.ANTHROPIC -> "anthropic"
             LlmEndpoint.Provider.CLAUDE_CLI -> "claudecli"
+            LlmEndpoint.Provider.CODEX_CLI -> "codexcli"
             LlmEndpoint.Provider.OPENAI_COMPATIBLE ->
                 if (endpoint.baseUrl == "https://api.openai.com/v1") "openai" else "openrouter"
         }

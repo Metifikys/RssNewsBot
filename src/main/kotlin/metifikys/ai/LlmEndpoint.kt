@@ -19,7 +19,7 @@ data class LlmEndpoint(
     val provider: Provider = Provider.OPENAI_COMPATIBLE,
     val extraHeaders: Map<String, String> = emptyMap()
 ) {
-    enum class Provider { OPENAI_COMPATIBLE, ANTHROPIC, CLAUDE_CLI }
+    enum class Provider { OPENAI_COMPATIBLE, ANTHROPIC, CLAUDE_CLI, CODEX_CLI }
 
     companion object {
         /**
@@ -76,6 +76,21 @@ data class LlmEndpoint(
                 apiKey = "",
                 model = config.claudeCli.model,
                 provider = Provider.CLAUDE_CLI
+            )
+        }
+
+        /**
+         * Local `codex exec` CLI provider. [baseUrl] is a constant sentinel (not a URL) so
+         * the factory's `(baseUrl, model, batchCapable)` cache key stays stable; auth is
+         * the CLI's own login so [apiKey] is empty. Returns null when no codexCli: block.
+         */
+        fun forCodexCli(config: AppConfig): LlmEndpoint? {
+            config.codexCli ?: return null
+            return LlmEndpoint(
+                baseUrl = "codex-cli",
+                apiKey = "",
+                model = config.codexCli.model,
+                provider = Provider.CODEX_CLI
             )
         }
     }

@@ -53,6 +53,26 @@ anthropic:
 #     summarize: { provider: claudecli, model: claude-sonnet-4-6 }
 # …or per feed:  - { url: https://example.com/feed, summarize: claudecli }
 
+# Optional Codex CLI provider — shells out to the local `codex exec` (OpenAI Codex non-interactive
+# mode). There is NO apiKey: the subprocess authenticates with the machine's existing `codex` login
+# (ChatGPT subscription or whatever the CLI is configured with), so this can be far cheaper than
+# per-token API billing. When present, categories may opt in for any SYNC use case
+# (extract / extractAlternate / render / summarize / batchFallback) via `llm.*` overrides
+# (use `provider: codexcli`), and feeds may declare `summarize: codexcli`. There is no Batch
+# API for a CLI, so `llm.batch: codexcli` (and `batch: true` on extract) is rejected at load time.
+# The system prompt is passed via codex's `model_instructions_file` config key and the final answer
+# is read from `--output-last-message`. Requires the `codex` binary installed, on PATH, and logged in.
+# codexCli:
+#   command: "codex"       # executable name or absolute path; must be on PATH
+#   model: ""              # blank = let the CLI pick its default model; or e.g. "gpt-5-codex"
+#   timeoutSeconds: 300    # force-kill ceiling for a single invocation
+#
+# Example category usage (model may be left blank to use the CLI default):
+#   llm:
+#     render:    { provider: codexcli, model: "" }
+#     summarize: { provider: codexcli, model: gpt-5-codex }
+# …or per feed:  - { url: https://example.com/feed, summarize: codexcli }
+
 database:
   path: "news.db"
 

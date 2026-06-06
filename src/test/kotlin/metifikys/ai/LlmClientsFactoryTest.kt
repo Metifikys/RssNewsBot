@@ -5,6 +5,7 @@ import metifikys.config.AnthropicConfig
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
 import metifikys.config.ClaudeCliConfig
+import metifikys.config.CodexCliConfig
 import metifikys.config.CategoryLlmOverrides
 import metifikys.config.DatabaseConfig
 import metifikys.config.FeedConfig
@@ -31,6 +32,8 @@ class LlmClientsFactoryTest {
         withAnthropic: Boolean = false,
         withClaudeCli: Boolean = false,
         claudeCliModel: String = "claude-cli-default",
+        withCodexCli: Boolean = false,
+        codexCliModel: String = "codex-cli-default",
         categories: Map<String, CategoryConfig> = emptyMap()
     ) = AppConfig(
         telegram = TelegramConfig(botToken = "tok"),
@@ -42,6 +45,7 @@ class LlmClientsFactoryTest {
             batchModel = "claude-batch-default"
         ) else null,
         claudeCli = if (withClaudeCli) ClaudeCliConfig(command = "claude", model = claudeCliModel) else null,
+        codexCli = if (withCodexCli) CodexCliConfig(command = "codex", model = codexCliModel) else null,
         database = DatabaseConfig(path = ":memory:"),
         scheduler = SchedulerConfig(intervalMinutes = 60),
         categories = categories
@@ -349,6 +353,55 @@ class LlmClientsFactoryTest {
     fun `claudecli sync client throws on resumeBatch`() {
         val factory = LlmClientsFactory(config(withClaudeCli = true), db)
         val cat = cat(CategoryLlmOverrides(render = LlmOverride("claudecli", "x")))
+        val client = factory.forRender(cat)
+        val ex = assertThrows<UnsupportedOperationException> { client.resumeBatch("any") }
+        assertTrue(ex.message?.contains("Batch API") == true)
+    }
+
+    // ── Codex CLI provider ────────────────────────────────────────────────────
+
+    @Test
+    fun `forRender with codexcli override returns CodexCli on cli endpoint`() {
+        val factory = LlmClientsFactory(config(withCodexCli = true), db)
+        val cat = cat(CategoryLlmOverrides(render = LlmOverride("codexcli", "gpt-5-codex")))
+        val client = factory.forRender(cat)
+        assertEquals("codex-cli", client.endpoint.baseUrl)
+        assertEquals("gpt-5-codex", client.endpoint.model)
+        assertEquals(LlmEndpoint.Provider.CODEX_CLI, client.endpoint.provider)
+        assertTrue(client is CodexCli)
+    }
+
+    @Test
+    fun `forRender with codexcli override and blank model keeps cli default model`() {
+        val factory = LlmClientsFactory(config(withCodexCli = true, codexCliModel = ""), db)
+        val cat = cat(CategoryLlmOverrides(render = LlmOverride("codexcli", "")))
+        val client = factory.forRender(cat)
+        assertEquals("codex-cli", client.endpoint.baseUrl)
+        assertEquals("", client.endpoint.model)
+        assertTrue(client is CodexCli)
+    }
+
+    @Test
+    fun `forSummarize with feed provider codexcli uses CodexCli`() {
+        val factory = LlmClientsFactory(config(withCodexCli = true), db)
+        val client = factory.forSummarize(cat(), "codexcli")
+        assertEquals("codex-cli", client.endpoint.baseUrl)
+        assertEquals("codex-cli-default", client.endpoint.model)
+        assertTrue(client is CodexCli)
+    }
+
+    @Test
+    fun `overrideEndpoint with codexcli provider but no codexCli block throws`() {
+        val factory = LlmClientsFactory(config(withCodexCli = false), db)
+        val cat = cat(CategoryLlmOverrides(render = LlmOverride("codexcli", "x")))
+        val ex = assertThrows<IllegalStateException> { factory.forRender(cat) }
+        assertTrue(ex.message?.contains("codexcli") == true)
+    }
+
+    @Test
+    fun `codexcli sync client throws on resumeBatch`() {
+        val factory = LlmClientsFactory(config(withCodexCli = true), db)
+        val cat = cat(CategoryLlmOverrides(render = LlmOverride("codexcli", "x")))
         val client = factory.forRender(cat)
         val ex = assertThrows<UnsupportedOperationException> { client.resumeBatch("any") }
         assertTrue(ex.message?.contains("Batch API") == true)

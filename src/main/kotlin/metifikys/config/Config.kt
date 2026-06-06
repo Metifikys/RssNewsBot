@@ -54,6 +54,7 @@ data class AppConfig(
     val openrouter: OpenRouterConfig? = null,
     val anthropic: AnthropicConfig? = null,
     val claudeCli: ClaudeCliConfig? = null,
+    val codexCli: CodexCliConfig? = null,
     val database: DatabaseConfig,
     val scheduler: SchedulerConfig,
     val categories: Map<String, CategoryConfig>,
@@ -142,6 +143,24 @@ data class ClaudeCliConfig(
     val timeoutSeconds: Long = 300
 )
 
+/**
+ * Optional Codex CLI provider. When this block is present, categories may opt into
+ * the local `codex exec` CLI (OpenAI Codex non-interactive mode) for any sync LLM use
+ * case (extract / extractAlternate / render / summarize / batchFallback) via
+ * [CategoryLlmOverrides], and feeds may declare `summarize: codexcli`. There is no
+ * `apiKey` — the subprocess authenticates with the machine's existing `codex` login.
+ * The Batch API is NOT supported (a CLI has no batch endpoint), so `llm.batch:
+ * codexcli` is rejected at load time, exactly like the Claude CLI and OpenRouter.
+ */
+data class CodexCliConfig(
+    /** Executable name or path; must be on PATH (or absolute). */
+    val command: String = "codex",
+    /** Model id passed via `--model`. Blank ⇒ let the CLI pick its default model. */
+    val model: String = "",
+    /** Hard ceiling for a single invocation before the process is force-killed. */
+    val timeoutSeconds: Long = 300
+)
+
 data class DatabaseConfig(
     val path: String
 )
@@ -196,7 +215,7 @@ data class FeedConfig(
     val summarize: String? = null
 ) {
     companion object {
-        val SUMMARIZE_PROVIDERS = setOf("openai", "openrouter", "anthropic", "claudecli")
+        val SUMMARIZE_PROVIDERS = setOf("openai", "openrouter", "anthropic", "claudecli", "codexcli")
     }
 }
 
@@ -455,6 +474,10 @@ object ConfigLoader {
             require(cli.command.isNotBlank()) { "claudeCli.command must not be blank" }
             require(cli.timeoutSeconds > 0) { "claudeCli.timeoutSeconds must be positive (got ${cli.timeoutSeconds})" }
         }
+        config.codexCli?.let { cli ->
+            require(cli.command.isNotBlank()) { "codexCli.command must not be blank" }
+            require(cli.timeoutSeconds > 0) { "codexCli.timeoutSeconds must be positive (got ${cli.timeoutSeconds})" }
+        }
 
         require(config.processing.primaryMaxPending >= 0) {
             "processing.primaryMaxPending must be >= 0 (got ${config.processing.primaryMaxPending}); 0 disables the primary render Batch API (always sync / batchFallback)"
@@ -501,6 +524,11 @@ object ConfigLoader {
                         "Category '$name' feed '${feed.url}' requested Claude CLI summarization but no claudeCli: block is configured"
                     }
                 }
+                if (feed.summarize == "codexcli") {
+                    require(config.codexCli != null) {
+                        "Category '$name' feed '${feed.url}' requested Codex CLI summarization but no codexCli: block is configured"
+                    }
+                }
             }
             category.semanticDedup?.let { sd ->
                 require(sd.threshold in 0.0..1.0) {
@@ -532,28 +560,28 @@ object ConfigLoader {
                 }
             }
             category.llm?.let { ovr ->
-                validateOverride(name, "extract", ovr.extract, openRouter, anthropic, config.claudeCli)
-                validateOverride(name, "extractAlternate", ovr.extractAlternate, openRouter, anthropic, config.claudeCli)
+                validateOverride(name, "extract", ovr.extract, openRouter, anthropic, config.claudeCli, config.codexCli)
+                validateOverride(name, "extractAlternate", ovr.extractAlternate, openRouter, anthropic, config.claudeCli, config.codexCli)
                 require(ovr.extractAlternate == null || ovr.extract != null) {
                     "Category '$name' llm.extractAlternate is set but llm.extract is not — extractAlternate is the 'B' side of an A/B pair and requires the 'A' side"
                 }
                 ovr.extract?.let { e ->
-                    require(!(e.batch && e.provider in setOf("openrouter", "claudecli"))) {
+                    require(!(e.batch && e.provider in setOf("openrouter", "claudecli", "codexcli"))) {
                         "Category '$name' llm.extract: batch=true is not supported for provider '${e.provider}' (no Batch API)"
                     }
                 }
                 ovr.extractAlternate?.let { e ->
-                    require(!(e.batch && e.provider in setOf("openrouter", "claudecli"))) {
+                    require(!(e.batch && e.provider in setOf("openrouter", "claudecli", "codexcli"))) {
                         "Category '$name' llm.extractAlternate: batch=true is not supported for provider '${e.provider}' (no Batch API)"
                     }
                 }
-                validateOverride(name, "render", ovr.render, openRouter, anthropic, config.claudeCli)
-                validateOverride(name, "batch", ovr.batch, openRouter, anthropic, config.claudeCli)
-                validateOverride(name, "summarize", ovr.summarize, openRouter, anthropic, config.claudeCli)
-                validateOverride(name, "batchFallback", ovr.batchFallback, openRouter, anthropic, config.claudeCli)
+                validateOverride(name, "render", ovr.render, openRouter, anthropic, config.claudeCli, config.codexCli)
+                validateOverride(name, "batch", ovr.batch, openRouter, anthropic, config.claudeCli, config.codexCli)
+                validateOverride(name, "summarize", ovr.summarize, openRouter, anthropic, config.claudeCli, config.codexCli)
+                validateOverride(name, "batchFallback", ovr.batchFallback, openRouter, anthropic, config.claudeCli, config.codexCli)
                 ovr.batch?.let { b ->
                     require(b.provider in setOf("openai", "anthropic")) {
-                        "Category '$name' llm.batch: batch override only supports provider: openai or anthropic (OpenRouter and Claude CLI have no Batch API)"
+                        "Category '$name' llm.batch: batch override only supports provider: openai or anthropic (OpenRouter, Claude CLI, and Codex CLI have no Batch API)"
                     }
                 }
                 if (category.skipBatch) {
@@ -584,14 +612,15 @@ object ConfigLoader {
         ovr: LlmOverride?,
         openRouter: OpenRouterConfig?,
         anthropic: AnthropicConfig?,
-        claudeCli: ClaudeCliConfig?
+        claudeCli: ClaudeCliConfig?,
+        codexCli: CodexCliConfig?
     ) {
         if (ovr == null) return
-        require(ovr.provider in setOf("openai", "openrouter", "anthropic", "claudecli")) {
-            "Category '$category' llm.$useCase: provider must be 'openai', 'openrouter', 'anthropic', or 'claudecli', got '${ovr.provider}'"
+        require(ovr.provider in setOf("openai", "openrouter", "anthropic", "claudecli", "codexcli")) {
+            "Category '$category' llm.$useCase: provider must be 'openai', 'openrouter', 'anthropic', 'claudecli', or 'codexcli', got '${ovr.provider}'"
         }
-        // claudecli is the one provider where a blank model is valid (it means "CLI default").
-        require(ovr.provider == "claudecli" || ovr.model.isNotBlank()) {
+        // The CLI providers are the ones where a blank model is valid (it means "CLI default").
+        require(ovr.provider == "claudecli" || ovr.provider == "codexcli" || ovr.model.isNotBlank()) {
             "Category '$category' llm.$useCase: model must not be blank"
         }
         if (ovr.provider == "openrouter") {
@@ -607,6 +636,11 @@ object ConfigLoader {
         if (ovr.provider == "claudecli") {
             require(claudeCli != null) {
                 "Category '$category' llm.$useCase: provider 'claudecli' requires top-level claudeCli: block"
+            }
+        }
+        if (ovr.provider == "codexcli") {
+            require(codexCli != null) {
+                "Category '$category' llm.$useCase: provider 'codexcli' requires top-level codexCli: block"
             }
         }
     }

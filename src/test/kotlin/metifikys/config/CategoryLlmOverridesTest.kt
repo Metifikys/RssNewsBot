@@ -126,7 +126,7 @@ class CategoryLlmOverridesTest {
                       extract: { provider: foo, model: bar }
             """)
         }
-        assertEquals(true, ex.message?.contains("must be 'openai', 'openrouter', 'anthropic', or 'claudecli'"))
+        assertEquals(true, ex.message?.contains("must be 'openai', 'openrouter', 'anthropic', 'claudecli', or 'codexcli'"))
     }
 
     @Test
@@ -205,6 +205,91 @@ class CategoryLlmOverridesTest {
             """)
         }
         assertEquals(true, ex.message?.contains("batch override only supports provider: openai or anthropic"))
+    }
+
+    // ── Codex CLI provider ──────────────────────────────────────────────────
+
+    @Test
+    fun `codexcli override accepted with block present and blank model allowed`() {
+        val config = load("""
+            telegram:
+              botToken: "tok"
+            openai:
+              apiKey: "sk-test"
+            codexCli:
+              command: "codex"
+              model: ""
+            database:
+              path: "test.db"
+            scheduler:
+              intervalMinutes: 60
+            categories:
+              tech:
+                emoji: "💻"
+                channelId: "@tech"
+                feeds:
+                  - https://example.com/feed
+                llm:
+                  render:    { provider: codexcli, model: "" }
+                  summarize: { provider: codexcli, model: gpt-5-codex }
+        """)
+        val ovr = config.categories["tech"]?.llm
+        assertEquals("codexcli", ovr?.render?.provider)
+        assertEquals("", ovr?.render?.model)
+        assertEquals("codexcli", ovr?.summarize?.provider)
+        assertEquals("gpt-5-codex", ovr?.summarize?.model)
+    }
+
+    @Test
+    fun `codexcli override without top-level block rejected`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      render: { provider: codexcli, model: "" }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("requires top-level codexCli: block"))
+    }
+
+    @Test
+    fun `codexcli extract with batch true rejected`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                codexCli:
+                  command: "codex"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      extract: { provider: codexcli, model: "", batch: true }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("batch=true is not supported for provider 'codexcli'"))
     }
 
     // ── Anthropic provider ────────────────────────────────────────────────────
@@ -373,7 +458,7 @@ class CategoryLlmOverridesTest {
                       batchFallback: { provider: foo, model: bar }
             """)
         }
-        assertEquals(true, ex.message?.contains("must be 'openai', 'openrouter', 'anthropic', or 'claudecli'"))
+        assertEquals(true, ex.message?.contains("must be 'openai', 'openrouter', 'anthropic', 'claudecli', or 'codexcli'"))
     }
 
     @Test
