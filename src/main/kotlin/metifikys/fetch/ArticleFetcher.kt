@@ -92,6 +92,56 @@ class ArticleFetcher(
         }
     }
 
+    /**
+     * Fills [Article.imageUrl] for articles that have none by fetching the linked page and
+     * reading its Open Graph / Twitter Card preview image meta tags.
+     *
+     * The caller decides which articles to pass (keeps this class decoupled from config) —
+     * typically only articles in image-enabled categories whose RSS entry carried no image.
+     * Articles that already have an [Article.imageUrl] are skipped. Failures are silent: the
+     * original article is returned unchanged on any error.
+     *
+     * @return New list with [Article.imageUrl] populated where a preview image was found;
+     *   original articles otherwise.
+     */
+    fun fillPreviewImages(articles: List<Article>): List<Article> {
+        return articles.map { article ->
+            if (article.imageUrl == null) {
+                tryFetchPreviewImage(article)
+            } else {
+                article
+            }
+        }
+    }
+
+    private fun tryFetchPreviewImage(article: Article): Article {
+        if (article.link.isBlank()) return article
+
+        if (enforceUrlValidation) {
+            try {
+                rssFetcher.validateFeedUrl(article.link)
+            } catch (e: IllegalArgumentException) {
+                logger.warn { "[ArticleFetcher] Rejected article URL '${article.link}': ${e.message}" }
+                return article
+            }
+        }
+
+        return try {
+            val html = fetchHtml(article.link) ?: return article
+            val image = extractOgImage(html, article.link)
+            if (image.isNullOrBlank()) {
+                logger.debug { "[ArticleFetcher] No preview image found for '${article.link}'" }
+                article
+            } else {
+                logger.info { "[ArticleFetcher] Preview image for '${article.link}': $image" }
+                article.copy(imageUrl = image)
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "[ArticleFetcher] Failed to fetch preview image for '${article.link}'" }
+            article
+        }
+    }
+
     private fun tryFetchContent(article: Article): Article {
         if (article.link.isBlank()) return article
 
@@ -216,5 +266,35 @@ class ArticleFetcher(
             .joinToString(" ")
 
         return paragraphText.takeIf { it.length >= MIN_SELECTOR_TEXT_LENGTH }
+    }
+
+    /**
+     * Extracts the page's link-preview image from Open Graph / Twitter Card meta tags.
+     *
+     * Tried in priority order: `og:image`, `og:image:secure_url`, `twitter:image`,
+     * `twitter:image:src`. The first tag with a non-blank `content` wins. Relative URLs are
+     * resolved against [baseUrl] via jsoup's `absUrl`, falling back to the raw attribute.
+     *
+     * @return Absolute image URL, or null when no usable preview image meta tag is present.
+     */
+    internal fun extractOgImage(html: String, baseUrl: String): String? {
+        val doc: Document = Jsoup.parse(html, baseUrl)
+
+        val selectors = listOf(
+            "meta[property=og:image]",
+            "meta[property=og:image:secure_url]",
+            "meta[name=twitter:image]",
+            "meta[name=twitter:image:src]"
+        )
+
+        for (selector in selectors) {
+            val element = doc.selectFirst(selector) ?: continue
+            val resolved = element.absUrl("content").takeIf { it.isNotBlank() }
+            val raw = element.attr("content").trim().takeIf { it.isNotBlank() }
+            val image = resolved ?: raw ?: continue
+            return image
+        }
+
+        return null
     }
 }

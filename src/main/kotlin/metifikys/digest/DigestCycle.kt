@@ -60,7 +60,11 @@ class DigestCycle(
             logger.info { "After dedup: ${newRawArticles.size} new article(s) (${existingLinks.size} already in DB)." }
 
             val enriched = articleFetcher.enrich(newRawArticles)
-            val articles = articleSummarizer.summarize(enriched)
+            val summarized = articleSummarizer.summarize(enriched)
+
+            // Fill preview images (og:image) for image-enabled categories whose RSS entries
+            // carried no image, so the photo+caption delivery path has something to post.
+            val articles = fillPreviewImages(summarized)
 
             val inserted = db.insertArticles(articles)
             logger.info { "Inserted $inserted new articles into DB." }
@@ -91,6 +95,24 @@ class DigestCycle(
             statusPoster?.post()
             logger.info { "=== Digest cycle finished ===" }
         }
+    }
+
+    /**
+     * For articles in image-enabled categories that have no RSS image, fetches the article
+     * page's Open Graph / Twitter Card preview image and populates [Article.imageUrl].
+     * Articles in non-image categories or that already have an image pass through untouched.
+     */
+    private fun fillPreviewImages(articles: List<metifikys.model.Article>): List<metifikys.model.Article> {
+        val imageCats = config.categories.filterValues { it.enableImages }.keys
+        if (imageCats.isEmpty()) return articles
+
+        val (eligible, rest) = articles.partition { it.category in imageCats && it.imageUrl == null }
+        if (eligible.isEmpty()) return articles
+
+        val withImages = articleFetcher.fillPreviewImages(eligible)
+        val found = withImages.count { it.imageUrl != null }
+        logger.info { "[PreviewImage] ${eligible.size} eligible article(s), $found got a preview image." }
+        return withImages + rest
     }
 
     /**

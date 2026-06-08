@@ -1,6 +1,7 @@
 package metifikys.telegram
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import metifikys.format.TopicFormatter
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -56,28 +57,33 @@ class TelegramSender(private val botToken: String) {
     private companion object {
         /** Telegram's hard limit for sendPhoto caption length. */
         const val MAX_CAPTION_LEN = 1024
+
+        /** Matches the `<a href="url">label</a>` anchors emitted by [TopicFormatter.toHtml]. */
+        val HTML_ANCHOR = Regex("""<a href="([^"]*)">(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
     }
 
     fun sendToChannel(channelId: String, text: String, disablePreview: Boolean = false): Boolean {
         val chunks = chunkMessage(text)
         var allSuccess = true
         for (chunk in chunks) {
-            val success = sendMessage(channelId, chunk, parseMode = "Markdown", disablePreview = disablePreview)
-                || sendMessage(channelId, chunk.stripMarkdown(), parseMode = null, disablePreview = disablePreview)
+            val html = TopicFormatter.toHtml(chunk)
+            val success = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview)
+                || sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview)
             if (!success) allSuccess = false
         }
         return allSuccess
     }
 
     /**
-     * Sends a photo with optional caption. Tries Markdown parse mode first, falls back to plain text
+     * Sends a photo with optional caption. Tries HTML parse mode first, falls back to plain text
      * (mirroring [sendToChannel]). Caption is truncated to [MAX_CAPTION_LEN] with an ellipsis if needed.
      * Returns false if both attempts fail.
      */
     fun sendPhotoToChannel(channelId: String, photoUrl: String, caption: String? = null): Boolean {
-        val safeCaption = caption?.let { truncateForCaption(it) }
-        return sendPhoto(channelId, photoUrl, safeCaption, parseMode = "Markdown")
-            || sendPhoto(channelId, photoUrl, safeCaption?.stripMarkdown(), parseMode = null)
+        // Truncate the Markdown caption first (so we never cut inside an <a> tag), then render HTML.
+        val htmlCaption = caption?.let { TopicFormatter.toHtml(truncateForCaption(it)) }
+        return sendPhoto(channelId, photoUrl, htmlCaption, parseMode = "HTML")
+            || sendPhoto(channelId, photoUrl, htmlCaption?.htmlToPlainText(), parseMode = null)
     }
 
     private fun sendPhoto(chatId: String, photoUrl: String, caption: String?, parseMode: String?): Boolean {
@@ -122,6 +128,9 @@ class TelegramSender(private val botToken: String) {
      * Sends a single message and returns its `message_id` for later edits or deletion.
      * Markdown is attempted first; falls back to plain text. Returns null if both fail.
      * Used by the status-poster path; not for fan-out channel messages (which may chunk).
+     *
+     * Intentionally stays on legacy Markdown (its input is controlled status text, not LLM output),
+     * unlike the digest channel path which renders HTML. See [sendToChannel].
      */
     fun sendMessageReturningId(chatId: String, text: String): Long? {
         return sendMessageInternal(chatId, text, parseMode = "Markdown")
@@ -195,6 +204,19 @@ class TelegramSender(private val botToken: String) {
         return chunks
     }
 
+    /** Plain-text fallback for the status path (legacy Markdown). */
     private fun String.stripMarkdown(): String =
         replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
+
+    /**
+     * Plain-text fallback for the HTML digest path, used when Telegram rejects the HTML.
+     * Unlike [stripMarkdown], it keeps the URL visible: `<a href="url">label</a>` -> `label: url`,
+     * so a parse failure degrades to a readable link instead of a corrupted one.
+     */
+    private fun String.htmlToPlainText(): String =
+        HTML_ANCHOR.replace(this) { "${it.groupValues[2]}: ${it.groupValues[1]}" }
+            .replace("<b>", "").replace("</b>", "")
+            .replace("<i>", "").replace("</i>", "")
+            .replace("<code>", "").replace("</code>", "")
+            .replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 }

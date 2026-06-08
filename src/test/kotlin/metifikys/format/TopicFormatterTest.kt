@@ -137,5 +137,60 @@ class TopicFormatterTest {
         )
     }
 
+    // ── HTML rendering (toHtml) tests ─────────────────────────────────────────
 
+    @Test
+    fun `toHtml keeps a link label that contains nested brackets`() {
+        // The production bug: a Reddit title ending in a `[P]` flair tag broke legacy Markdown.
+        val url = "https://www.reddit.com/r/MachineLearning/comments/1tx6g3i/scrap_the_llms/"
+        val topic = "🧠 **Заголовок.**\n\nТекст опису.\n\n" +
+                "[Scrap the LLMs. Scoring 4.76% on the brand new ARC-3 … and zero AI tokens.[P]]($url)"
+        val out = TopicFormatter.toHtml(topic)
+        assertEquals(
+            "🧠 <b>Заголовок.</b>\n\nТекст опису.\n\n" +
+                    "<a href=\"$url\">Scrap the LLMs. Scoring 4.76% on the brand new ARC-3 … and zero AI tokens.[P]</a>",
+            out
+        )
+        // No orphaned "(url)" — the exact corruption we are fixing.
+        assertFalse(out.contains(".[P](https"), "Brackets must not collapse into an orphan link: $out")
+    }
+
+    @Test
+    fun `toHtml converts bold headline and escapes special characters`() {
+        val topic = "🎮 **Head.**\n\nFoo *bar* and a_b with AT&T <tag> a>b.\n\n[L](https://x/y)"
+        val out = TopicFormatter.toHtml(topic)
+        // **bold** becomes <b>; literal * and _ pass through; & < > are escaped; emitted tags are not.
+        assertEquals(
+            "🎮 <b>Head.</b>\n\nFoo *bar* and a_b with AT&amp;T &lt;tag&gt; a&gt;b.\n\n" +
+                    "<a href=\"https://x/y\">L</a>",
+            out
+        )
+    }
+
+    @Test
+    fun `toHtml renders a link even when the topic has no bold headline`() {
+        val out = TopicFormatter.toHtml("Plain text without bold\n\n[Src](https://x/y)")
+        assertEquals("Plain text without bold\n\n<a href=\"https://x/y\">Src</a>", out)
+    }
+
+    @Test
+    fun `toHtml escapes the headline and body without a trailing link`() {
+        val out = TopicFormatter.toHtml("**A & B** body <here>")
+        assertEquals("<b>A &amp; B</b> body &lt;here&gt;", out)
+    }
+
+    @Test
+    fun `toHtml keeps a URL containing parentheses intact`() {
+        val url = "https://en.wikipedia.org/wiki/Bar_(baz)"
+        val out = TopicFormatter.toHtml("[Foo]($url)")
+        assertEquals("<a href=\"$url\">Foo</a>", out)
+    }
+
+    // ── extractUrls tests ─────────────────────────────────────────────────────
+
+    @Test
+    fun `extractUrls keeps a URL containing balanced parentheses`() {
+        val url = "https://en.wikipedia.org/wiki/Bar_(baz)"
+        assertEquals(setOf(url), TopicFormatter.extractUrls("Body. [Foo]($url)"))
+    }
 }

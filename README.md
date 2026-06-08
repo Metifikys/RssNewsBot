@@ -412,9 +412,14 @@ pending ≥ primary + secondary                            → sync render (llm.
 When the category has no `batchFallback` configured, the secondary band collapses and the
 sync cutoff drops to `primaryMaxPending` — preserving the original two-tier behaviour.
 
+Set `primaryMaxPending: 0` to disable the primary render Batch API entirely: no primary
+batch is ever submitted, so every render goes synchronously — via `llm.batchFallback` when
+the category configures one, otherwise via the sync render client. (The Step-1 extract batch
+is governed separately by whether the extract endpoint is batch-capable, not by this knob.)
+
 Defaults from `config.example.yaml`:
 
-- `primaryMaxPending: 2`
+- `primaryMaxPending: 2` (`0` disables batch)
 - `secondaryMaxPending: 1`
 
 Additional protections:
@@ -652,7 +657,7 @@ first cycle.
 |------------------------|---------|--------------------------------------------------|
 | `staleTimeoutHours`    | 3       | Reclaim `PROCESSING` rows older than this        |
 | `minArticles`          | 8       | Skip a category with fewer than N new articles   |
-| `primaryMaxPending`    | 2       | Promote to `batchFallback` at this many pending  |
+| `primaryMaxPending`    | 2       | Promote to `batchFallback` at this many pending; `0` disables primary batch |
 | `secondaryMaxPending`  | 1       | Drop to sync render at primary + secondary       |
 
 ### `CategoryConfig`
