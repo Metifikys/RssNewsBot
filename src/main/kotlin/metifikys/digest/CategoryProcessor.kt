@@ -15,9 +15,12 @@ import metifikys.model.CategoryInput
 import metifikys.model.ShortlistItem
 import java.time.Duration
 import java.time.LocalDateTime
+import java.util.concurrent.Callable
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 private val logger = KotlinLogging.logger {}
@@ -55,222 +58,285 @@ class CategoryProcessor(
 
     private companion object {
         const val SYNC_FALLBACK_CAP = 60
+
+        /**
+         * Per-cycle ceiling for the category fan-out barrier. Comfortably above the inner LLM
+         * timeouts (CLI 300s, Anthropic callTimeout 5min, OpenAI read windows). On expiry,
+         * unfinished category workers are cancelled; their articles stay PROCESSING and are
+         * reclaimed next cycle via the stale-timeout.
+         */
+        const val CATEGORY_DEADLINE_MINUTES = 15L
     }
 
     private val extractorCounters = ConcurrentHashMap<String, AtomicLong>()
 
     /**
-     * Submits each category to the OpenAI Batch API as an independent batch job.
-     * Each category gets its own CompletableFuture with its own delivery callback,
-     * so categories don't block each other — a fast category delivers immediately.
-     * Falls back to synchronous calls per category if batch submission fails.
+     * Processes each ready category independently — categories never block each other:
+     *  - Batch route: `submitCategoryBatch()` returns a CompletableFuture and delivery fires from
+     *    its callback, so the submitting worker returns immediately.
+     *  - Sync route: the blocking render/extract call runs on its own per-category worker thread.
+     *
+     * `process()` fans out one worker per category (capped by `processing.maxConcurrentCategories`)
+     * and barrier-waits for the cycle. So a slow or stuck category — e.g. a hanging sync LLM call
+     * in fully-sync mode — only stalls itself, not the others. Submission failures do NOT trigger
+     * sync fallback; they revert the affected articles to UNPROCESSED for retry next cycle.
      */
     fun process(byCategory: Map<String, List<Article>>) {
+        if (byCategory.isEmpty()) return
+
+        // Common case: a single ready category → run inline, skip the pool.
+        if (byCategory.size == 1) {
+            val (name, articles) = byCategory.entries.first()
+            runCategorySafely(name, articles)
+            return
+        }
+
+        // Fan out one worker per category (capped). The barrier keeps the cycle boundary clean:
+        // the single-thread scheduler won't overlap cycles, and DigestCycle's tail cleanup +
+        // status post still run after every category finishes.
+        val concurrency = minOf(byCategory.size, config.processing.maxConcurrentCategories).coerceAtLeast(1)
+        val pool = Executors.newFixedThreadPool(concurrency) { r ->
+            Thread(r, "category-worker").also { it.isDaemon = true }
+        }
+        try {
+            val tasks = byCategory.map { (name, articles) ->
+                Callable { runCategorySafely(name, articles) }
+            }
+            // Safety deadline so a pathological hang (beyond the inner LLM timeouts) can't wedge
+            // the scheduler. Unfinished tasks are cancelled; their articles stay PROCESSING and
+            // are reclaimed next cycle via the stale-timeout.
+            pool.invokeAll(tasks, CATEGORY_DEADLINE_MINUTES, TimeUnit.MINUTES)
+        } finally {
+            pool.shutdown()
+        }
+    }
+
+    /**
+     * Runs one category's Step 1 + Step 2 with a guard so an unexpected throw is contained to this
+     * category (recorded, not propagated), leaving the other workers unaffected. Stricter than the
+     * old inline loop, where one uncaught throw aborted the whole cycle.
+     */
+    private fun runCategorySafely(name: String, articles: List<Article>) {
+        try {
+            processCategory(name, articles)
+        } catch (e: Exception) {
+            errorLog.recordError(name, "[Category]", e)
+            logger.error(e) { "[Category:$name] task failed — other categories unaffected." }
+        }
+    }
+
+    /**
+     * Step 1 (event extraction / dedup) and Step 2 (digest render) for a single category. Each
+     * early-out below is a `return` (these were `continue` when this body ran inside the
+     * per-category loop).
+     */
+    private fun processCategory(name: String, articles: List<Article>) {
+        val categoryConfig = config.categories[name] ?: return
         val historyMaxCount = config.summaryHistory.maxCount
         val chunkSize = 100
 
-        for ((name, articles) in byCategory) {
-            val categoryConfig = config.categories[name] ?: continue
-
-            // ── Step 1: pre-cycle gate ─────────────────────────────────────────────
-            // (a) basic floor — too few articles to bother with the LLM at all
-            if (articles.size < config.processing.minArticles) {
-                logger.info { "[Category:$name] Only ${articles.size} article(s), need ${config.processing.minArticles}. Skipping." }
-                continue
-            }
-            // (b) backpressure — if batches are piling up AND new article volume isn't large
-            // enough to justify forcing a sync call, skip the whole cycle for this category.
-            val pendingForCategory = db.countPendingBatchesForCategory(name)
-            // Three-tier routing driven by global thresholds:
-            //   pending < primaryMax                              → primary batch
-            //   primaryMax ≤ pending < primaryMax+secondaryMax    → llm.batchFallback (when configured)
-            //   pending ≥ syncCutoff                              → sync render fallback (isBatchingStuck)
-            // When the category has no `batchFallback`, the secondary band collapses and the
-            // sync cutoff drops to `primaryMaxPending` — preserving the original two-tier behaviour.
-            // When primaryMaxPending == 0 OR the category sets `skipBatch: true`, the primary
-            // Batch API is disabled outright: no primary batch is ever submitted, render runs
-            // synchronously (via batchFallback when configured, else the sync render client),
-            // and the backpressure heuristic is moot (pending stays 0).
-            val primaryMaxPending = config.processing.primaryMaxPending
-            val secondaryMaxPending = config.processing.secondaryMaxPending
-            val batchingDisabled = primaryMaxPending == 0 || categoryConfig.skipBatch || categoryConfig.skipBatch
-            val hasBatchFallback = categoryConfig.llm?.batchFallback != null
-            val syncCutoff = if (hasBatchFallback) primaryMaxPending + secondaryMaxPending else primaryMaxPending
-            val isBatchingStuck = !batchingDisabled && pendingForCategory >= syncCutoff
-            if (isBatchingStuck && articles.size < 2 * config.processing.minArticles) {
-                logger.warn {
-                    "[Category:$name] backpressure: pending=$pendingForCategory ≥ syncCutoff=$syncCutoff, " +
+        // ── Step 1: pre-cycle gate ─────────────────────────────────────────────
+        // (a) basic floor — too few articles to bother with the LLM at all
+        if (articles.size < config.processing.minArticles) {
+            logger.info { "[Category:$name] Only ${articles.size} article(s), need ${config.processing.minArticles}. Skipping." }
+            return
+        }
+        // (b) backpressure — if batches are piling up AND new article volume isn't large
+        // enough to justify forcing a sync call, skip the whole cycle for this category.
+        val pendingForCategory = db.countPendingBatchesForCategory(name)
+        // Three-tier routing driven by global thresholds:
+        //   pending < primaryMax                              → primary batch
+        //   primaryMax ≤ pending < primaryMax+secondaryMax    → llm.batchFallback (when configured)
+        //   pending ≥ syncCutoff                              → sync render fallback (isBatchingStuck)
+        // When the category has no `batchFallback`, the secondary band collapses and the
+        // sync cutoff drops to `primaryMaxPending` — preserving the original two-tier behaviour.
+        // When primaryMaxPending == 0 OR the category sets `skipBatch: true`, the primary
+        // Batch API is disabled outright: no primary batch is ever submitted, render runs
+        // synchronously (via batchFallback when configured, else the sync render client),
+        // and the backpressure heuristic is moot (pending stays 0).
+        val primaryMaxPending = config.processing.primaryMaxPending
+        val secondaryMaxPending = config.processing.secondaryMaxPending
+        val batchingDisabled = primaryMaxPending == 0 || categoryConfig.skipBatch
+        val hasBatchFallback = categoryConfig.llm?.batchFallback != null
+        val syncCutoff = if (hasBatchFallback) primaryMaxPending + secondaryMaxPending else primaryMaxPending
+        val isBatchingStuck = !batchingDisabled && pendingForCategory >= syncCutoff
+        if (isBatchingStuck && articles.size < 2 * config.processing.minArticles) {
+            logger.warn {
+                "[Category:$name] backpressure: pending=$pendingForCategory ≥ syncCutoff=$syncCutoff, " +
                         "newArticles=${articles.size} < 2×${config.processing.minArticles}. Skipping cycle."
-                }
-                continue
             }
-            val useBatchFallback = hasBatchFallback &&
+            return
+        }
+        val useBatchFallback = hasBatchFallback &&
                 (batchingDisabled || (!isBatchingStuck && pendingForCategory >= primaryMaxPending))
-            // primaryMaxPending == 0 with no batchFallback configured → render via the sync client.
-            val bypassPrimaryBatch = isBatchingStuck || (batchingDisabled && !useBatchFallback)
+        // primaryMaxPending == 0 with no batchFallback configured → render via the sync client.
+        val bypassPrimaryBatch = isBatchingStuck || (batchingDisabled && !useBatchFallback)
 
-            val previousSummaries = if (historyMaxCount > 0) {
-                db.fetchRecentSummaries(name, historyMaxCount)
-                    .map { it.summary }
-                    .reversed()
-            } else emptyList()
+        val previousSummaries = if (historyMaxCount > 0) {
+            db.fetchRecentSummaries(name, historyMaxCount)
+                .map { it.summary }
+                .reversed()
+        } else emptyList()
 
-            // ── Step 2: dedup (if configured for this category) ───────────────────
-            // Produces (shortlist, resolvedDedup) when successful — both nullable. When the
-            // category has no dedup config, OR Step 1 fails, we fall through with shortlist=null
-            // and the legacy chunked path takes over.
-            val resolvedDedup = promptLoader.resolve(categoryConfig)
-            var shortlist: List<ShortlistItem>? = null
-            var dedupCapped: List<Article>? = null
+        // ── Step 2: dedup (if configured for this category) ───────────────────
+        // Produces (shortlist, resolvedDedup) when successful — both nullable. When the
+        // category has no dedup config, OR Step 1 fails, we fall through with shortlist=null
+        // and the legacy chunked path takes over.
+        val resolvedDedup = promptLoader.resolve(categoryConfig)
+        var shortlist: List<ShortlistItem>? = null
+        var dedupCapped: List<Article>? = null
 
-            if (resolvedDedup != null) {
-                val capped = if (articles.size > 100) {
-                    logger.warn {
-                        "[Category:$name][Dedup] capped Step 1 input from ${articles.size} to 100 (newest by pubDate)"
-                    }
-                    articles.sortedByDescending { it.pubDate }.take(100)
-                } else articles
-                val cappedLinks = capped.map { it.link }
-                db.markProcessing(cappedLinks)
-
-                val extractor = eventExtractor ?: run {
-                    val (primary, alternate) = llmClientsFactory.forExtract(categoryConfig)
-                    EventExtractor(
-                        openAI = primary,
-                        promptLoader = promptLoader,
-                        db = db,
-                        alternateOpenAI = alternate,
-                        requestCounter = extractorCounters.getOrPut(name) { AtomicLong(0) }
-                    )
+        if (resolvedDedup != null) {
+            val capped = if (articles.size > 100) {
+                logger.warn {
+                    "[Category:$name][Dedup] capped Step 1 input from ${articles.size} to 100 (newest by pubDate)"
                 }
-                val outcome = try {
-                    extractor.extract(name, categoryConfig, capped)
-                } catch (e: BillingException) {
+                articles.sortedByDescending { it.pubDate }.take(100)
+            } else articles
+            val cappedLinks = capped.map { it.link }
+            db.markProcessing(cappedLinks)
+
+            val extractor = eventExtractor ?: run {
+                val (primary, alternate) = llmClientsFactory.forExtract(categoryConfig)
+                EventExtractor(
+                    openAI = primary,
+                    promptLoader = promptLoader,
+                    db = db,
+                    alternateOpenAI = alternate,
+                    requestCounter = extractorCounters.getOrPut(name) { AtomicLong(0) }
+                )
+            }
+            val outcome = try {
+                extractor.extract(name, categoryConfig, capped)
+            } catch (e: BillingException) {
+                db.markUnprocessed(cappedLinks)
+                errorLog.recordBilling(name, "[Dedup]")
+                logger.warn { "[Category:$name][Dedup] Billing/quota limit in Step 1 — skipping." }
+                return
+            } catch (e: Exception) {
+                db.markUnprocessed(cappedLinks)
+                errorLog.recordError(name, "[Dedup]", e)
+                logger.error(e) { "[Category:$name][Dedup] Step 1 threw unexpectedly — skipping." }
+                return
+            }
+
+            when (outcome) {
+                is ExtractOutcome.FallbackToLegacy -> {
                     db.markUnprocessed(cappedLinks)
-                    errorLog.recordBilling(name, "[Dedup]")
-                    logger.warn { "[Category:$name][Dedup] Billing/quota limit in Step 1 — skipping." }
-                    continue
-                } catch (e: Exception) {
-                    db.markUnprocessed(cappedLinks)
-                    errorLog.recordError(name, "[Dedup]", e)
-                    logger.error(e) { "[Category:$name][Dedup] Step 1 threw unexpectedly — skipping." }
-                    continue
+                    logger.warn { "[Category:$name][Dedup] Step 1 fell back to legacy — running legacy chunked path." }
+                    // shortlist stays null → fall through to legacy chunked submission
                 }
 
-                when (outcome) {
-                    is ExtractOutcome.FallbackToLegacy -> {
-                        db.markUnprocessed(cappedLinks)
-                        logger.warn { "[Category:$name][Dedup] Step 1 fell back to legacy — running legacy chunked path." }
-                        // shortlist stays null → fall through to legacy chunked submission
-                    }
-                    is ExtractOutcome.PendingBatch -> {
-                        // Batch submitted; Step 2 fires from the callback when the batch resolves.
-                        val capturedExtractor = extractor
-                        outcome.future
-                            .thenAccept { rawJson ->
-                                val result = capturedExtractor.resumeFromBatch(name, categoryConfig, capped, rawJson)
-                                when {
-                                    result == null -> {
-                                        db.markUnprocessed(cappedLinks)
-                                        logger.warn { "[Category:$name][Dedup] Extract batch result parse failed — reverting to UNPROCESSED." }
-                                    }
-                                    result.shortlist.isEmpty() -> {
-                                        logger.info {
-                                            "[Category:$name][Dedup] Empty shortlist from batch extract — marking ${cappedLinks.size} article(s) PROCESSED."
-                                        }
-                                        db.markProcessed(cappedLinks)
-                                    }
-                                    else -> deliverShortlist(name, categoryConfig, capped, result.shortlist)
+                is ExtractOutcome.PendingBatch -> {
+                    // Batch submitted; Step 2 fires from the callback when the batch resolves.
+                    val capturedExtractor = extractor
+                    outcome.future
+                        .thenAccept { rawJson ->
+                            val result = capturedExtractor.resumeFromBatch(name, categoryConfig, capped, rawJson)
+                            when {
+                                result == null -> {
+                                    db.markUnprocessed(cappedLinks)
+                                    logger.warn { "[Category:$name][Dedup] Extract batch result parse failed — reverting to UNPROCESSED." }
                                 }
-                            }
-                            .exceptionally { ex ->
-                                val cause = if (ex is ExecutionException) ex.cause ?: ex else ex
-                                db.markUnprocessed(cappedLinks)
-                                errorLog.recordError(name, "[Dedup]", cause)
-                                if (cause is BillingException) {
-                                    logger.warn { "[Category:$name][Dedup] Billing limit during extract batch polling." }
-                                } else {
-                                    logger.error(cause) { "[Category:$name][Dedup] Extract batch failed — reverting to UNPROCESSED." }
-                                }
-                                null
-                            }
-                        continue  // Skip Step 2 in this cycle; fires async via callback
-                    }
-                    is ExtractOutcome.Ready -> {
-                        val extraction = outcome.result
-                        if (extraction.shortlist.isEmpty()) {
-                            logger.info {
-                                "[Category:$name][Dedup] Empty shortlist (${extraction.extractions.size} extractions, all dupes/rejects) " +
-                                    "— marking ${cappedLinks.size} article(s) PROCESSED, skipping submission."
-                            }
-                            db.markProcessed(cappedLinks)
-                            continue
-                        }
-                        val digestCfg = categoryConfig.dedup?.digest
-                        if (digestCfg != null && digestCfg.ranker.enabled) {
-                            val shortlistSize = extraction.shortlist.size
-                            if (shortlistSize < digestCfg.minStrongItems) {
-                                val lastDigestAt = db.fetchRecentSummaries(name, 1).firstOrNull()?.createdAt
-                                val hoursSince = lastDigestAt?.let {
-                                    Duration.between(it, LocalDateTime.now()).toHours()
-                                } ?: Long.MAX_VALUE
-                                val pastMaxWait = hoursSince >= digestCfg.maxWaitHours
-                                val meetsForceFloor = shortlistSize >= digestCfg.minItemsOnForcePublish
-                                if (!(pastMaxWait && meetsForceFloor)) {
+
+                                result.shortlist.isEmpty() -> {
                                     logger.info {
-                                        "[Category:$name][Dedup] Weak shortlist: $shortlistSize < minStrongItems=${digestCfg.minStrongItems} " +
-                                            "(hoursSinceLastDigest=$hoursSince, maxWaitHours=${digestCfg.maxWaitHours}). " +
-                                            "Holding back; marking ${cappedLinks.size} article(s) PROCESSED."
+                                        "[Category:$name][Dedup] Empty shortlist from batch extract — marking ${cappedLinks.size} article(s) PROCESSED."
                                     }
                                     db.markProcessed(cappedLinks)
-                                    continue
                                 }
-                                logger.info {
-                                    "[Category:$name][Dedup] Force-publishing weak shortlist ($shortlistSize items) " +
-                                        "— hoursSinceLastDigest=$hoursSince ≥ maxWaitHours=${digestCfg.maxWaitHours}."
-                                }
+
+                                else -> deliverShortlist(name, categoryConfig, capped, result.shortlist)
                             }
                         }
-                        shortlist = extraction.shortlist
-                        dedupCapped = capped
+                        .exceptionally { ex ->
+                            val cause = if (ex is ExecutionException) ex.cause ?: ex else ex
+                            db.markUnprocessed(cappedLinks)
+                            errorLog.recordError(name, "[Dedup]", cause)
+                            if (cause is BillingException) {
+                                logger.warn { "[Category:$name][Dedup] Billing limit during extract batch polling." }
+                            } else {
+                                logger.error(cause) { "[Category:$name][Dedup] Extract batch failed — reverting to UNPROCESSED." }
+                            }
+                            null
+                        }
+                    return  // Skip Step 2 in this cycle; fires async via callback
+                }
+
+                is ExtractOutcome.Ready -> {
+                    val extraction = outcome.result
+                    if (extraction.shortlist.isEmpty()) {
+                        logger.info {
+                            "[Category:$name][Dedup] Empty shortlist (${extraction.extractions.size} extractions, all dupes/rejects) " +
+                                    "— marking ${cappedLinks.size} article(s) PROCESSED, skipping submission."
+                        }
+                        db.markProcessed(cappedLinks)
+                        return
                     }
+                    val digestCfg = categoryConfig.dedup?.digest
+                    if (digestCfg != null && digestCfg.ranker.enabled) {
+                        val shortlistSize = extraction.shortlist.size
+                        if (shortlistSize < digestCfg.minStrongItems) {
+                            val lastDigestAt = db.fetchRecentSummaries(name, 1).firstOrNull()?.createdAt
+                            val hoursSince = lastDigestAt?.let {
+                                Duration.between(it, LocalDateTime.now()).toHours()
+                            } ?: Long.MAX_VALUE
+                            val pastMaxWait = hoursSince >= digestCfg.maxWaitHours
+                            val meetsForceFloor = shortlistSize >= digestCfg.minItemsOnForcePublish
+                            if (!(pastMaxWait && meetsForceFloor)) {
+                                logger.info {
+                                    "[Category:$name][Dedup] Weak shortlist: $shortlistSize < minStrongItems=${digestCfg.minStrongItems} " +
+                                            "(hoursSinceLastDigest=$hoursSince, maxWaitHours=${digestCfg.maxWaitHours}). " +
+                                            "Holding back; marking ${cappedLinks.size} article(s) PROCESSED."
+                                }
+                                db.markProcessed(cappedLinks)
+                                return
+                            }
+                            logger.info {
+                                "[Category:$name][Dedup] Force-publishing weak shortlist ($shortlistSize items) " +
+                                        "— hoursSinceLastDigest=$hoursSince ≥ maxWaitHours=${digestCfg.maxWaitHours}."
+                            }
+                        }
+                    }
+                    shortlist = extraction.shortlist
+                    dedupCapped = capped
                 }
             }
+        }
 
-            // ── Step 3+4: build prompt + route (batch preferred, sync as fallback) ─
-            // PromptBuilder centralises the user/system messages; both routes call it
-            // so the LLM input is identical regardless of which API we hit.
-            if (shortlist != null && dedupCapped != null) {
-                // Render mode: one digest per category (no chunking — already capped to ≤100).
+        // ── Step 3+4: build prompt + route (batch preferred, sync as fallback) ─
+        // PromptBuilder centralises the user/system messages; both routes call it
+        // so the LLM input is identical regardless of which API we hit.
+        if (shortlist != null && dedupCapped != null) {
+            // Render mode: one digest per category (no chunking — already capped to ≤100).
+            submitOrSync(
+                name = name,
+                categoryConfig = categoryConfig,
+                articles = dedupCapped,
+                shortlist = shortlist,
+                resolvedDedup = resolvedDedup,
+                previousSummaries = emptyList(),  // shortlist already encodes the editorial decision
+                chunkLabel = "",
+                isBatchingStuck = bypassPrimaryBatch,
+                useBatchFallback = useBatchFallback
+            )
+        } else {
+            // Legacy path: chunked submission, no dedup.
+            val chunks = articles.chunked(chunkSize)
+            logger.info { "[Category:$name] Submitting ${articles.size} news in ${chunks.size} chunk(s) of up to $chunkSize..." }
+            for ((chunkIdx, chunk) in chunks.withIndex()) {
+                val chunkLabel = if (chunks.size > 1) " [chunk ${chunkIdx + 1}/${chunks.size}]" else ""
                 submitOrSync(
                     name = name,
                     categoryConfig = categoryConfig,
-                    articles = dedupCapped,
-                    shortlist = shortlist,
-                    resolvedDedup = resolvedDedup,
-                    previousSummaries = emptyList(),  // shortlist already encodes the editorial decision
-                    chunkLabel = "",
+                    articles = chunk,
+                    shortlist = null,
+                    resolvedDedup = null,
+                    previousSummaries = previousSummaries,
+                    chunkLabel = chunkLabel,
                     isBatchingStuck = bypassPrimaryBatch,
                     useBatchFallback = useBatchFallback
                 )
-            } else {
-                // Legacy path: chunked submission, no dedup.
-                val chunks = articles.chunked(chunkSize)
-                logger.info { "[Category:$name] Submitting ${articles.size} news in ${chunks.size} chunk(s) of up to $chunkSize..." }
-                for ((chunkIdx, chunk) in chunks.withIndex()) {
-                    val chunkLabel = if (chunks.size > 1) " [chunk ${chunkIdx + 1}/${chunks.size}]" else ""
-                    submitOrSync(
-                        name = name,
-                        categoryConfig = categoryConfig,
-                        articles = chunk,
-                        shortlist = null,
-                        resolvedDedup = null,
-                        previousSummaries = previousSummaries,
-                        chunkLabel = chunkLabel,
-                        isBatchingStuck = bypassPrimaryBatch,
-                        useBatchFallback = useBatchFallback
-                    )
-                }
             }
         }
     }
@@ -298,7 +364,7 @@ class CategoryProcessor(
         val syncCutoff = if (hasBatchFallback) primaryMaxPending + secondaryMaxPending else primaryMaxPending
         val isBatchingStuck = !batchingDisabled && pendingForCategory >= syncCutoff
         val useBatchFallback = hasBatchFallback &&
-            (batchingDisabled || (!isBatchingStuck && pendingForCategory >= primaryMaxPending))
+                (batchingDisabled || (!isBatchingStuck && pendingForCategory >= primaryMaxPending))
         val bypassPrimaryBatch = isBatchingStuck || (batchingDisabled && !useBatchFallback)
         submitOrSync(
             name = name,
@@ -375,7 +441,8 @@ class CategoryProcessor(
 
         if (isBatchingStuck || useBatchFallback) {
             val syncClient = if (useBatchFallback) {
-                llmClientsFactory.forBatchFallback(categoryConfig) ?: error("useBatchFallback set but forBatchFallback returned null for '$name'")
+                llmClientsFactory.forBatchFallback(categoryConfig)
+                    ?: error("useBatchFallback set but forBatchFallback returned null for '$name'")
             } else {
                 llmClientsFactory.forRender(categoryConfig)
             }

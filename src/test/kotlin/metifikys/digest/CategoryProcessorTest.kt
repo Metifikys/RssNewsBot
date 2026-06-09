@@ -34,7 +34,10 @@ import metifikys.model.ShortlistItem
 import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
 import java.util.concurrent.CompletableFuture
-import kotlin.test.assertFailsWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
+import kotlin.test.assertTrue
 
 class CategoryProcessorTest {
 
@@ -176,15 +179,29 @@ class CategoryProcessorTest {
     }
 
     @Test
-    fun `useBatchFallback throws when forBatchFallback returns null`() {
+    fun `useBatchFallback null forBatchFallback is contained, not propagated`() {
+        // forBatchFallback returning null makes submitOrSync throw IllegalStateException. With
+        // per-category isolation that throw is caught by the category worker, recorded, and does
+        // NOT escape process() — so one misconfigured category can't abort the whole cycle.
         val cat = cat(llm = CategoryLlmOverrides(batchFallback = LlmOverride("openai", "gpt-fb")))
-        val (p, db, factory) = deps(cfg(primaryMaxPending = 2, secondaryMaxPending = 1, category = cat))
+        val config = cfg(primaryMaxPending = 2, secondaryMaxPending = 1, category = cat)
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val factory = mockk<LlmClientsFactory>()
+        val promptLoader = mockk<PromptLoader>()
+        val deliverer = mockk<DigestDeliverer>(relaxed = true)
+        val errorLog = CycleErrorLog()
+        every { promptLoader.resolve(any()) } returns null
         every { db.countPendingBatchesForCategory("tech") } returns 2
         every { factory.forBatchFallback(any()) } returns null
 
-        assertFailsWith<IllegalStateException> {
-            p.process(mapOf("tech" to (1..3).map { article(it) }))
-        }
+        val p = CategoryProcessor(config, db, factory, promptLoader, deliverer, errorLog = errorLog)
+
+        // Must not throw — the misconfiguration is contained to the category worker.
+        p.process(mapOf("tech" to (1..3).map { article(it) }))
+
+        verify { factory.forBatchFallback(any()) }
+        verify(exactly = 0) { deliverer.deliver(any(), any(), any(), any()) }
+        assertTrue(errorLog.list().any { it.category == "tech" }, "category error should be recorded")
     }
 
     // ── process(): legacy path (no dedup) ──────────────────────────────────────
@@ -493,5 +510,56 @@ class CategoryProcessorTest {
         p.process(mapOf("tech" to (1..6).map { article(it) }))
 
         verify { db.markUnprocessed(any()) }
+    }
+
+    // ── process(): per-category isolation (parallel fan-out) ───────────────────
+
+    @Test
+    fun `one stuck category does not block delivery of another`() {
+        // Both categories route to the sync path (primaryMaxPending=0 → batching disabled). "slow"
+        // blocks inside its sync LLM call until released; "fast" must deliver without waiting for
+        // it — proving the two run on independent workers (the bug being fixed: 1 stuck blocked all).
+        val release = CountDownLatch(1)
+        val fastDelivered = CountDownLatch(1)
+        val catFast = CategoryConfig(emoji = "F", feeds = listOf(FeedConfig("https://e/f")), channelId = "@f")
+        val catSlow = CategoryConfig(emoji = "S", feeds = listOf(FeedConfig("https://e/s")), channelId = "@s")
+        val config = AppConfig(
+            telegram = TelegramConfig(botToken = "t"),
+            openai = OpenAIConfig(apiKey = "sk"),
+            database = DatabaseConfig(path = ":memory:"),
+            scheduler = SchedulerConfig(intervalMinutes = 60),
+            categories = mapOf("fast" to catFast, "slow" to catSlow),
+            processing = ProcessingConfig(minArticles = 1, primaryMaxPending = 0)  // batching off → sync
+        )
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val factory = mockk<LlmClientsFactory>()
+        val promptLoader = mockk<PromptLoader>()
+        val deliverer = mockk<DigestDeliverer>(relaxed = true)
+        every { promptLoader.resolve(any()) } returns null
+        every { db.countPendingBatchesForCategory(any()) } returns 0
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+
+        val fastClient = mockk<LlmClient>()
+        val slowClient = mockk<LlmClient>()
+        every { factory.forRender(match { it.emoji == "F" }) } returns fastClient
+        every { factory.forRender(match { it.emoji == "S" }) } returns slowClient
+        every { fastClient.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } returns "fast-summary"
+        every { slowClient.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } answers {
+            release.await(10, TimeUnit.SECONDS); "slow-summary"
+        }
+        every { deliverer.deliver("fast", any(), any(), any()) } answers { fastDelivered.countDown() }
+
+        val p = CategoryProcessor(config, db, factory, promptLoader, deliverer)
+        val worker = thread { p.process(mapOf("fast" to listOf(article(1)), "slow" to listOf(article(2)))) }
+        try {
+            assertTrue(
+                fastDelivered.await(5, TimeUnit.SECONDS),
+                "fast category should deliver while slow is still blocked"
+            )
+        } finally {
+            release.countDown()
+            worker.join(10_000)
+        }
+        verify { deliverer.deliver("fast", "fast-summary", any(), any()) }
     }
 }

@@ -288,7 +288,11 @@ class NewsDatabase(dbPath: String) {
         require(!dbPath.contains("..")) { "Database path must not contain '..' (path traversal): $dbPath" }
         val canonicalPath = java.io.File(dbPath).canonicalPath
 
-        val jdbcUrl = "jdbc:sqlite:$canonicalPath"
+        // busy_timeout makes a connection that hits a held write lock wait-and-retry (up to 5s)
+        // instead of failing fast with SQLITE_BUSY. xerial applies this per-connection, so it
+        // covers every Exposed `transaction { }` (each opens its own connection) — important now
+        // that categories are processed concurrently and several may write in the same window.
+        val jdbcUrl = "jdbc:sqlite:$canonicalPath?busy_timeout=5000"
         Database.connect(jdbcUrl, driver = "org.sqlite.JDBC")
         transaction {
             SchemaUtils.createMissingTablesAndColumns(

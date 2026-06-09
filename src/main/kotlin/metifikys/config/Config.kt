@@ -36,7 +36,15 @@ data class ProcessingConfig(
      * client. Effective sync cutoff is `primaryMaxPending + secondaryMaxPending`
      * when a category configures `batchFallback`, otherwise `primaryMaxPending`.
      */
-    val secondaryMaxPending: Int = 1
+    val secondaryMaxPending: Int = 1,
+    /**
+     * Upper bound on how many categories are processed concurrently within a single digest
+     * cycle. Each cycle the per-category worker pool is sized to `min(readyCategories, this)`,
+     * so the default gives every ready category its own worker — full isolation, so one slow or
+     * stuck category (e.g. a hanging sync LLM call) never blocks the others. Lower it to throttle
+     * how many simultaneous LLM/provider requests a cycle may fan out. Must be >= 1.
+     */
+    val maxConcurrentCategories: Int = 12
 )
 
 data class AdminConfig(
@@ -484,6 +492,9 @@ object ConfigLoader {
         }
         require(config.processing.secondaryMaxPending >= 0) {
             "processing.secondaryMaxPending must be >= 0 (got ${config.processing.secondaryMaxPending})"
+        }
+        require(config.processing.maxConcurrentCategories >= 1) {
+            "processing.maxConcurrentCategories must be >= 1 (got ${config.processing.maxConcurrentCategories})"
         }
 
         for (entry in config.pricing) {
