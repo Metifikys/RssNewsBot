@@ -11,6 +11,14 @@ package metifikys.ai
  */
 class BillingException(message: String) : Exception(message)
 
+/**
+ * Thrown when a CLI-backed LLM provider (`claude -p`, `codex exec`) fails in a way that
+ * will recur on retry — an expired/again-needed login, an unknown or inaccessible model,
+ * or a malformed request. Distinct from [BillingException] (usage/credit limits) but
+ * handled the same way by the retry loops: surfaced immediately, never retried.
+ */
+class NonRetryableCliException(message: String) : Exception(message)
+
 /** Substrings in error bodies that indicate a permanent billing/quota block. */
 private val BILLING_ERROR_MARKERS = setOf(
     "billing_hard_limit_reached",

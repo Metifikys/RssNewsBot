@@ -37,7 +37,10 @@ class CodexCli(
     override val endpoint: LlmEndpoint,
     private val command: String,
     private val timeoutSeconds: Long,
-    private val maxRetries: Int = 5,
+    // Inner per-call retries. Kept low: a persistent failure (expired login, bad model,
+    // usage limit) now fails fast via BillingException/NonRetryableCliException instead of
+    // multiplying with the outer completeJson(maxRetry) loop into a ~24-attempt stall.
+    private val maxRetries: Int = 2,
     private val retryBackoffMillis: Long = 60_000L,
     private val batchUnsupportedReason: String =
         "Codex CLI provider has no Batch API — it is sync-only"
@@ -117,6 +120,10 @@ class CodexCli(
                 val jsonString = completeJson(systemPrompt, userPrompt)
                 Json.parseToJsonElement(jsonString)
                 return jsonString
+            } catch (e: BillingException) {
+                throw e            // usage/credit limit — retrying can't help
+            } catch (e: NonRetryableCliException) {
+                throw e            // expired login / bad model — retrying can't help
             } catch (e: Exception) {
                 lastException = e
                 attempt++
@@ -178,6 +185,8 @@ class CodexCli(
                     logger.info { "[LLM][sync][codexcli] RESPONSE | model=${model.ifBlank { "<cli-default>" }}\n$result" }
                     return result
                 } catch (e: BillingException) {
+                    throw e
+                } catch (e: NonRetryableCliException) {
                     throw e
                 } catch (e: Exception) {
                     lastException = e
@@ -245,11 +254,26 @@ class CodexCli(
 
         val exit = process.exitValue()
         if (exit != 0) {
+            // Mirror ClaudeCli: a CLI may print its error to stdout, not stderr — classify and
+            // report on the combined output rather than logging a useless "<no stderr>".
+            val stdout = stdoutBuf.toString().trim()
             val stderr = stderrBuf.toString().trim()
-            if (isBillingError(stderr)) {
-                throw BillingException("Codex CLI usage/credit limit reached: $stderr")
+            val combined = listOf(stdout, stderr).filter { it.isNotBlank() }.joinToString("\n").trim()
+            val detail = combined.ifBlank { "<no output>" }.take(2000)
+            when {
+                isBillingError(combined) ->
+                    throw BillingException("Codex CLI usage/credit limit reached (exit $exit): $detail")
+                isAuthError(combined) ->
+                    throw NonRetryableCliException(
+                        "Codex CLI auth/login problem (exit $exit) — re-authenticate `codex` on the host: $detail"
+                    )
+                isModelError(combined) ->
+                    throw NonRetryableCliException(
+                        "Codex CLI model problem (exit $exit) for model '${model.ifBlank { "<cli-default>" }}': $detail"
+                    )
+                else ->
+                    throw IOException("codex CLI exited with code $exit: $detail")
             }
-            throw IOException("codex CLI exited with code $exit: ${stderr.ifBlank { "<no stderr>" }}")
         }
 
         // Prefer the final-message file; fall back to stdout if codex wrote nothing there.
@@ -261,10 +285,27 @@ class CodexCli(
         return lastMessage.ifBlank { stdoutBuf.toString().trim() }
     }
 
-    private fun isBillingError(stderr: String): Boolean {
-        val s = stderr.lowercase()
+    private fun isBillingError(text: String): Boolean {
+        val s = text.lowercase()
         return "usage limit" in s || "quota" in s || "credit" in s ||
             "insufficient_quota" in s || "out of credits" in s ||
-            "rate limit" in s && "exceeded" in s
+            ("rate limit" in s && "exceeded" in s) ||
+            ("hit your" in s && "limit" in s) || "weekly limit" in s || "session limit" in s
+    }
+
+    /** Auth/login failures that recur until the operator re-authenticates `codex` on the host. */
+    private fun isAuthError(text: String): Boolean {
+        val s = text.lowercase()
+        return "not logged in" in s || "unauthorized" in s || "invalid api key" in s ||
+            "token has expired" in s || "login expired" in s ||
+            ("login" in s && ("run" in s || "please" in s || "expired" in s)) ||
+            ("authentication" in s && ("fail" in s || "error" in s))
+    }
+
+    /** The configured model is unknown or inaccessible — retrying with the same model can't help. */
+    private fun isModelError(text: String): Boolean {
+        val s = text.lowercase()
+        return "model_not_found" in s || "unknown model" in s ||
+            ("model" in s && ("not exist" in s || "not found" in s || "no access" in s || "may not have access" in s))
     }
 }

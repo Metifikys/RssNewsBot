@@ -33,7 +33,10 @@ class ClaudeCli(
     override val endpoint: LlmEndpoint,
     private val command: String,
     private val timeoutSeconds: Long,
-    private val maxRetries: Int = 5,
+    // Inner per-call retries. Kept low: a persistent failure (expired login, bad model,
+    // usage limit) now fails fast via BillingException/NonRetryableCliException instead of
+    // multiplying with the outer completeJson(maxRetry) loop into a ~24-attempt stall.
+    private val maxRetries: Int = 2,
     private val retryBackoffMillis: Long = 60_000L,
     private val batchUnsupportedReason: String =
         "Claude CLI provider has no Batch API — it is sync-only"
@@ -113,6 +116,10 @@ class ClaudeCli(
                 val jsonString = completeJson(systemPrompt, userPrompt)
                 Json.parseToJsonElement(jsonString)
                 return jsonString
+            } catch (e: BillingException) {
+                throw e            // usage/credit limit — retrying can't help
+            } catch (e: NonRetryableCliException) {
+                throw e            // expired login / bad model — retrying can't help
             } catch (e: Exception) {
                 lastException = e
                 attempt++
@@ -169,6 +176,8 @@ class ClaudeCli(
                     logger.info { "[LLM][sync][claudecli] RESPONSE | model=${model.ifBlank { "<cli-default>" }}\n$result" }
                     return result
                 } catch (e: BillingException) {
+                    throw e
+                } catch (e: NonRetryableCliException) {
                     throw e
                 } catch (e: Exception) {
                     lastException = e
@@ -234,18 +243,54 @@ class ClaudeCli(
 
         val exit = process.exitValue()
         if (exit != 0) {
+            // `claude -p` prints its error (expired login, usage limit, bad model, API errors)
+            // to STDOUT, not stderr — classify and report on the combined output. Inspecting
+            // only stderr is why these failures logged a useless "<no stderr>".
+            val stdout = stdoutBuf.toString().trim()
             val stderr = stderrBuf.toString().trim()
-            if (isBillingError(stderr)) {
-                throw BillingException("Claude CLI usage/credit limit reached: $stderr")
+            val combined = listOf(stdout, stderr).filter { it.isNotBlank() }.joinToString("\n").trim()
+            val detail = combined.ifBlank { "<no output>" }.take(2000)
+            when {
+                isBillingError(combined) ->
+                    throw BillingException("Claude CLI usage/credit limit reached (exit $exit): $detail")
+                isAuthError(combined) ->
+                    throw NonRetryableCliException(
+                        "Claude CLI auth/login problem (exit $exit) — re-authenticate `claude` on the host: $detail"
+                    )
+                isModelError(combined) ->
+                    throw NonRetryableCliException(
+                        "Claude CLI model problem (exit $exit) for model '${model.ifBlank { "<cli-default>" }}': $detail"
+                    )
+                else ->
+                    throw IOException("claude CLI exited with code $exit: $detail")
             }
-            throw IOException("claude CLI exited with code $exit: ${stderr.ifBlank { "<no stderr>" }}")
         }
         return stdoutBuf.toString().trim()
     }
 
-    private fun isBillingError(stderr: String): Boolean {
-        val s = stderr.lowercase()
+    private fun isBillingError(text: String): Boolean {
+        val s = text.lowercase()
         return "usage limit" in s || "quota" in s || "credit" in s ||
-            "out of credits" in s || "rate limit" in s && "exceeded" in s
+            "out of credits" in s || ("rate limit" in s && "exceeded" in s) ||
+            // subscription-limit phrasing `claude -p` prints to stdout
+            ("hit your" in s && "limit" in s) || "weekly limit" in s || "session limit" in s ||
+            "5-hour" in s || "5 hour" in s || ("resets" in s && "limit" in s)
+    }
+
+    /** Auth/login failures that recur until the operator re-authenticates `claude` on the host. */
+    private fun isAuthError(text: String): Boolean {
+        val s = text.lowercase()
+        return "/login" in s || "not logged in" in s ||
+            "oauth token has expired" in s || "token has expired" in s || "login expired" in s ||
+            "invalid api key" in s || "unauthorized" in s || "authentication_failed" in s ||
+            ("authentication" in s && "error" in s)
+    }
+
+    /** The configured model is unknown or inaccessible — retrying with the same model can't help. */
+    private fun isModelError(text: String): Boolean {
+        val s = text.lowercase()
+        return "issue with the selected model" in s ||
+            "may not exist or you may not have access" in s ||
+            "model_not_found" in s || "unknown model" in s
     }
 }
