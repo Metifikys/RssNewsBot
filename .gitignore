@@ -54,6 +54,7 @@ config.yaml
 *.out
 logs/
 *.log
+logs.txt
 *.pid
 rssbot.lock
 
@@ -73,6 +74,7 @@ CLAUDE.md
 ### Internal planning & scratch docs ###
 src/stateless-gliding-meteor.md
 smdedup.txt
+tmp.md
 
 ### Personal ops scripts (deploy to your own host) ###
 deploy_rssbot.*
