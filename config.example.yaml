@@ -224,11 +224,19 @@ categories:
       # Optional log-only EVENT-level pass (Layer 3.5). Runs AFTER Step 1 event extraction:
       # embeds each shortlisted event (subject + coreFact) by `event_key` and brute-force
       # cosine-scans recently-covered events in the same category. Surfaces
-      # `[EventSemanticDedup][HIT]` lines when cosine >= eventThreshold. Analyze-only — it
-      # NEVER drops events or filters the digest (calibrate eventThreshold first, like the
-      # article-level pass above). Reuses model/windowDays/topK/maxRecent. Off by default.
+      # `[EventSemanticDedup][HIT]` lines when cosine >= eventThreshold. Log-only until you set
+      # eventHardThreshold below (calibrate eventThreshold first, like the article-level pass
+      # above). Reuses model/windowDays/topK/maxRecent. Off by default.
       eventEnabled: true
       eventThreshold: 0.92              # cosine ≥ this → [EventSemanticDedup][HIT] in the log
+      # Optional event-level hard filter. When set, a shortlist event with status=="new" whose
+      # top covered-event cosine ≥ this is DROPPED before Step 2 renders (logged
+      # `[EventSemanticDedup][REJECT]`). meaningful_update follow-ups are never dropped.
+      # Cosine-only, per-category — there is deliberately NO subject gate: tech subjects are
+      # free-text and rephrased each cycle, so subject equality would gut recall (a week of logs
+      # showed gaming 65% / tech 7% same-subject among hits). Must be ≥ eventThreshold.
+      # Suggested ~0.80 (precision ~100% there). Leave unset to stay log-only.
+      eventHardThreshold: 0.80
       # Optional hard-filter: when set, a new article whose top-1 neighbour is already in
       # status PROCESSED (i.e. was sent to Telegram in a previous digest) AND whose cosine
       # meets `hardThreshold` is marked DUPLICATE (with `duplicate_of` pointing at the

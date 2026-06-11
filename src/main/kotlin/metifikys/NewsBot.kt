@@ -135,10 +135,13 @@ class NewsBot(
             .filter { (_, c) -> c.semanticDedup?.eventEnabled == true }
             .map { (n, c) ->
                 val sd = c.semanticDedup!!
-                "$n[model=${sd.model} eventThr=${sd.eventThreshold} window=${sd.windowDays}d topK=${sd.topK}]"
+                val hardTail = sd.eventHardThreshold?.let { " hard=$it" } ?: ""
+                "$n[model=${sd.model} eventThr=${sd.eventThreshold} window=${sd.windowDays}d topK=${sd.topK}$hardTail]"
             }
         if (eventSdCats.isNotEmpty()) {
-            logger.info { "[EventSemanticDedup] log-only analyzer enabled for ${eventSdCats.size} category(ies): $eventSdCats" }
+            val withHardFilter = config.categories.values.count { it.semanticDedup?.eventHardThreshold != null }
+            val mode = if (withHardFilter > 0) "log + hard-filter ($withHardFilter)" else "log-only"
+            logger.info { "[EventSemanticDedup] $mode analyzer enabled for ${eventSdCats.size} category(ies): $eventSdCats" }
         }
         val overrides = config.categories.flatMap { (n, c) ->
             val ovr = c.llm ?: return@flatMap emptyList()

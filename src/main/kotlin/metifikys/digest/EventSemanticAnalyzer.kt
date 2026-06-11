@@ -40,22 +40,28 @@ class EventSemanticAnalyzer(
 ) {
 
     /**
-     * Embeds [shortlist] events, logs near-duplicate candidates against recent covered
-     * events, and persists the new vectors. Safe to call with an empty list. Catches and
-     * logs all exceptions so the digest cycle is never broken by the analyzer.
+     * Embeds [shortlist] events, logs near-duplicate candidates against recent covered events,
+     * and persists the new vectors. When the category's `eventHardThreshold` is set, drops
+     * `status == "new"` events whose top covered-event cosine meets it (logged `[REJECT]`) and
+     * returns only the kept items; otherwise returns [shortlist] unchanged (pure logging).
+     *
+     * Fail-open by contract: a disabled category, billing limit, or any embed/scan failure
+     * returns the original [shortlist] untouched — a transient error must never empty a digest.
      */
-    fun analyzeAndLog(category: String, shortlist: List<ShortlistItem>) {
-        if (shortlist.isEmpty()) return
-        val catCfg = config.categories[category] ?: return
-        val sd = catCfg.semanticDedup ?: return
-        if (!sd.eventEnabled) return
+    fun analyzeAndFilter(category: String, shortlist: List<ShortlistItem>): List<ShortlistItem> {
+        if (shortlist.isEmpty()) return shortlist
+        val catCfg = config.categories[category] ?: return shortlist
+        val sd = catCfg.semanticDedup ?: return shortlist
+        if (!sd.eventEnabled) return shortlist
 
-        try {
+        return try {
             processCategory(category, sd, shortlist)
         } catch (e: BillingException) {
             logger.warn { "[EventSemanticDedup] cat=$category billing limit reached — analyzer skipped: ${e.message}" }
+            shortlist
         } catch (e: Exception) {
             logger.warn(e) { "[EventSemanticDedup] cat=$category analyzer failed; cycle continues" }
+            shortlist
         }
     }
 
@@ -63,7 +69,7 @@ class EventSemanticAnalyzer(
         category: String,
         sd: SemanticDedupConfig,
         shortlist: List<ShortlistItem>
-    ) {
+    ): List<ShortlistItem> {
         // Deduplicate by event_key within the shortlist — Step 1 can emit the same key twice
         // (e.g. a new item plus its meaningful_update). One vector per key is enough.
         val byKey = shortlist.associateBy { it.eventKey }.values.toList()
@@ -74,13 +80,13 @@ class EventSemanticAnalyzer(
             throw e
         } catch (e: Exception) {
             logger.warn(e) { "[EventSemanticDedup] cat=$category: embed call failed; skipping category" }
-            return
+            return shortlist  // fail-open: drop nothing on embed failure
         }
         if (vectors.size != byKey.size) {
             logger.warn {
                 "[EventSemanticDedup] cat=$category: expected ${byKey.size} vectors, got ${vectors.size} — skipping"
             }
-            return
+            return shortlist  // fail-open
         }
 
         val normalized = byKey.indices.map { byKey[it] to VectorMath.l2Normalize(vectors[it]) }
@@ -100,6 +106,7 @@ class EventSemanticAnalyzer(
                 if (vec != null) row to vec else null
             }
 
+        val rejectedKeys = mutableSetOf<String>()
         for ((item, vec) in normalized) {
             if (recent.isEmpty()) {
                 logger.info {
@@ -112,18 +119,29 @@ class EventSemanticAnalyzer(
                     .sortedByDescending { it.second }
                     .take(sd.topK)
                 val (topRow, topSim) = ranked.first()
-                val marker = if (topSim >= sd.eventThreshold) "[EventSemanticDedup][HIT]" else "[EventSemanticDedup]"
-                // Subject/franchise-match flags: data to gauge whether a future hard filter
-                // gated on subject equality (rather than cosine alone) would fire. Real
-                // duplicates share a subject; boilerplate collisions between different titles
-                // do not. Empty fields are treated as non-matches (never true on "").
+
+                // Hard reject: cosine-only, status=="new" only (meaningful_update follow-ups are
+                // intentional re-coverage and are never dropped). No subject gate — see config KDoc.
+                val hard = sd.eventHardThreshold
+                val rejected = hard != null && item.status == "new" && topSim >= hard
+                if (rejected) rejectedKeys += item.eventKey
+
+                val marker = when {
+                    rejected -> "[EventSemanticDedup][REJECT]"
+                    topSim >= sd.eventThreshold -> "[EventSemanticDedup][HIT]"
+                    else -> "[EventSemanticDedup]"
+                }
+                // Subject/franchise-match flags: diagnostic data on how often a match shares a
+                // subject. Real duplicates often share one; boilerplate collisions between
+                // different titles do not. Empty fields are treated as non-matches (never "").
                 val sameSubject = matches(item.subject, topRow.subject)
                 val sameFranchise = matches(item.franchise, topRow.franchise)
                 logger.info {
+                    val thrTail = hard?.let { " hardThreshold=$it" } ?: ""
                     "$marker cat=$category new_event=${item.eventKey} (subject='${item.subject.take(80)}') " +
                         "top=[event_key=${topRow.eventKey} sim=${"%.4f".format(topSim)} " +
                         "sameSubject=$sameSubject sameFranchise=$sameFranchise] " +
-                        "threshold=${sd.eventThreshold}"
+                        "status=${item.status} threshold=${sd.eventThreshold}$thrTail"
                 }
                 if (ranked.size > 1) {
                     val rest = ranked.drop(1).joinToString(", ") { (r, s) ->
@@ -131,16 +149,28 @@ class EventSemanticAnalyzer(
                     }
                     logger.debug { "[EventSemanticDedup] cat=$category new_event=${item.eventKey} other_candidates: $rest" }
                 }
+
+                // Don't persist a hard-rejected event: the canonical event is already in the
+                // store, and persisting the dup would pollute the candidate set for next cycle.
+                if (rejected) continue
             }
 
-            // Persist the new vector so it becomes a candidate next cycle. Subject/franchise
-            // are stored alongside so future scans can emit the match flags above.
+            // Persist the kept event's vector so it becomes a candidate next cycle. Subject/
+            // franchise are stored alongside so future scans can emit the match flags above.
             try {
                 db.saveEventEmbedding(category, item.eventKey, item.subject, item.franchise, sd.model, VectorMath.encode(vec))
             } catch (e: Exception) {
                 logger.warn(e) { "[EventSemanticDedup] cat=$category: failed to persist embedding for event_key=${item.eventKey}" }
             }
         }
+
+        if (rejectedKeys.isEmpty()) return shortlist
+        val kept = shortlist.filterNot { it.eventKey in rejectedKeys }
+        logger.info {
+            "[EventSemanticDedup] cat=$category hard-filter dropped ${rejectedKeys.size} event(s): " +
+                "${rejectedKeys.joinToString()} — shortlist ${shortlist.size} -> ${kept.size}"
+        }
+        return kept
     }
 
     /**

@@ -328,7 +328,7 @@ Applied **after Step 1's URL filter, before Step 2 render**. Driven by `dedup.di
 
 All drops are logged as `[Category:X][Ranker] drop <eventKey>: <reason>` for QA.
 
-### Layer 3.5 — Event-level semantic analyzer (log-only)
+### Layer 3.5 — Event-level semantic dedup (log + optional hard filter)
 
 Implemented in [`EventSemanticAnalyzer`](src/main/kotlin/metifikys/digest/EventSemanticAnalyzer.kt).
 The **event-level counterpart of Layer 2's article-level `SemanticDedupDetector`** — it embeds
@@ -343,18 +343,29 @@ extract-batch, and startup-resume routes all pass through it):
 2. L2-normalize and brute-force cosine-scan recent **previously-covered** event vectors in the
    same category (`event_embeddings` table, candidate set excludes the current shortlist's own
    keys).
-3. Log one line per event: `[EventSemanticDedup][HIT]` when `top_sim ≥ eventThreshold`,
-   `[EventSemanticDedup]` otherwise.
-4. Persist the event's vector so it becomes a candidate next cycle.
+3. Log one line per event with `sameSubject`/`sameFranchise` diagnostic flags:
+   `[EventSemanticDedup][HIT]` when `top_sim ≥ eventThreshold`, `[EventSemanticDedup]` otherwise.
+4. Persist the kept event's vector so it becomes a candidate next cycle.
 
-**Analyze-only:** it never drops events, mutates state, or filters the digest — a
-stat-collection phase (mirroring how Layer 2 shipped log-only first) to calibrate
-`eventThreshold` before any hard filter is considered. Failures are caught and logged so the
-detector can never break a cycle.
+**Hard filter (`eventHardThreshold`, opt-in, null by default).** When set, a shortlist event
+with `status == "new"` whose top covered-event cosine ≥ `eventHardThreshold` is **dropped from
+the shortlist** before Step 2 renders — logged `[EventSemanticDedup][REJECT]`, not persisted (the
+canonical event is already stored), and never reaches the digest. If *every* event is dropped, the
+category's articles are marked `PROCESSED` and submission is skipped. `meaningful_update` items are
+never dropped (they are intentional follow-ups). The filter is **fail-open**: a billing limit or
+any embed/scan error returns the shortlist unchanged, so a transient failure can never empty a
+digest. Validated `eventHardThreshold ≥ eventThreshold` at config load.
 
-> Note: vectors are persisted for every shortlisted event regardless of Telegram delivery
-> success, so the candidate set is "events we shortlisted" — a close proxy for "previously
-> covered" during this calibration phase.
+**Cosine-only, no subject gate — and per-category.** A week of production logs (1600 events, 221
+hits at `eventThreshold=0.72`) showed ~97% precision and zero false positives ≥0.80, but also that
+subject equality is category-brittle (gaming 65% same-subject among hits, tech only 7% — tech
+subjects are free-text Ukrainian prose Step 1 rewrites each cycle). So the gate is pure cosine,
+tuned per category via the per-category `semanticDedup` block (suggested ~0.80 for both tech and
+gaming, where the boilerplate-collision false positives all sit below 0.78).
+
+> Caveat: vectors are persisted for every shortlisted event regardless of Telegram delivery
+> success, so the candidate set is "events we shortlisted", a close proxy for "previously
+> covered". A stricter delivered-only persistence is a possible follow-up.
 
 ### Extra: URL whitelist after Step 2 ("prompt injection defence in depth")
 
@@ -728,8 +739,9 @@ semanticDedup:            # embedding detector opt-in
   topK: 5
   maxRecent: 2000
   hardThreshold: 0.85     # ≥ this AND neighbour PROCESSED → mark DUPLICATE
-  eventEnabled: true      # Layer 3.5 event-level analyzer (log-only)
+  eventEnabled: true      # Layer 3.5 event-level analyzer
   eventThreshold: 0.92    # cosine ≥ this → [EventSemanticDedup][HIT] log
+  eventHardThreshold: 0.80 # cosine ≥ this AND status=="new" → drop event (REJECT); null=log-only
 ```
 
 ---

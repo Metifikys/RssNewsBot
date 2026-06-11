@@ -400,11 +400,21 @@ class CategoryProcessor(
         isBatchingStuck: Boolean,
         useBatchFallback: Boolean = false
     ) {
-        // Layer 3.5: log-only event-level embedding analysis. This is the single chokepoint
-        // every non-empty shortlist passes through (sync Ready, extract-batch callback, and
-        // startup resume all converge here), so one call covers all routes. Analyze-only.
-        if (shortlist != null) {
-            eventSemanticAnalyzer?.analyzeAndLog(name, shortlist)
+        // Layer 3.5: event-level embedding analysis at the single chokepoint every non-empty
+        // shortlist passes through (sync Ready, extract-batch callback, and startup resume all
+        // converge here). Logs near-duplicates; when eventHardThreshold is set, also drops the
+        // highest-confidence cross-cycle dupes. Fail-open — returns the input on any error.
+        val renderShortlist: List<ShortlistItem>? =
+            if (shortlist != null) (eventSemanticAnalyzer?.analyzeAndFilter(name, shortlist) ?: shortlist) else null
+
+        // Every event was hard-rejected as a cross-cycle duplicate → nothing left to render.
+        if (shortlist != null && renderShortlist != null && renderShortlist.isEmpty()) {
+            db.markProcessed(articles.map { it.link })
+            logger.info {
+                "[Category:$name]$chunkLabel All shortlist events hard-rejected as duplicates — " +
+                    "marking ${articles.size} article(s) PROCESSED, skipping submission."
+            }
+            return
         }
 
         val effectiveArticles = if ((isBatchingStuck || useBatchFallback) && shortlist == null) {
@@ -422,7 +432,7 @@ class CategoryProcessor(
             CategoryInput(
                 emoji = categoryConfig.emoji,
                 articles = effectiveArticles,
-                shortlist = shortlist,
+                shortlist = renderShortlist,
                 renderSystemPrompt = resolvedDedup.renderSystem,
                 renderUserPrompt = resolvedDedup.renderUser
             )
@@ -452,7 +462,7 @@ class CategoryProcessor(
                 name = name,
                 categoryConfig = categoryConfig,
                 articles = effectiveArticles,
-                shortlist = shortlist,
+                shortlist = renderShortlist,
                 resolvedDedup = resolvedDedup,
                 previousSummaries = previousSummaries,
                 chunkLabel = chunkLabel,
@@ -477,7 +487,7 @@ class CategoryProcessor(
         }
 
         future
-            .thenAccept { summary -> deliverer.deliver(name, summary, articles, shortlist) }
+            .thenAccept { summary -> deliverer.deliver(name, summary, articles, renderShortlist) }
             .exceptionally { ex ->
                 val cause = if (ex is ExecutionException) ex.cause ?: ex else ex
                 db.markUnprocessed(links)

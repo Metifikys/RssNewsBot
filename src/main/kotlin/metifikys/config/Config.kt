@@ -419,6 +419,20 @@ data class SemanticDedupConfig(
     /** Cosine threshold above which an event-level match is logged with the `[HIT]` marker. */
     val eventThreshold: Double = 0.92,
     /**
+     * Cosine threshold for the *hard* reject at the event level. When non-null AND a shortlist
+     * event with `status == "new"` has a top covered-event neighbour whose cosine meets this
+     * threshold, the event is dropped from the shortlist before Step 2 renders — logged as
+     * `[EventSemanticDedup][REJECT]` — and never reaches the digest. `meaningful_update` items
+     * are never dropped (they are intentional follow-ups). Cosine-only: there is deliberately no
+     * subject gate — tech subjects are free-text and vary every cycle, so subject equality would
+     * gut recall (a week of logs showed gaming 65% / tech 7% same-subject among hits).
+     *
+     * Null disables the hard filter — the analyzer keeps logging but mutates nothing. Should be
+     * set >= `eventThreshold` (validated at load time): the hard filter is the strict superset of
+     * the logging threshold. Suggested production value ~0.80 per category (precision ~100% there).
+     */
+    val eventHardThreshold: Double? = null,
+    /**
      * Cosine threshold for the *hard* reject. When non-null AND a new article's top-1
      * neighbour is already in status PROCESSED (sent to Telegram) AND their cosine
      * meets this threshold, the new article is marked [metifikys.model.ArticleStatus.DUPLICATE]
@@ -572,6 +586,15 @@ object ConfigLoader {
                 }
                 require(sd.eventThreshold in 0.0..1.0) {
                     "Category '$name' semanticDedup.eventThreshold must be in [0.0, 1.0] (got ${sd.eventThreshold})"
+                }
+                sd.eventHardThreshold?.let { ht ->
+                    require(ht in 0.0..1.0) {
+                        "Category '$name' semanticDedup.eventHardThreshold must be in [0.0, 1.0] (got $ht)"
+                    }
+                    require(ht >= sd.eventThreshold) {
+                        "Category '$name' semanticDedup.eventHardThreshold ($ht) must be >= eventThreshold (${sd.eventThreshold}) — " +
+                            "the hard filter is a strict subset of what gets logged"
+                    }
                 }
                 sd.hardThreshold?.let { ht ->
                     require(ht in 0.0..1.0) {

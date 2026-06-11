@@ -320,6 +320,40 @@ class ConfigTest {
     }
 
     @Test
+    fun `semanticDedup eventHardThreshold below eventThreshold throws`() {
+        val yaml = """
+            telegram:
+              botToken: "token"
+            openai:
+              apiKey: "sk-test"
+            database:
+              path: "test.db"
+            scheduler:
+              intervalMinutes: 60
+            categories:
+              tech:
+                emoji: "💻"
+                channelId: "@ch"
+                feeds:
+                  - https://example.com/rss
+                semanticDedup:
+                  enabled: true
+                  eventEnabled: true
+                  eventThreshold: 0.80
+                  eventHardThreshold: 0.70
+        """.trimIndent()
+
+        val file = File.createTempFile("config-test", ".yaml")
+        file.writeText(yaml)
+
+        assertThrows<IllegalArgumentException> {
+            ConfigLoader.load(file.absolutePath)
+        }
+
+        file.delete()
+    }
+
+    @Test
     fun `semanticDedup zero windowDays throws`() {
         val yaml = """
             telegram:

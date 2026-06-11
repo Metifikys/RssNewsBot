@@ -20,6 +20,7 @@ import metifikys.db.NewsDatabase
 import metifikys.model.ShortlistItem
 import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class EventSemanticAnalyzerTest {
@@ -76,7 +77,7 @@ class EventSemanticAnalyzerTest {
         val db: NewsDatabase = mockk(relaxed = true)
         val embedder: Embedder = mockk(relaxed = true)
 
-        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndLog("tech", listOf(item("e1")))
+        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndFilter("tech", listOf(item("e1")))
 
         verify(exactly = 0) { embedder.embed(any(), any()) }
         verify(exactly = 0) { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) }
@@ -95,7 +96,7 @@ class EventSemanticAnalyzerTest {
         every { db.fetchRecentEventEmbeddings("tech", 14L, any()) } returns emptyList()
         every { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) } just Runs
 
-        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndLog("tech", listOf(item("e1")))
+        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndFilter("tech", listOf(item("e1")))
 
         verify(exactly = 1) { embedder.embed(any(), any()) }
         // subject + franchise are persisted alongside the vector (for the analyzer's match flags).
@@ -116,7 +117,7 @@ class EventSemanticAnalyzerTest {
         every { db.fetchRecentEventEmbeddings(any(), any(), any()) } returns
             listOf(pastEvent("old-1", floatArrayOf(0.99f, 0.1f, 0f)))
 
-        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndLog("tech", listOf(item("new-1")))
+        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndFilter("tech", listOf(item("new-1")))
 
         verify(exactly = 1) { db.saveEventEmbedding("tech", "new-1", any(), any(), any(), any()) }
         // Analyze-only: the analyzer must never touch article/event state.
@@ -141,7 +142,7 @@ class EventSemanticAnalyzerTest {
             pastEvent("b", floatArrayOf(1f, 0f, 0f), model = "text-embedding-3-large")
         )
 
-        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndLog("tech", listOf(item("new-1")))
+        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndFilter("tech", listOf(item("new-1")))
 
         // Should not throw despite the large-model candidate; one embed call, one persist.
         verify(exactly = 1) { embedder.embed(any(), any()) }
@@ -164,7 +165,7 @@ class EventSemanticAnalyzerTest {
         every { db.fetchRecentEventEmbeddings(any(), any(), any()) } returns
             listOf(pastEvent("same-key", floatArrayOf(1f, 0f, 0f)))
 
-        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndLog("tech", listOf(item("same-key")))
+        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndFilter("tech", listOf(item("same-key")))
 
         verify(exactly = 1) { db.saveEventEmbedding("tech", "same-key", any(), any(), any(), any()) }
     }
@@ -181,7 +182,7 @@ class EventSemanticAnalyzerTest {
         every { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) } just Runs
 
         EventSemanticAnalyzer(cfg, db, embedder)
-            .analyzeAndLog("tech", listOf(item("dup", status = "new"), item("dup", status = "meaningful_update")))
+            .analyzeAndFilter("tech", listOf(item("dup", status = "new"), item("dup", status = "meaningful_update")))
 
         verify(exactly = 1) { embedder.embed(any(), any()) }
         assertTrue(capturedTexts.captured.size == 1, "duplicate event_key should collapse to one embed input")
@@ -196,7 +197,7 @@ class EventSemanticAnalyzerTest {
         every { embedder.embed(any(), any()) } throws RuntimeException("network down")
 
         // Must not throw — the analyzer is unbreakable by contract.
-        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndLog("tech", listOf(item("e1")))
+        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndFilter("tech", listOf(item("e1")))
 
         verify(exactly = 0) { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) }
     }
@@ -207,7 +208,7 @@ class EventSemanticAnalyzerTest {
         val db: NewsDatabase = mockk(relaxed = true)
         val embedder: Embedder = mockk(relaxed = true)
 
-        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndLog("tech", emptyList())
+        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndFilter("tech", emptyList())
 
         verify(exactly = 0) { embedder.embed(any(), any()) }
         verify(exactly = 0) { db.fetchRecentEventEmbeddings(any(), any(), any()) }
@@ -225,10 +226,116 @@ class EventSemanticAnalyzerTest {
         every { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) } just Runs
 
         val huge = item("big", subject = "Big event", coreFact = "x".repeat(50_000))
-        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndLog("tech", listOf(huge))
+        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndFilter("tech", listOf(huge))
 
         val sent = capturedTexts.captured.single()
         assertTrue(sent.length <= 6000, "embed input should be capped, was ${sent.length}")
         assertTrue(sent.startsWith("Big event"), "subject must survive truncation")
+    }
+
+    // ── Hard filter (eventHardThreshold) ─────────────────────────────────────
+
+    private fun hardCfg() = appConfig(
+        "tech",
+        SemanticDedupConfig(
+            enabled = true, eventEnabled = true,
+            eventThreshold = 0.72, eventHardThreshold = 0.80
+        )
+    )
+
+    @Test
+    fun `null eventHardThreshold never drops even at cosine 1`() {
+        val cfg = appConfig("tech", SemanticDedupConfig(enabled = true, eventEnabled = true, eventThreshold = 0.72))
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        every { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) } just Runs
+        every { db.fetchRecentEventEmbeddings(any(), any(), any()) } returns
+            listOf(pastEvent("covered", floatArrayOf(1f, 0f, 0f)))
+
+        val result = EventSemanticAnalyzer(cfg, db, embedder)
+            .analyzeAndFilter("tech", listOf(item("dup", status = "new")))
+
+        assertEquals(1, result.size)  // logged HIT but log-only → kept
+        verify(exactly = 1) { db.saveEventEmbedding("tech", "dup", any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `status new above hard threshold is dropped and not persisted`() {
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        every { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) } just Runs
+        every { db.fetchRecentEventEmbeddings(any(), any(), any()) } returns
+            listOf(pastEvent("covered", floatArrayOf(1f, 0f, 0f)))  // cosine 1.0 >= hard 0.80
+
+        val result = EventSemanticAnalyzer(hardCfg(), db, embedder)
+            .analyzeAndFilter("tech", listOf(item("new-dup", status = "new")))
+
+        assertTrue(result.isEmpty(), "hard-rejected new event must be dropped")
+        // Rejected events are never persisted (would pollute the candidate set).
+        verify(exactly = 0) { db.saveEventEmbedding("tech", "new-dup", any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `meaningful_update above hard threshold is kept`() {
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        every { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) } just Runs
+        every { db.fetchRecentEventEmbeddings(any(), any(), any()) } returns
+            listOf(pastEvent("covered", floatArrayOf(1f, 0f, 0f)))
+
+        val result = EventSemanticAnalyzer(hardCfg(), db, embedder)
+            .analyzeAndFilter("tech", listOf(item("upd", status = "meaningful_update")))
+
+        assertEquals(1, result.size)  // follow-ups are intentional re-coverage
+        verify(exactly = 1) { db.saveEventEmbedding("tech", "upd", any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `HIT below hard threshold is kept and persisted`() {
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        every { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) } just Runs
+        // cosine ~0.75: above eventThreshold (0.72, HIT) but below eventHardThreshold (0.80).
+        every { db.fetchRecentEventEmbeddings(any(), any(), any()) } returns
+            listOf(pastEvent("covered", floatArrayOf(0.75f, 0.66f, 0f)))
+
+        val result = EventSemanticAnalyzer(hardCfg(), db, embedder)
+            .analyzeAndFilter("tech", listOf(item("midhit", status = "new")))
+
+        assertEquals(1, result.size)
+        verify(exactly = 1) { db.saveEventEmbedding("tech", "midhit", any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `all events rejected returns empty list`() {
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns
+            listOf(floatArrayOf(1f, 0f, 0f), floatArrayOf(1f, 0f, 0f))
+        every { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) } just Runs
+        every { db.fetchRecentEventEmbeddings(any(), any(), any()) } returns
+            listOf(pastEvent("covered", floatArrayOf(1f, 0f, 0f)))
+
+        val result = EventSemanticAnalyzer(hardCfg(), db, embedder)
+            .analyzeAndFilter("tech", listOf(item("d1", status = "new"), item("d2", status = "new")))
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `embed failure with hard filter set returns input unchanged (fail-open)`() {
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } throws RuntimeException("network down")
+
+        val input = listOf(item("e1", status = "new"))
+        val result = EventSemanticAnalyzer(hardCfg(), db, embedder).analyzeAndFilter("tech", input)
+
+        assertEquals(input, result)  // a transient error must never empty a digest
+        verify(exactly = 0) { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) }
     }
 }
