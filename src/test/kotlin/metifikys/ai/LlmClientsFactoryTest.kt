@@ -18,6 +18,7 @@ import metifikys.db.NewsDatabase
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -482,5 +483,122 @@ class LlmClientsFactoryTest {
             factory.forRender(cat)
         }
         assertTrue(ex.message?.contains("anthropic") == true)
+    }
+
+    // ── On-failure fallback wiring ────────────────────────────────────────────
+
+    @Test
+    fun `forRender with a fallback returns FallbackLlmClient wrapping both legs`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true, withCodexCli = true), db)
+        val cat = cat(
+            CategoryLlmOverrides(
+                render = LlmOverride("claudecli", "claude-x", fallback = LlmOverride("codexcli", "codex-y"))
+            )
+        )
+        val client = factory.forRender(cat)
+        assertTrue(client is FallbackLlmClient)
+        client as FallbackLlmClient
+        assertEquals("claude-cli", client.endpoint.baseUrl) // delegates to primary
+        assertTrue(client.primary is ClaudeCli)
+        assertEquals("claude-x", client.primary.endpoint.model)
+        assertTrue(client.fallback is CodexCli)
+        assertEquals("codex-cli", client.fallback.endpoint.baseUrl)
+        assertEquals("codex-y", client.fallback.endpoint.model)
+    }
+
+    @Test
+    fun `forRender default path is not wrapped in FallbackLlmClient`() {
+        val factory = LlmClientsFactory(config(), db)
+        assertFalse(factory.forRender(null) is FallbackLlmClient)
+    }
+
+    @Test
+    fun `forRender override without a fallback is not wrapped`() {
+        val factory = LlmClientsFactory(config(), db)
+        val cat = cat(CategoryLlmOverrides(render = LlmOverride("openai", "gpt-x")))
+        val client = factory.forRender(cat)
+        assertFalse(client is FallbackLlmClient)
+        assertTrue(client is OpenAI)
+    }
+
+    @Test
+    fun `forExtract wraps the primary leg when extract has a fallback`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true, withCodexCli = true), db)
+        val cat = cat(
+            CategoryLlmOverrides(
+                extract = LlmOverride("claudecli", "claude-x", fallback = LlmOverride("codexcli", "codex-y"))
+            )
+        )
+        val (primary, alternate) = factory.forExtract(cat)
+        assertTrue(primary is FallbackLlmClient)
+        assertNull(alternate)
+    }
+
+    @Test
+    fun `forExtract wraps the alternate leg independently of the primary`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true, withCodexCli = true), db)
+        val cat = cat(
+            CategoryLlmOverrides(
+                extract = LlmOverride("openai", "gpt-a"),
+                extractAlternate = LlmOverride("claudecli", "claude-x", fallback = LlmOverride("codexcli", "codex-y"))
+            )
+        )
+        val (primary, alternate) = factory.forExtract(cat)
+        assertFalse(primary is FallbackLlmClient) // extract leg has no fallback
+        assertNotNull(alternate)
+        assertTrue(alternate is FallbackLlmClient)
+    }
+
+    @Test
+    fun `forExtract does not wrap a batch leg even when a fallback is present`() {
+        val factory = LlmClientsFactory(config(withCodexCli = true), db)
+        // batch=true ⇒ async Batch API path; the sync fallback can't help, so withFallback skips it.
+        // (ConfigLoader also rejects this combo, but the factory guards independently.)
+        val cat = cat(
+            CategoryLlmOverrides(
+                extract = LlmOverride("openai", "gpt-a", batch = true, fallback = LlmOverride("codexcli", "codex-y"))
+            )
+        )
+        val (primary, _) = factory.forExtract(cat)
+        assertFalse(primary is FallbackLlmClient)
+        assertTrue(primary is OpenAIWithBatch)
+    }
+
+    @Test
+    fun `forSummarize wraps when the matched override carries a fallback`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true, withCodexCli = true), db)
+        val cat = cat(
+            CategoryLlmOverrides(
+                summarize = LlmOverride("claudecli", "claude-x", fallback = LlmOverride("codexcli", "codex-y"))
+            )
+        )
+        assertTrue(factory.forSummarize(cat, "claudecli") is FallbackLlmClient)
+    }
+
+    @Test
+    fun `forSummarize does not wrap when the per-feed default path is taken`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true, withCodexCli = true), db)
+        // Override targets claudecli (with a fallback) but the feed asked for openai → default path.
+        val cat = cat(
+            CategoryLlmOverrides(
+                summarize = LlmOverride("claudecli", "claude-x", fallback = LlmOverride("codexcli", "codex-y"))
+            )
+        )
+        val client = factory.forSummarize(cat, "openai")
+        assertFalse(client is FallbackLlmClient)
+        assertTrue(client is OpenAI)
+    }
+
+    @Test
+    fun `forBatchFallback wraps when batchFallback carries a fallback`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true, withCodexCli = true), db)
+        val cat = cat(
+            CategoryLlmOverrides(
+                batchFallback = LlmOverride("claudecli", "claude-x", fallback = LlmOverride("codexcli", "codex-y"))
+            )
+        )
+        val client = factory.forBatchFallback(cat)
+        assertNotNull(client)
+        assertTrue(client is FallbackLlmClient)
     }
 }

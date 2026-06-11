@@ -8,6 +8,15 @@ single **Unreleased** section.
 ## [Unreleased]
 
 ### Added
+- **On-failure provider fallback** — any sync LLM slot (`extract`, `extractAlternate`, `render`,
+  `summarize`, `batchFallback`) may declare a nested `fallback: { provider, model }`. When the
+  primary call fails (usage/credit limit, expired login, bad model, or an exhausted-retry
+  timeout), the same call is transparently retried against the fallback provider+model — e.g.
+  Claude CLI → Codex CLI. Implemented as a `FallbackLlmClient` decorator wired in
+  `LlmClientsFactory`; each leg is metered separately so `/status` attributes a fallback-served
+  call to the provider that answered it. Sync-only and distinct from the A/B `extractAlternate`
+  and the backpressure `batchFallback`; chains up to depth 3, with cycle and inert-combination
+  validation at config load.
 - **Event-level semantic analyzer (Layer 3.5), log-only** — `EventSemanticAnalyzer`, the
   event-level counterpart to the article-level `SemanticDedupDetector`. After
   `EventExtractor` produces a shortlist it embeds each event (subject + coreFact) keyed by

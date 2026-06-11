@@ -283,11 +283,22 @@ data class CategoryConfig(
  * (50% cost, async). Silently ignored on `render`/`batch`/`summarize`/`batchFallback`
  * — those fields encode batch-ness via their field name. Default `false` ⇒ zero
  * migration; all existing YAMLs are unchanged.
+ *
+ * [fallback] is the on-actual-failure secondary for this slot: when the primary call
+ * fails (usage/credit limit, expired login, bad model, exhausted-retry timeout), the
+ * SAME call is retried against the fallback provider+model. Honored on the sync use
+ * cases only (`render` / `extract` / `extractAlternate` / `summarize` / `batchFallback`)
+ * and wired in by [metifikys.ai.LlmClientsFactory] via [metifikys.ai.FallbackLlmClient].
+ * Distinct from the queue-backpressure `batchFallback` slot and the A/B `extractAlternate`
+ * slot — neither of those reacts to a provider actually failing. May chain (a fallback may
+ * itself have a fallback, up to a small depth); each link must differ from the others and
+ * may not set `batch=true` (the fallback always runs on the sync path).
  */
 data class LlmOverride(
     val provider: String,
     val model: String,
-    val batch: Boolean = false
+    val batch: Boolean = false,
+    val fallback: LlmOverride? = null
 )
 
 /**
@@ -423,6 +434,8 @@ data class SemanticDedupConfig(
 )
 
 object ConfigLoader {
+    /** Max links in an `llm.<slot>.fallback` chain (primary + up to this many fallbacks). */
+    private const val MAX_FALLBACK_DEPTH = 3
     private val mapper = ObjectMapper(YAMLFactory()).registerKotlinModule()
 
     fun load(path: String): AppConfig {
@@ -580,10 +593,16 @@ object ConfigLoader {
                     require(!(e.batch && e.provider in setOf("openrouter", "claudecli", "codexcli"))) {
                         "Category '$name' llm.extract: batch=true is not supported for provider '${e.provider}' (no Batch API)"
                     }
+                    require(!(e.batch && e.fallback != null)) {
+                        "Category '$name' llm.extract: a fallback together with batch=true is inert — the batch leg runs async and never uses the sync fallback. Drop one."
+                    }
                 }
                 ovr.extractAlternate?.let { e ->
                     require(!(e.batch && e.provider in setOf("openrouter", "claudecli", "codexcli"))) {
                         "Category '$name' llm.extractAlternate: batch=true is not supported for provider '${e.provider}' (no Batch API)"
+                    }
+                    require(!(e.batch && e.fallback != null)) {
+                        "Category '$name' llm.extractAlternate: a fallback together with batch=true is inert — the batch leg runs async and never uses the sync fallback. Drop one."
                     }
                 }
                 validateOverride(name, "render", ovr.render, openRouter, anthropic, config.claudeCli, config.codexCli)
@@ -593,6 +612,9 @@ object ConfigLoader {
                 ovr.batch?.let { b ->
                     require(b.provider in setOf("openai", "anthropic")) {
                         "Category '$name' llm.batch: batch override only supports provider: openai or anthropic (OpenRouter, Claude CLI, and Codex CLI have no Batch API)"
+                    }
+                    require(b.fallback == null) {
+                        "Category '$name' llm.batch: fallback is not supported on the batch slot — the Batch API path has no sync fallback (configure llm.batchFallback for backpressure, or put fallback on llm.render)"
                     }
                 }
                 if (category.skipBatch) {
@@ -627,6 +649,31 @@ object ConfigLoader {
         codexCli: CodexCliConfig?
     ) {
         if (ovr == null) return
+        validateOverrideNode(category, useCase, ovr, openRouter, anthropic, claudeCli, codexCli)
+        // On-failure fallback chain: each link must be a valid sync override, must not repeat
+        // a provider+model already in the chain (cycle), and must not run deeper than
+        // MAX_FALLBACK_DEPTH. The primary's own (provider, model) seeds the cycle guard so a
+        // fallback pointing back at the primary is rejected too.
+        ovr.fallback?.let { fb ->
+            validateFallbackChain(
+                category, useCase, fb,
+                seen = linkedSetOf(keyOf(ovr)),
+                depth = 1,
+                openRouter, anthropic, claudeCli, codexCli
+            )
+        }
+    }
+
+    /** Validates a single override in isolation (provider name, required block, model). */
+    private fun validateOverrideNode(
+        category: String,
+        useCase: String,
+        ovr: LlmOverride,
+        openRouter: OpenRouterConfig?,
+        anthropic: AnthropicConfig?,
+        claudeCli: ClaudeCliConfig?,
+        codexCli: CodexCliConfig?
+    ) {
         require(ovr.provider in setOf("openai", "openrouter", "anthropic", "claudecli", "codexcli")) {
             "Category '$category' llm.$useCase: provider must be 'openai', 'openrouter', 'anthropic', 'claudecli', or 'codexcli', got '${ovr.provider}'"
         }
@@ -655,4 +702,39 @@ object ConfigLoader {
             }
         }
     }
+
+    /**
+     * Walks the `fallback` links of a sync override: validates each link, forbids `batch=true`
+     * on a link (a fallback always runs synchronously), bounds the chain depth, and rejects a
+     * cycle. [seen] is pre-seeded with the primary's key so a fallback that points back at the
+     * primary is caught as well.
+     */
+    private fun validateFallbackChain(
+        category: String,
+        useCase: String,
+        node: LlmOverride,
+        seen: MutableSet<String>,
+        depth: Int,
+        openRouter: OpenRouterConfig?,
+        anthropic: AnthropicConfig?,
+        claudeCli: ClaudeCliConfig?,
+        codexCli: CodexCliConfig?
+    ) {
+        require(depth <= MAX_FALLBACK_DEPTH) {
+            "Category '$category' llm.$useCase: fallback chain is deeper than $MAX_FALLBACK_DEPTH — shorten it"
+        }
+        validateOverrideNode(category, "$useCase.fallback", node, openRouter, anthropic, claudeCli, codexCli)
+        require(!node.batch) {
+            "Category '$category' llm.$useCase.fallback: batch=true is not allowed — a fallback always runs on the sync path"
+        }
+        require(seen.add(keyOf(node))) {
+            "Category '$category' llm.$useCase: fallback cycle detected — '${keyOf(node)}' appears more than once in the chain"
+        }
+        node.fallback?.let { next ->
+            validateFallbackChain(category, useCase, next, seen, depth + 1, openRouter, anthropic, claudeCli, codexCli)
+        }
+    }
+
+    /** Stable identity of an override for cycle detection. CLI blank model ⇒ "<default>" so a self-cycle is caught. */
+    private fun keyOf(ovr: LlmOverride): String = "${ovr.provider}/${ovr.model.ifBlank { "<default>" }}"
 }

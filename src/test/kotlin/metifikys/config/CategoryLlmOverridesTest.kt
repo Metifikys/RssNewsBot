@@ -591,4 +591,218 @@ class CategoryLlmOverridesTest {
         }
         assertEquals(true, ex.message?.contains("skipBatch"))
     }
+
+    // ── On-failure fallback ──────────────────────────────────────────────────
+
+    @Test
+    fun `parses a nested fallback and round-trips claudecli to codexcli`() {
+        val config = load("""
+            telegram:
+              botToken: "tok"
+            openai:
+              apiKey: "sk-test"
+            claudeCli:
+              command: "claude"
+            codexCli:
+              command: "codex"
+            database:
+              path: "test.db"
+            scheduler:
+              intervalMinutes: 60
+            categories:
+              tech:
+                emoji: "💻"
+                channelId: "@tech"
+                feeds:
+                  - https://example.com/feed
+                llm:
+                  render: { provider: claudecli, model: "", fallback: { provider: codexcli, model: gpt-5-codex } }
+        """)
+        val render = config.categories["tech"]?.llm?.render
+        assertEquals("claudecli", render?.provider)
+        assertEquals("codexcli", render?.fallback?.provider)
+        assertEquals("gpt-5-codex", render?.fallback?.model)
+    }
+
+    @Test
+    fun `fallback with unknown provider rejected`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      render: { provider: openai, model: gpt-x, fallback: { provider: foo, model: bar } }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("llm.render.fallback"))
+        assertEquals(true, ex.message?.contains("must be 'openai', 'openrouter', 'anthropic', 'claudecli', or 'codexcli'"))
+    }
+
+    @Test
+    fun `fallback requiring a missing provider block rejected`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      render: { provider: openai, model: gpt-x, fallback: { provider: codexcli, model: "" } }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("requires top-level codexCli: block"))
+    }
+
+    @Test
+    fun `fallback identical to primary rejected as a cycle`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                claudeCli:
+                  command: "claude"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      render: { provider: claudecli, model: "", fallback: { provider: claudecli, model: "" } }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("fallback cycle detected"))
+    }
+
+    @Test
+    fun `fallback chain deeper than the max is rejected`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      render: { provider: openai, model: m1, fallback: { provider: openai, model: m2, fallback: { provider: openai, model: m3, fallback: { provider: openai, model: m4, fallback: { provider: openai, model: m5 } } } } }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("fallback chain is deeper than"))
+    }
+
+    @Test
+    fun `fallback link with batch true rejected`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                codexCli:
+                  command: "codex"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      extract: { provider: openai, model: gpt-a, fallback: { provider: codexcli, model: "", batch: true } }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("fallback: batch=true is not allowed"))
+    }
+
+    @Test
+    fun `extract with batch true and a fallback rejected as inert`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                codexCli:
+                  command: "codex"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      extract: { provider: openai, model: gpt-a, batch: true, fallback: { provider: codexcli, model: "" } }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("inert"))
+    }
+
+    @Test
+    fun `batch slot with a fallback rejected`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load("""
+                telegram:
+                  botToken: "tok"
+                openai:
+                  apiKey: "sk-test"
+                database:
+                  path: "test.db"
+                scheduler:
+                  intervalMinutes: 60
+                categories:
+                  tech:
+                    emoji: "💻"
+                    channelId: "@tech"
+                    feeds:
+                      - https://example.com/feed
+                    llm:
+                      batch: { provider: openai, model: gpt-b, fallback: { provider: openai, model: gpt-c } }
+            """)
+        }
+        assertEquals(true, ex.message?.contains("fallback is not supported on the batch slot"))
+    }
 }

@@ -22,11 +22,14 @@ class LlmClientsFactory(
 ) {
     private val cache = ConcurrentHashMap<Triple<String, String, Boolean>, LlmClient>()
 
-    fun forRender(category: CategoryConfig?): LlmClient =
-        meter(
-            client(resolve(category?.llm?.render) { LlmEndpoint.forSync(config) }, batchCapable = false),
+    fun forRender(category: CategoryConfig?): LlmClient {
+        val ovr = category?.llm?.render
+        val primary = meter(
+            client(resolve(ovr) { LlmEndpoint.forSync(config) }, batchCapable = false),
             category, LlmUseCase.RENDER
         )
+        return withFallback(ovr, primary, category, LlmUseCase.RENDER)
+    }
 
     /**
      * Sync client for the `pending == 1` fallback path. Returns null when the category
@@ -34,7 +37,8 @@ class LlmClientsFactory(
      */
     fun forBatchFallback(category: CategoryConfig?): LlmClient? {
         val ovr = category?.llm?.batchFallback ?: return null
-        return meter(client(overrideEndpoint(ovr), batchCapable = false), category, LlmUseCase.RENDER)
+        val primary = meter(client(overrideEndpoint(ovr), batchCapable = false), category, LlmUseCase.RENDER)
+        return withFallback(ovr, primary, category, LlmUseCase.RENDER)
     }
 
     /**
@@ -46,9 +50,17 @@ class LlmClientsFactory(
         val ovr = category?.llm?.extract
         val altOvr = category?.llm?.extractAlternate
         return if (ovr != null) {
-            val primary = meter(client(overrideEndpoint(ovr), batchCapable = ovr.batch), category, LlmUseCase.EXTRACT)
+            val primary = withFallback(
+                ovr,
+                meter(client(overrideEndpoint(ovr), batchCapable = ovr.batch), category, LlmUseCase.EXTRACT),
+                category, LlmUseCase.EXTRACT
+            )
             val alternate = altOvr?.let {
-                meter(client(overrideEndpoint(it), batchCapable = it.batch), category, LlmUseCase.EXTRACT)
+                withFallback(
+                    it,
+                    meter(client(overrideEndpoint(it), batchCapable = it.batch), category, LlmUseCase.EXTRACT),
+                    category, LlmUseCase.EXTRACT
+                )
             }
             primary to alternate
         } else {
@@ -85,8 +97,9 @@ class LlmClientsFactory(
      */
     fun forSummarize(category: CategoryConfig?, feedProvider: String): LlmClient {
         val ovr = category?.llm?.summarize
-        val ep = if (ovr != null && ovr.provider == feedProvider) {
-            overrideEndpoint(ovr)
+        val matchedOvr = ovr?.takeIf { it.provider == feedProvider }
+        val ep = if (matchedOvr != null) {
+            overrideEndpoint(matchedOvr)
         } else when (feedProvider) {
             "openai" -> LlmEndpoint.forOpenAI(config)
             "openrouter" -> LlmEndpoint.forOpenRouter(config)
@@ -99,7 +112,10 @@ class LlmClientsFactory(
                 ?: error("feed.summarize=codexcli but no codexCli: block configured")
             else -> error("Unknown summarize provider '$feedProvider'")
         }
-        return meter(client(ep, batchCapable = false), category, LlmUseCase.SUMMARIZE)
+        val primary = meter(client(ep, batchCapable = false), category, LlmUseCase.SUMMARIZE)
+        // Fallback only applies when a category `summarize` override actually drove the
+        // choice; the per-feed default path has no LlmOverride to carry one.
+        return withFallback(matchedOvr, primary, category, LlmUseCase.SUMMARIZE)
     }
 
     /**
@@ -111,6 +127,26 @@ class LlmClientsFactory(
         val rec = recorder ?: return inner
         val categoryName = config.categories.entries.firstOrNull { it.value === category }?.key
         return MeteredLlmClient(inner, rec, categoryName, useCase)
+    }
+
+    /**
+     * Wraps [meteredPrimary] in a [FallbackLlmClient] when [primaryOvr] declares an on-failure
+     * `fallback` (and is itself a sync leg). Each link is metered separately — meter-then-wrap —
+     * so `/status` attributes a fallback-served call to the provider that actually answered it;
+     * the recursion supports a fallback chain. A `batch=true` primary leg is never wrapped: it
+     * takes the async Batch API path where a sync fallback can't help (config validation also
+     * rejects a fallback there). Returns [meteredPrimary] unchanged when there is no fallback.
+     */
+    private fun withFallback(
+        primaryOvr: LlmOverride?,
+        meteredPrimary: LlmClient,
+        category: CategoryConfig?,
+        useCase: LlmUseCase
+    ): LlmClient {
+        val fb = primaryOvr?.fallback
+        if (fb == null || primaryOvr.batch) return meteredPrimary
+        val meteredFallback = meter(client(overrideEndpoint(fb), batchCapable = false), category, useCase)
+        return FallbackLlmClient(meteredPrimary, withFallback(fb, meteredFallback, category, useCase))
     }
 
     private fun client(ep: LlmEndpoint, batchCapable: Boolean): LlmClient =

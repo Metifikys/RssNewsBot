@@ -75,6 +75,7 @@ CLAUDE.md
 src/stateless-gliding-meteor.md
 smdedup.txt
 tmp.md
+docs/*
 
 ### Personal ops scripts (deploy to your own host) ###
 deploy_rssbot.*

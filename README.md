@@ -60,6 +60,10 @@ via a `/status` admin snapshot.
   (`extract`, `extractAlternate`, `render`, `batch`, `summarize`, `batchFallback`).
 - **A/B alternation on Step 1** — when both `extract` and `extractAlternate` are set, every
   second extract request goes to the "B" side.
+- **On-failure fallback** — any sync slot can carry a nested `fallback` provider+model; when the
+  primary call fails (usage limit, expired login, bad model, timeout) the same call is retried
+  against the fallback (e.g. Claude CLI → Codex CLI). Distinct from A/B (`extractAlternate`) and
+  backpressure (`batchFallback`).
 - **Per-article summarization** — opt-in per feed; stored on `articles.summary` and used by
   downstream prompts in place of the raw RSS description.
 - **Inline prompt overrides** — `dedup.prompts.extractSystem/extractUser/renderSystem/renderUser`
@@ -379,6 +383,11 @@ Three providers, six use cases, all per-category overridable.
 | `summarize`          | per-feed `summarize:` provider               | yes          | n/a (sync)               |
 | `batchFallback`      | none                                         | yes          | n/a (sync)               |
 
+Any sync slot (`extract`, `extractAlternate`, `render`, `summarize`, `batchFallback`) may also
+carry a nested `fallback: { provider, model }` — an on-failure secondary tried when the primary
+call fails (usage limit, expired login, bad model, exhausted-retry timeout). Sync-only, may chain
+(depth ≤ 3), and independent of the A/B `extractAlternate` and the backpressure `batchFallback`.
+
 Validation rules enforced at config load:
 
 - `provider: openrouter` is rejected on `batch` / `extract.batch=true` /
@@ -386,6 +395,10 @@ Validation rules enforced at config load:
 - `provider: anthropic` requires the top-level `anthropic:` block.
 - `provider: openrouter` requires the top-level `openrouter:` block.
 - `extractAlternate` without `extract` is rejected — it is the "B" side of an A/B pair.
+- A `fallback` must differ from its slot's primary and from every other link in the chain
+  (cycles rejected), may not exceed depth 3, and may not set `batch: true`.
+- `fallback` is rejected on the `batch` slot and on a `batch: true` extract/extractAlternate
+  leg — the async Batch API path has no sync fallback.
 - `summarize: openrouter` / `summarize: anthropic` on a feed requires the matching
   top-level block.
 - Every `pricing[]` entry must declare non-negative input/output.
@@ -679,7 +692,7 @@ summarizePrompt: …        # for feeds with summarize: set
 llm:                      # per-use-case provider+model overrides
   extract:          { provider: …, model: …, batch: true|false }
   extractAlternate: { provider: …, model: …, batch: true|false }
-  render:           { provider: …, model: … }
+  render:           { provider: …, model: …, fallback: { provider: …, model: … } }  # nested on-failure fallback (sync slots)
   batch:            { provider: …, model: … }    # openai|anthropic only
   summarize:        { provider: …, model: … }
   batchFallback:    { provider: …, model: … }    # any provider

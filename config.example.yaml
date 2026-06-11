@@ -140,6 +140,14 @@ categories:
     #     category, the next cycle bypasses batch submission and uses this LLM synchronously.
     #     Layered on top of the existing >=2 backpressure logic; any provider is valid here.
     #
+    # On-failure `fallback` (nested on any sync slot — extract / extractAlternate / render /
+    # summarize / batchFallback):
+    #   Add `fallback: { provider, model }` to a slot and, when the primary call FAILS (usage/
+    #   credit limit, expired login, bad model, or an exhausted-retry timeout), the SAME call is
+    #   retried against the fallback. Sync-only; may chain (depth <= 3); each link must differ
+    #   from the others; `batch: true` is rejected on a fallback and on the `batch` slot. This is
+    #   distinct from the A/B `extractAlternate` and the backpressure `batchFallback`.
+    #
     # `batch` flag on extract / extractAlternate:
     #   Adding `batch: true` to an `extract` or `extractAlternate` entry opts Step 1 into the
     #   provider's Batch API (50 % cheaper, async). The cycle loop is NOT blocked — submit returns
@@ -158,6 +166,8 @@ categories:
       batch:            { provider: openai,     model: gpt-5-mini-2025-08-07 }
       summarize:        { provider: openai,     model: gpt-5-mini-2025-08-07 }
       batchFallback:    { provider: anthropic,  model: claude-haiku-4-5-20251001 }
+      # On-failure fallback (nested, sync slots). E.g. primary Claude CLI, fall back to Codex CLI:
+      #   render: { provider: claudecli, model: "", fallback: { provider: codexcli, model: "" } }
     # Optional: two-step dedup pipeline. Step 1 (sync JSON-mode) extracts structured events
     # and shortlists only new/updated ones; Step 2 (Batch API) renders only the shortlist.
     # Remove this block to fall back to the legacy single-step flow.
