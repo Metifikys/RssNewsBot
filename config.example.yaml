@@ -108,9 +108,11 @@ summaryHistory:
 # plus every later duplicate detection (the "most duplicates / most repeated = most interesting"
 # signal) — merges near-duplicate phrasings via an embedding pass, hands the top candidates to the
 # category's render LLM to pick/order/write, and posts the roundup to that category's own channel.
-# No schema migration: the signal is read from the existing covered_events / rejected_events tables,
-# so this only produces output for categories that use the two-step `dedup:` pipeline.
-# Off by default — omit the whole block to disable.
+# No schema migration: the signal is read from the existing covered_events / rejected_events tables.
+# Categories WITHOUT a `dedup:` block (e.g. a legacy single-step one) have no events, so they fall
+# back automatically to ranking the week's raw ARTICLES — clustered by embedding the same way, with
+# the wider `articleCandidatePoolSize` so a low-duplication (single-source) category still posts a
+# sensible roundup. Off by default — omit the whole block to disable.
 weekly:
   enabled: false
   dayOfWeek: SUNDAY        # MONDAY..SUNDAY, case-insensitive
@@ -118,6 +120,9 @@ weekly:
   lookbackDays: 7          # window over which the week's events are gathered
   topN: 5                  # how many stories to feature in the roundup
   candidatePoolSize: 15    # top-by-mention clusters handed to the LLM to choose from (>= topN)
+  articleCandidatePoolSize: 40  # candidate pool for the article-level fallback (see note above);
+                                # wider than candidatePoolSize so low-duplication categories still
+                                # give the LLM a broad weekly sample to pick from (>= topN)
   minMentions: 2           # a story needs at least this many sightings to qualify (falls back to
                            # top-by-newsworthiness if nothing repeated, so a post still goes out)
   clusterThreshold: 0.83   # cosine ≥ this merges two events (different phrasings) into one story

@@ -87,13 +87,20 @@ data class WeeklyConfig(
     val topN: Int = 5,
     /** How many top-by-mention clusters are handed to the LLM as candidates. Must be >= [topN]. */
     val candidatePoolSize: Int = 15,
+    /**
+     * Candidate pool for the article-level fallback (categories with no `dedup:` block, ranked by
+     * raw articles instead of events). Larger than [candidatePoolSize] on purpose: a low-duplication
+     * (e.g. single-source) category has little repeat signal, so a wider pool lets the LLM pick the
+     * most significant stories from a broad weekly sample rather than just the newest few. Must be >= [topN].
+     */
+    val articleCandidatePoolSize: Int = 40,
     /** Minimum mention count (canonical + duplicate detections) for a story to qualify as a candidate. */
     val minMentions: Int = 2,
     /** Cosine threshold for merging near-duplicate events (different phrasings) into one story cluster. */
     val clusterThreshold: Double = 0.83,
     /** Embedding model id used for the clustering pass. */
     val embeddingModel: String = "text-embedding-3-small",
-    /** Cap on event rows scanned per category per run (bounds the embed + brute-force scan). */
+    /** Cap on event OR article rows scanned per category per run (bounds the embed + brute-force scan). */
     val maxEvents: Int = 1000,
     /**
      * Optional hashtag appended on its own line at the very end of the weekly post, e.g. "#головне".
@@ -739,6 +746,9 @@ object ConfigLoader {
                 require(w.topN >= 1) { "weekly.topN must be >= 1 (got ${w.topN})" }
                 require(w.candidatePoolSize >= w.topN) {
                     "weekly.candidatePoolSize (${w.candidatePoolSize}) must be >= topN (${w.topN})"
+                }
+                require(w.articleCandidatePoolSize >= w.topN) {
+                    "weekly.articleCandidatePoolSize (${w.articleCandidatePoolSize}) must be >= topN (${w.topN})"
                 }
                 require(w.minMentions >= 1) { "weekly.minMentions must be >= 1 (got ${w.minMentions})" }
                 require(w.clusterThreshold in 0.0..1.0) {

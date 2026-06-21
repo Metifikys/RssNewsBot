@@ -94,6 +94,13 @@ class WeeklyConfigTest {
     }
 
     @Test
+    fun `articleCandidatePoolSize below topN throws`() {
+        assertThrows<IllegalArgumentException> {
+            load(withWeekly("enabled: true", "topN: 5", "candidatePoolSize: 10", "articleCandidatePoolSize: 3"))
+        }
+    }
+
+    @Test
     fun `unknown category in weekly categories throws`() {
         assertThrows<IllegalArgumentException> {
             load(withWeekly("enabled: true", "categories:", "  - nope"))

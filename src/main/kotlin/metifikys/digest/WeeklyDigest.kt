@@ -16,6 +16,7 @@ import metifikys.db.CoveredEventRow
 import metifikys.db.NewsDatabase
 import metifikys.db.RejectedEventRow
 import metifikys.format.TopicFormatter
+import metifikys.model.Article
 import metifikys.telegram.TelegramSender
 import java.io.File
 import java.time.LocalDate
@@ -140,6 +141,33 @@ object WeeklyClusterer {
 }
 
 /**
+ * Splits a list of embedding inputs into consecutive sub-lists each under a total-character budget,
+ * so a large batch (the article fallback can embed up to `maxEvents` texts) is sent as several
+ * requests instead of one that exceeds the provider's per-request token cap. Pure and order-preserving:
+ * a single over-budget text is emitted alone rather than dropped.
+ */
+object WeeklyEmbedChunker {
+    fun chunk(texts: List<String>, maxChars: Int): List<List<String>> {
+        if (texts.isEmpty()) return emptyList()
+        val result = mutableListOf<List<String>>()
+        var i = 0
+        while (i < texts.size) {
+            var end = i
+            var chars = 0
+            while (end < texts.size) {
+                val next = texts[end].length
+                if (end > i && chars + next > maxChars) break
+                chars += next
+                end++
+            }
+            result.add(texts.subList(i, end))
+            i = end
+        }
+        return result
+    }
+}
+
+/**
  * Weekly "top story of the week" roundup. For each participating category it ranks the week's
  * covered events by how many times each story was seen (canonical coverage + later duplicate
  * detections + near-duplicate phrasings merged via embeddings), hands the top candidates to the
@@ -187,18 +215,37 @@ class WeeklyDigest(
         logger.info { "[Weekly] Weekly roundup finished." }
     }
 
-    /** Gathers, clusters, ranks, renders, and posts the roundup for a single category. */
+    /**
+     * Gathers, clusters, ranks, renders, and posts the roundup for a single category.
+     *
+     * Event path (categories with a `dedup:` block): rank the week's covered events + duplicate
+     * detections. Article fallback (event-less categories such as a legacy single-step one):
+     * when there are no covered events, rank the week's raw articles instead, with a wider
+     * candidate pool so a low-duplication (e.g. single-source) category still hands the LLM a
+     * broad weekly sample to pick the most significant stories from.
+     */
     fun runForCategory(name: String) {
         val catCfg = config.categories[name] ?: return
 
         val covered = db.fetchRecentEvents(name, weekly.lookbackDays, weekly.maxEvents)
+        val events: List<WeeklyEvent>
+        val poolSize: Int
         if (covered.isEmpty()) {
-            logger.info { "[Weekly:$name] No covered events in the last ${weekly.lookbackDays}d. Skipping." }
-            return
+            val articles = db.fetchRecentArticles(name, weekly.lookbackDays, weekly.maxEvents)
+            if (articles.isEmpty()) {
+                logger.info { "[Weekly:$name] No covered events and no recent articles in the last ${weekly.lookbackDays}d. Skipping." }
+                return
+            }
+            logger.info { "[Weekly:$name] No covered events — article-level fallback over ${articles.size} article(s)." }
+            events = buildEventsFromArticles(name, articles) ?: return
+            poolSize = weekly.articleCandidatePoolSize
+        } else {
+            val duplicates = db.fetchRecentRejectedEvents(name, weekly.lookbackDays, weekly.maxEvents)
+            logger.info { "[Weekly:$name] ${covered.size} covered + ${duplicates.size} duplicate event(s) (event path)." }
+            events = buildEvents(name, covered, duplicates) ?: return
+            poolSize = weekly.candidatePoolSize
         }
-        val duplicates = db.fetchRecentRejectedEvents(name, weekly.lookbackDays, weekly.maxEvents)
 
-        val events = buildEvents(name, covered, duplicates) ?: return
         val stories = WeeklyClusterer.cluster(events, weekly.clusterThreshold)
         if (stories.isEmpty()) {
             logger.info { "[Weekly:$name] No story clusters formed. Skipping." }
@@ -206,20 +253,79 @@ class WeeklyDigest(
         }
 
         // Prefer stories that actually repeated; if nothing reached minMentions, fall back to the
-        // strongest covered stories so the weekly post still goes out.
+        // strongest stories so the weekly post still goes out.
         val repeated = stories.filter { it.mentionCount >= weekly.minMentions }
         val candidates = (repeated.ifEmpty {
-            logger.info { "[Weekly:$name] Nothing reached minMentions=${weekly.minMentions}; falling back to top stories by newsworthiness." }
+            logger.info { "[Weekly:$name] Nothing reached minMentions=${weekly.minMentions}; falling back to top stories." }
             stories
-        }).take(weekly.candidatePoolSize)
+        }).take(poolSize)
 
         logger.info {
-            "[Weekly:$name] ${covered.size} covered + ${duplicates.size} duplicate event(s) → " +
-                "${stories.size} clusters; top mentions=${stories.take(5).map { "${it.subject.take(40)}×${it.mentionCount}" }}"
+            "[Weekly:$name] ${stories.size} clusters; top=${stories.take(5).map { "${it.subject.take(40)}×${it.mentionCount}" }}"
         }
 
         val post = renderPost(name, catCfg.emoji, candidates) ?: return
         deliver(name, catCfg.channelId, post, candidates.associateBy { it.url })
+    }
+
+    /**
+     * Embeds [texts] via [weekly.embeddingModel], split into sub-requests that stay under the
+     * provider's per-request token cap (the article fallback can embed up to `maxEvents` texts at
+     * once — a single call blows past OpenAI's 300k-tokens-per-request limit). Chunks by total
+     * character budget (worst-case ~1 token/char keeps each request safely under the cap) and
+     * concatenates the vectors in input order. Returns null (fail-open) on a billing/quota limit,
+     * any embed failure, or a result-size mismatch — a transient error must never produce a
+     * partial/empty roundup.
+     */
+    private fun embedAll(name: String, texts: List<String>): List<FloatArray>? {
+        if (texts.isEmpty()) return emptyList()
+        val chunks = WeeklyEmbedChunker.chunk(texts, EMBED_CHARS_PER_REQUEST)
+        if (chunks.size > 1) logger.info { "[Weekly:$name] embedding ${texts.size} text(s) in ${chunks.size} request(s)." }
+        val out = ArrayList<FloatArray>(texts.size)
+        for (chunk in chunks) {
+            val vectors = try {
+                embedder.embed(chunk, weekly.embeddingModel)
+            } catch (e: BillingException) {
+                logger.warn { "[Weekly:$name] billing/quota limit while embedding — skipping category." }
+                return null
+            } catch (e: Exception) {
+                logger.warn(e) { "[Weekly:$name] embedding failed — skipping category." }
+                return null
+            }
+            if (vectors.size != chunk.size) {
+                logger.warn { "[Weekly:$name] expected ${chunk.size} vectors, got ${vectors.size} — skipping." }
+                return null
+            }
+            out += vectors
+        }
+        return out
+    }
+
+    /**
+     * Article-level fallback assembler: maps each recent [Article] to a [WeeklyEvent] with
+     * `isCovered=true` and zero scores, so every article is a cluster representative and
+     * [WeeklyClusterer] ranks purely by how many articles cover the same story. `coreFact` prefers
+     * the LLM summary, falling back to the raw description.
+     */
+    private fun buildEventsFromArticles(name: String, articles: List<Article>): List<WeeklyEvent>? {
+        val texts = articles.map { embedText(it.title, it.summary ?: it.description, it.link) }
+        val vectors = embedAll(name, texts) ?: return null
+        return articles.mapIndexed { i, a ->
+            WeeklyEvent(
+                eventKey = a.link,
+                subject = a.title,
+                franchise = "",
+                eventType = "",
+                coreFact = (a.summary?.takeIf { it.isNotBlank() } ?: a.description).trim(),
+                url = a.link,
+                newsworthiness = 0,
+                importance = 0,
+                digestFit = 0,
+                coveredAt = a.pubDate,
+                isCovered = true,
+                vector = VectorMath.l2Normalize(vectors[i])
+            )
+        }
     }
 
     /** Embeds covered + duplicate events in one call and assembles normalized [WeeklyEvent]s. */
@@ -230,21 +336,7 @@ class WeeklyDigest(
     ): List<WeeklyEvent>? {
         val coveredTexts = covered.map { embedText(it.subject, it.coreFact, it.eventKey) }
         val dupTexts = duplicates.map { embedText(it.subject, it.coreFact, it.eventKey) }
-        val allTexts = coveredTexts + dupTexts
-
-        val vectors = try {
-            embedder.embed(allTexts, weekly.embeddingModel)
-        } catch (e: BillingException) {
-            logger.warn { "[Weekly:$name] billing/quota limit while embedding — skipping category." }
-            return null
-        } catch (e: Exception) {
-            logger.warn(e) { "[Weekly:$name] embedding failed — skipping category." }
-            return null
-        }
-        if (vectors.size != allTexts.size) {
-            logger.warn { "[Weekly:$name] expected ${allTexts.size} vectors, got ${vectors.size} — skipping." }
-            return null
-        }
+        val vectors = embedAll(name, coveredTexts + dupTexts) ?: return null
 
         val coveredEvents = covered.mapIndexed { i, row ->
             WeeklyEvent(
@@ -290,7 +382,9 @@ class WeeklyDigest(
                 subject = s.subject,
                 franchise = s.franchise,
                 eventType = s.eventType,
-                coreFact = s.coreFact,
+                // Cap: event coreFacts are short, but article descriptions can be long and the
+                // article path uses a larger candidate pool — keep the prompt bounded.
+                coreFact = s.coreFact.take(MAX_CANDIDATE_COREFACT_CHARS),
                 url = s.url,
                 mentions = s.mentionCount,
                 newsworthiness = s.newsworthiness,
@@ -452,6 +546,15 @@ class WeeklyDigest(
 
     companion object {
         private const val MAX_EMBED_INPUT_CHARS = 6000
+
+        /** Per-candidate `coreFact` cap in the LLM prompt JSON (article descriptions can be long). */
+        private const val MAX_CANDIDATE_COREFACT_CHARS = 400
+
+        /**
+         * Max characters per embeddings request. Embeddings APIs cap tokens per request (OpenAI:
+         * 300k); worst-case ~1 token/char keeps a chunk this size safely under that, with margin.
+         */
+        private const val EMBED_CHARS_PER_REQUEST = 200_000
 
         /**
          * Built-in weekly editor prompt (Ukrainian, matching the channels' house style). Overridable

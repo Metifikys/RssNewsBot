@@ -106,4 +106,42 @@ class WeeklyClustererTest {
     fun `empty input yields no stories`() {
         assertEquals(0, WeeklyClusterer.cluster(emptyList(), threshold = 0.8).size)
     }
+
+    // ── Article-level fallback shape: all isCovered=true, all scores 0 ────────────
+
+    @Test
+    fun `article-shaped events rank by cluster size, representative is the newest member`() {
+        val stories = WeeklyClusterer.cluster(
+            listOf(
+                ev("a1", "Big story A", x, news = 0, importance = 0, coveredAt = base),
+                ev("a2", "Big story A reworded", xNear, news = 0, importance = 0, coveredAt = base.minusDays(1)),
+                ev("b1", "Lone story B", y, news = 0, importance = 0, coveredAt = base)
+            ),
+            threshold = 0.8
+        )
+        assertEquals(2, stories.size)
+        // Cluster A (2 articles) outranks lone B (1), purely on cluster size.
+        assertEquals(2, stories[0].mentionCount)
+        // With all scores 0, the newest-pubDate member is the representative.
+        assertEquals("Big story A", stories[0].subject)
+        assertEquals(1, stories[1].mentionCount)
+        assertEquals("Lone story B", stories[1].subject)
+    }
+
+    @Test
+    fun `mention-count ties come out newest-first (stable sort)`() {
+        // Three distinct stories, each a single article → all mentionCount 1. The fallback relies
+        // on the stable sort surfacing them newest-pubDate first.
+        val stories = WeeklyClusterer.cluster(
+            listOf(
+                ev("a", "Oldest", x, news = 0, importance = 0, coveredAt = base.minusDays(2)),
+                ev("b", "Middle", y, news = 0, importance = 0, coveredAt = base.minusDays(1)),
+                ev("c", "Newest", z, news = 0, importance = 0, coveredAt = base)
+            ),
+            threshold = 0.8
+        )
+        assertEquals(3, stories.size)
+        assertTrue(stories.all { it.mentionCount == 1 })
+        assertEquals(listOf("Newest", "Middle", "Oldest"), stories.map { it.subject })
+    }
 }

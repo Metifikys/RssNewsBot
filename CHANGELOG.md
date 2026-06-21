@@ -23,6 +23,11 @@ single **Unreleased** section.
   Each bullet shows a `🔁 N` mention badge (N = how many times the story was seen that week,
   matched to the bullet by URL so it is always exact; toggle with `weekly.showMentions`), and an
   optional `weekly.hashtag` (e.g. `#головне`) is appended at the end of the post.
+  Categories without a `dedup:` block (no events) fall back automatically to ranking the week's raw
+  **articles** — clustered the same way (`WeeklyDigest.buildEventsFromArticles` →
+  `WeeklyClusterer`), with a wider `weekly.articleCandidatePoolSize` (default 40) so a
+  low-duplication / single-source category still hands the LLM a broad weekly sample. Backed by a
+  new `NewsDatabase.fetchRecentArticles`.
 - **`TopicFormatter.toHtml` now renders every inline `[label](url)` link, not just a trailing
   one** — single-pass conversion of `**bold**` / `` `code` `` / links anywhere in the text. Fixes
   multi-link messages (the weekly roundup, sent as one message) where only the last link was

@@ -479,6 +479,37 @@ class NewsDatabase(dbPath: String) {
         }
     }
 
+    /**
+     * Returns up to [limit] articles in [category] whose `pubDate` is within [sinceDays] days,
+     * newest-first, across ALL statuses (DUPLICATE rows included — a near-duplicate the
+     * semantic-dedup detector blocked is itself a "this story repeated" signal). Used by the
+     * weekly roundup's article-level fallback for categories with no covered events.
+     */
+    fun fetchRecentArticles(category: String, sinceDays: Long, limit: Int): List<Article> {
+        if (limit <= 0) return emptyList()
+        val cutoff = LocalDateTime.now().minusDays(sinceDays)
+        return transaction {
+            ArticlesTable.selectAll()
+                .where {
+                    (ArticlesTable.category eq category) and
+                        (ArticlesTable.pubDate greaterEq cutoff)
+                }
+                .orderBy(ArticlesTable.pubDate, SortOrder.DESC)
+                .limit(limit)
+                .map {
+                    Article(
+                        category = it[ArticlesTable.category],
+                        title = it[ArticlesTable.title],
+                        link = it[ArticlesTable.link],
+                        description = it[ArticlesTable.description],
+                        pubDate = it[ArticlesTable.pubDate],
+                        imageUrl = it[ArticlesTable.imageUrl],
+                        summary = it[ArticlesTable.summary]
+                    )
+                }
+        }
+    }
+
     fun markProcessed(links: List<String>) {
         if (links.isEmpty()) return
         transaction {
