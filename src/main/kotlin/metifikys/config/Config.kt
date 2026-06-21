@@ -9,6 +9,15 @@ import com.fasterxml.jackson.databind.node.TextNode
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import java.io.File
+import java.time.DayOfWeek
+import java.time.LocalTime
+import java.time.format.DateTimeParseException
+
+/** Parses [WeeklyConfig.dayOfWeek] into a [DayOfWeek] (case-insensitive). Throws on a bad value. */
+fun WeeklyConfig.dayOfWeekParsed(): DayOfWeek = DayOfWeek.valueOf(dayOfWeek.trim().uppercase())
+
+/** Parses [WeeklyConfig.time] ("HH:mm" or "HH:mm:ss") into a [LocalTime]. Throws on a bad value. */
+fun WeeklyConfig.timeParsed(): LocalTime = LocalTime.parse(time.trim())
 
 data class SummaryHistoryConfig(
     val maxCount: Int = 2,
@@ -56,6 +65,63 @@ data class AdminConfig(
     val statusChatId: String? = null
 )
 
+/**
+ * Optional weekly "top story of the week" roundup. When `enabled`, a dedicated scheduler
+ * thread fires once per week at [dayOfWeek] + [time] (the bot's local zone) and, for each
+ * participating category, ranks the week's covered events by how many times each story
+ * was seen (the canonical coverage plus every later duplicate detection — the "most
+ * duplicates" signal), merges near-duplicate phrasings via embeddings, hands the top
+ * candidates to the render LLM, and posts the resulting roundup to the category's own
+ * channel. Independent of the per-cycle digest scheduler.
+ */
+data class WeeklyConfig(
+    /** Master switch. When false the weekly scheduler is never started. */
+    val enabled: Boolean = false,
+    /** Day of week to post, e.g. "SUNDAY" / "monday". Case-insensitive; validated at load. */
+    val dayOfWeek: String = "SUNDAY",
+    /** Local time-of-day "HH:mm" (or "HH:mm:ss") in the bot's system zone. Validated at load. */
+    val time: String = "18:00",
+    /** Lookback window (days) over which the week's events are gathered. */
+    val lookbackDays: Long = 7,
+    /** How many top stories to feature in the roundup. */
+    val topN: Int = 5,
+    /** How many top-by-mention clusters are handed to the LLM as candidates. Must be >= [topN]. */
+    val candidatePoolSize: Int = 15,
+    /** Minimum mention count (canonical + duplicate detections) for a story to qualify as a candidate. */
+    val minMentions: Int = 2,
+    /** Cosine threshold for merging near-duplicate events (different phrasings) into one story cluster. */
+    val clusterThreshold: Double = 0.83,
+    /** Embedding model id used for the clustering pass. */
+    val embeddingModel: String = "text-embedding-3-small",
+    /** Cap on event rows scanned per category per run (bounds the embed + brute-force scan). */
+    val maxEvents: Int = 1000,
+    /**
+     * Optional hashtag appended on its own line at the very end of the weekly post, e.g. "#головне".
+     * Null/blank = no hashtag. Written verbatim — include the leading `#` yourself.
+     */
+    val hashtag: String? = null,
+    /**
+     * When true, each bullet gets a compact "🔁 N" badge showing how many times that story was
+     * seen this week (its mention count — the "most duplicates" signal). The count is matched to
+     * the bullet deterministically by its source URL, so the LLM can't get it wrong.
+     */
+    val showMentions: Boolean = true,
+    /**
+     * Categories that participate. Empty = every category that has a `dedup:` block (only those
+     * accumulate the `covered_events` / `rejected_events` the ranker needs). Names must exist.
+     */
+    val categories: List<String> = emptyList(),
+    /** Path (relative to CWD) to a YAML file with `weekly.system` / `weekly.user` keys. */
+    val promptFile: String? = null,
+    /** Inline prompt overrides; any non-null field beats the file and the built-in default. */
+    val prompts: WeeklyPromptsInline? = null
+)
+
+data class WeeklyPromptsInline(
+    val system: String? = null,
+    val user: String? = null
+)
+
 data class AppConfig(
     val telegram: TelegramConfig,
     val openai: OpenAIConfig,
@@ -69,6 +135,7 @@ data class AppConfig(
     val summaryHistory: SummaryHistoryConfig = SummaryHistoryConfig(),
     val processing: ProcessingConfig = ProcessingConfig(),
     val admin: AdminConfig = AdminConfig(),
+    val weekly: WeeklyConfig? = null,
     /**
      * Per-(provider, model) prices used by `/status` cost stats. Costs are in USD per
      * 1,000,000 tokens (matches how OpenAI / Anthropic publish their pricing pages).
@@ -649,6 +716,39 @@ object ConfigLoader {
                     }
                     require(ovr.extractAlternate?.batch != true) {
                         "Category '$name' sets skipBatch: true but also llm.extractAlternate.batch: true — skipBatch means no Batch API at all"
+                    }
+                }
+            }
+        }
+
+        config.weekly?.let { w ->
+            if (w.enabled) {
+                try {
+                    w.dayOfWeekParsed()
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException(
+                        "weekly.dayOfWeek '${w.dayOfWeek}' is invalid — use a day name like MONDAY..SUNDAY (case-insensitive)"
+                    )
+                }
+                try {
+                    w.timeParsed()
+                } catch (e: DateTimeParseException) {
+                    throw IllegalArgumentException("weekly.time '${w.time}' is invalid — use 24h \"HH:mm\" (e.g. \"18:00\")")
+                }
+                require(w.lookbackDays > 0) { "weekly.lookbackDays must be > 0 (got ${w.lookbackDays})" }
+                require(w.topN >= 1) { "weekly.topN must be >= 1 (got ${w.topN})" }
+                require(w.candidatePoolSize >= w.topN) {
+                    "weekly.candidatePoolSize (${w.candidatePoolSize}) must be >= topN (${w.topN})"
+                }
+                require(w.minMentions >= 1) { "weekly.minMentions must be >= 1 (got ${w.minMentions})" }
+                require(w.clusterThreshold in 0.0..1.0) {
+                    "weekly.clusterThreshold must be in [0.0, 1.0] (got ${w.clusterThreshold})"
+                }
+                require(w.embeddingModel.isNotBlank()) { "weekly.embeddingModel must not be blank" }
+                require(w.maxEvents > 0) { "weekly.maxEvents must be > 0 (got ${w.maxEvents})" }
+                for (cat in w.categories) {
+                    require(cat in config.categories) {
+                        "weekly.categories references unknown category '$cat' — must match a key under categories:"
                     }
                 }
             }

@@ -41,13 +41,13 @@ object TopicFormatter {
     private val FALLBACK_LINK_REGEX =
         Regex("""\s*\[([^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*)]\(($URL_BODY)\)\s*$""")
 
-    // Trailing Markdown link matcher for HTML rendering. Same bracket/paren tolerance as the
-    // fallback so labels like `…tokens.[P]` and parenthesised URLs are captured intact.
-    private val HTML_LINK_TAIL =
-        Regex("""\[([^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*)]\(($URL_BODY)\)\s*$""")
-
-    // Inline Markdown emphasis we convert to Telegram HTML: **bold** and `code`.
-    private val INLINE_MD = Regex("""\*\*(.+?)\*\*|`([^`]+)`""", RegexOption.DOT_MATCHES_ALL)
+    // Inline Markdown we convert to Telegram HTML, in one pass: **bold**, `code`, and
+    // [label](url) links anywhere in the text (not just a trailing one). Label tolerates one level
+    // of nested brackets (e.g. a `[P]` flair) and the URL one level of balanced parens.
+    private val INLINE_HTML = Regex(
+        """\*\*(.+?)\*\*|`([^`]+)`|\[([^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*)]\(($URL_BODY)\)""",
+        RegexOption.DOT_MATCHES_ALL
+    )
 
     fun applyStrictLayout(topic: String): String {
         val match = TOPIC_SHAPE.matchEntire(topic) ?: run {
@@ -97,37 +97,33 @@ object TopicFormatter {
             .replace(">", "&gt;")
 
     /**
-     * Renders a strict-layout topic into Telegram HTML (`parse_mode=HTML`).
+     * Renders inline Markdown into Telegram HTML (`parse_mode=HTML`) in a single pass.
      *
-     * The trailing `[label](url)` link becomes `<a href="url">label</a>`; the preceding headline
-     * and body have their inline `**bold**` / `` `code` `` converted and everything else
-     * HTML-escaped. Unlike legacy Markdown, a label containing `[`, `]`, `*`, `_` is legal here,
-     * which is the whole point — it eliminates the parse-failure → bracket-stripping corruption.
+     * Every `[label](url)` link becomes `<a href="url">label</a>` — anywhere in the text, not just
+     * a trailing one, so a multi-link message (e.g. the weekly roundup, sent as one message) renders
+     * correctly. `**bold**` / `` `code` `` are converted and all other text is HTML-escaped. A label
+     * containing `[`, `]`, `*`, `_` is legal here, which eliminates the legacy Markdown
+     * parse-failure → bracket-stripping corruption.
      */
     fun toHtml(topic: String): String {
-        val link = HTML_LINK_TAIL.find(topic) ?: return inlineMarkdownToHtml(topic)
-        val label = link.groupValues[1]
-        val url = link.groupValues[2]
-        val prefix = topic.substring(0, link.range.first)
-        return inlineMarkdownToHtml(prefix) +
-            "<a href=\"${escapeHtml(url)}\">${escapeHtml(label)}</a>"
-    }
-
-    /** Converts `**bold**`/`` `code` `` to `<b>`/`<code>` and HTML-escapes all other text. */
-    private fun inlineMarkdownToHtml(s: String): String {
         val sb = StringBuilder()
         var last = 0
-        for (m in INLINE_MD.findAll(s)) {
-            sb.append(escapeHtml(s.substring(last, m.range.first)))
+        for (m in INLINE_HTML.findAll(topic)) {
+            sb.append(escapeHtml(topic.substring(last, m.range.first)))
             val bold = m.groups[1]
             val code = m.groups[2]
+            val linkLabel = m.groups[3]
+            val linkUrl = m.groups[4]
             when {
                 bold != null -> sb.append("<b>").append(escapeHtml(bold.value)).append("</b>")
                 code != null -> sb.append("<code>").append(escapeHtml(code.value)).append("</code>")
+                linkLabel != null && linkUrl != null ->
+                    sb.append("<a href=\"").append(escapeHtml(linkUrl.value)).append("\">")
+                        .append(escapeHtml(linkLabel.value)).append("</a>")
             }
             last = m.range.last + 1
         }
-        sb.append(escapeHtml(s.substring(last)))
+        sb.append(escapeHtml(topic.substring(last)))
         return sb.toString()
     }
 

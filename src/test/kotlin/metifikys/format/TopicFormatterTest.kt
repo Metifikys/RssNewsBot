@@ -186,6 +186,22 @@ class TopicFormatterTest {
         assertEquals("<a href=\"$url\">Foo</a>", out)
     }
 
+    @Test
+    fun `toHtml converts every link in a multi-bullet message, not just the trailing one`() {
+        // The weekly-roundup bug: a single message with several [label](url) links left every
+        // link but the last as literal text.
+        val text = "🎮 **Головне за тиждень** (14.06 – 21.06)\n\n" +
+            "• 🤖 **A.** foo [джерело](https://x/1)\n\n" +
+            "• 🕯️ **B.** bar [джерело](https://x/2) 🔁 3"
+        val out = TopicFormatter.toHtml(text)
+        assertEquals(
+            "🎮 <b>Головне за тиждень</b> (14.06 – 21.06)\n\n" +
+                "• 🤖 <b>A.</b> foo <a href=\"https://x/1\">джерело</a>\n\n" +
+                "• 🕯️ <b>B.</b> bar <a href=\"https://x/2\">джерело</a> 🔁 3",
+            out
+        )
+    }
+
     // ── extractUrls tests ─────────────────────────────────────────────────────
 
     @Test

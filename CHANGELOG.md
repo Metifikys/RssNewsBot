@@ -8,6 +8,26 @@ single **Unreleased** section.
 ## [Unreleased]
 
 ### Added
+- **Weekly "top story of the week" roundup** — an optional `weekly:` config block enables a
+  dedicated scheduler that fires once per week at a configurable `dayOfWeek` + `time` (the bot's
+  local zone). For each participating category (the explicit `weekly.categories` list, else every
+  category with a `dedup:` block) it ranks the week's covered events by how many times each story
+  was seen — the canonical coverage plus every later `duplicate` detection from `rejected_events`,
+  with near-duplicate phrasings merged via an embedding pass (`WeeklyClusterer`, reusing
+  `Embedder`/`VectorMath`). The top-by-mention candidates are handed to the category's render LLM
+  (honoring its `llm.render` override) to pick, order, and write the roundup, which is posted to
+  the category's own channel. No schema migration — the "most duplicates" signal is read from the
+  existing `covered_events` / `rejected_events` tables. Built-in Ukrainian prompts, overridable via
+  `weekly.promptFile` (`weekly.system` / `weekly.user`) or inline `weekly.prompts`. Prompt-injection
+  URL guard mirrors `DigestDeliverer`. Off by default. See `WeeklyDigest` / `WeeklyScheduler`.
+  Each bullet shows a `🔁 N` mention badge (N = how many times the story was seen that week,
+  matched to the bullet by URL so it is always exact; toggle with `weekly.showMentions`), and an
+  optional `weekly.hashtag` (e.g. `#головне`) is appended at the end of the post.
+- **`TopicFormatter.toHtml` now renders every inline `[label](url)` link, not just a trailing
+  one** — single-pass conversion of `**bold**` / `` `code` `` / links anywhere in the text. Fixes
+  multi-link messages (the weekly roundup, sent as one message) where only the last link was
+  converted and the rest leaked as literal Markdown. The per-bullet digest path is unaffected
+  (one trailing link → identical output).
 - **On-failure provider fallback** — any sync LLM slot (`extract`, `extractAlternate`, `render`,
   `summarize`, `batchFallback`) may declare a nested `fallback: { provider, model }`. When the
   primary call fails (usage/credit limit, expired login, bad model, or an exhausted-retry

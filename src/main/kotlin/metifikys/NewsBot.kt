@@ -13,8 +13,12 @@ import metifikys.digest.CategoryProcessor
 import metifikys.digest.CycleErrorLog
 import metifikys.digest.DigestCycle
 import metifikys.digest.DigestDeliverer
+import metifikys.config.dayOfWeekParsed
+import metifikys.config.timeParsed
 import metifikys.digest.EventSemanticAnalyzer
 import metifikys.digest.SemanticDedupDetector
+import metifikys.digest.WeeklyDigest
+import metifikys.digest.WeeklyScheduler
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.RssFetcher
@@ -101,6 +105,29 @@ class NewsBot(
         semanticDedupDetector = semanticDedupDetector
     )
 
+    /**
+     * Optional weekly "top story of the week" roundup. Constructed (with its own embedding client)
+     * only when `weekly.enabled=true`, so no extra OpenAI client is created when the feature is off.
+     */
+    private val weeklyDigest: WeeklyDigest? =
+        if (config.weekly?.enabled == true) {
+            WeeklyDigest(
+                config = config,
+                db = db,
+                llmClientsFactory = llmClientsFactory,
+                embedder = Embedder(LlmEndpoint.forOpenAI(config), llmCallRecorder),
+                sender = sender
+            )
+        } else null
+
+    private val weeklyScheduler: WeeklyScheduler? = config.weekly?.takeIf { it.enabled }?.let { w ->
+        WeeklyScheduler(
+            day = w.dayOfWeekParsed(),
+            time = w.timeParsed(),
+            runnable = { weeklyDigest?.run() }
+        )
+    }
+
     fun start() {
         logger.info { "RssNewsBot started." }
         val syncProvider = if (config.openrouter != null) "openrouter(${config.openrouter.model})" else "openai(${config.openai.model})"
@@ -160,6 +187,7 @@ class NewsBot(
         Runtime.getRuntime().addShutdownHook(Thread({
             logger.info { "[Shutdown] Stopping scheduler..." }
             scheduler.shutdown()
+            weeklyScheduler?.shutdown()
             try {
                 if (!scheduler.awaitTermination(30, TimeUnit.SECONDS)) {
                     logger.warn { "[Shutdown] Scheduler did not terminate in 30s; forcing." }
@@ -182,6 +210,15 @@ class NewsBot(
             TimeUnit.MINUTES
         )
         logger.info { "Next cycle in $intervalMinutes minute(s)." }
+
+        weeklyScheduler?.let {
+            val w = config.weekly!!
+            it.start()
+            logger.info {
+                "[Weekly] Weekly top-story roundup enabled: ${w.dayOfWeek} ${w.time}, topN=${w.topN}, " +
+                    "lookback=${w.lookbackDays}d, minMentions=${w.minMentions}."
+            }
+        }
     }
 
     fun runDigestCycle() = digestCycle.runCycle()

@@ -102,6 +102,40 @@ summaryHistory:
   maxCount: 3          # number of previous digests to include (default: 3)
   retentionDays: 14    # days to keep old summaries in DB (default: 14)
 
+# Optional: weekly "top story of the week" roundup. When enabled, a dedicated scheduler fires
+# once per week at dayOfWeek + time (the bot's local zone). For each participating category it
+# ranks the week's covered events by how many times each story was seen — the canonical coverage
+# plus every later duplicate detection (the "most duplicates / most repeated = most interesting"
+# signal) — merges near-duplicate phrasings via an embedding pass, hands the top candidates to the
+# category's render LLM to pick/order/write, and posts the roundup to that category's own channel.
+# No schema migration: the signal is read from the existing covered_events / rejected_events tables,
+# so this only produces output for categories that use the two-step `dedup:` pipeline.
+# Off by default — omit the whole block to disable.
+weekly:
+  enabled: false
+  dayOfWeek: SUNDAY        # MONDAY..SUNDAY, case-insensitive
+  time: "18:00"            # 24h "HH:mm" in the bot's local time zone
+  lookbackDays: 7          # window over which the week's events are gathered
+  topN: 5                  # how many stories to feature in the roundup
+  candidatePoolSize: 15    # top-by-mention clusters handed to the LLM to choose from (>= topN)
+  minMentions: 2           # a story needs at least this many sightings to qualify (falls back to
+                           # top-by-newsworthiness if nothing repeated, so a post still goes out)
+  clusterThreshold: 0.83   # cosine ≥ this merges two events (different phrasings) into one story
+  embeddingModel: "text-embedding-3-small"
+  maxEvents: 1000          # cap on event rows scanned per category per run
+  showMentions: true       # append a "🔁 N" badge per bullet (N = how many times the story was
+                           # seen this week); matched to each bullet by URL, so it's always exact
+  hashtag: "#головне"      # optional: appended on its own line at the end of the post (omit = none)
+  # Which categories participate. Omit/empty = every category that has a `dedup:` block.
+  # categories:
+  #   - gaming
+  #   - tech
+  # Optional prompt override. Built-in Ukrainian defaults are used when absent.
+  # promptFile: "prompts/weekly.yaml"      # keys: weekly.system / weekly.user
+  # prompts:                                # inline beats the file
+  #   system: "..."
+  #   user: "..."
+
 categories:
   tech:
     emoji: "💻"
