@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
 import java.util.concurrent.CompletableFuture
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 class MeteredLlmClientTest {
@@ -57,7 +59,7 @@ class MeteredLlmClientTest {
         val out = metered.complete("sys-1234", "user-12345678") // 8 + 13 = 21 chars / 4 = 5
 
         assertEquals("abcdefgh", out)
-        val tokensIn = slot<Int>(); val tokensOut = slot<Int>()
+        val tokensIn = slot<Int>(); val tokensOut = slot<Int>(); val duration = slot<Long?>()
         verify(exactly = 1) {
             db.insertLlmCall(
                 provider = "openai",
@@ -67,11 +69,14 @@ class MeteredLlmClientTest {
                 promptTokens = capture(tokensIn),
                 completionTokens = capture(tokensOut),
                 estCostUsd = any(),
-                ts = any()
+                ts = any(),
+                durationMs = captureNullable(duration)
             )
         }
         assertEquals(5, tokensIn.captured)
         assertEquals(2, tokensOut.captured)
+        // Synchronous calls record a non-null latency.
+        assertNotNull(duration.captured)
     }
 
     @Test
@@ -90,7 +95,8 @@ class MeteredLlmClientTest {
                 promptTokens = 0,
                 completionTokens = 2,
                 estCostUsd = any(),
-                ts = any()
+                ts = any(),
+                durationMs = any()
             )
         }
     }
@@ -122,7 +128,7 @@ class MeteredLlmClientTest {
                 provider = "openai", model = "gpt-4o-mini",
                 category = "News", useCase = "SUMMARIZE",
                 promptTokens = 8, completionTokens = 0,
-                estCostUsd = any(), ts = any()
+                estCostUsd = any(), ts = any(), durationMs = any()
             )
         }
     }
@@ -144,20 +150,23 @@ class MeteredLlmClientTest {
         )
         f.get()
         // 3+3+2+2 = 10 chars / 4 = 2
+        val duration = slot<Long?>()
         verify(exactly = 1) {
             db.insertLlmCall(
                 provider = "openai", model = "gpt-batch",
                 category = "Tech", useCase = "EXTRACT",
                 promptTokens = 2, completionTokens = 2,
-                estCostUsd = any(), ts = any()
+                estCostUsd = any(), ts = any(), durationMs = captureNullable(duration)
             )
         }
+        // Batch jobs record no latency (wall-clock is poll-wait, not model latency).
+        assertNull(duration.captured)
     }
 
     @Test
     fun `recorder failure does not break the call`() {
         val inner = stubInner(openAiEndpoint(), completeReturn = "out")
-        every { db.insertLlmCall(any(), any(), any(), any(), any(), any(), any(), any()) } throws RuntimeException("db down")
+        every { db.insertLlmCall(any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws RuntimeException("db down")
         val metered = MeteredLlmClient(inner, recorder, category = "T", useCase = LlmUseCase.RENDER)
 
         val result = metered.complete("hi", "there")

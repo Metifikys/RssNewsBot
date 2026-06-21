@@ -194,7 +194,8 @@ class FallbackLlmClientTest {
                 promptTokens = any(),
                 completionTokens = any(),
                 estCostUsd = any(),
-                ts = any()
+                ts = any(),
+                durationMs = any()
             )
         }
         verify(exactly = 0) {
@@ -206,7 +207,8 @@ class FallbackLlmClientTest {
                 promptTokens = any(),
                 completionTokens = any(),
                 estCostUsd = any(),
-                ts = any()
+                ts = any(),
+                durationMs = any()
             )
         }
     }

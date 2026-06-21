@@ -29,20 +29,23 @@ class MeteredLlmClient(
     private val model: String get() = inner.endpoint.model
 
     override fun complete(systemPrompt: String, userPrompt: String): String {
+        val start = System.nanoTime()
         val result = inner.complete(systemPrompt, userPrompt)
-        record(systemPrompt.length + userPrompt.length, result.length)
+        record(systemPrompt.length + userPrompt.length, result.length, durationMs = elapsedMs(start))
         return result
     }
 
     override fun completeJson(systemPrompt: String, userPrompt: String): String {
+        val start = System.nanoTime()
         val result = inner.completeJson(systemPrompt, userPrompt)
-        record(systemPrompt.length + userPrompt.length, result.length)
+        record(systemPrompt.length + userPrompt.length, result.length, durationMs = elapsedMs(start))
         return result
     }
 
     override fun completeJson(systemPrompt: String, userPrompt: String, maxRetry: Int): String {
+        val start = System.nanoTime()
         val result = inner.completeJson(systemPrompt, userPrompt, maxRetry)
-        record(systemPrompt.length + userPrompt.length, result.length)
+        record(systemPrompt.length + userPrompt.length, result.length, durationMs = elapsedMs(start))
         return result
     }
 
@@ -55,6 +58,7 @@ class MeteredLlmClient(
         previousSummaries: List<String>,
         maxArticles: Int
     ): String {
+        val start = System.nanoTime()
         val result = inner.summarizeArticles(
             category, emoji, articles, systemPrompt, userPrompt, previousSummaries, maxArticles
         )
@@ -62,7 +66,7 @@ class MeteredLlmClient(
             (systemPrompt?.length ?: 0) + (userPrompt?.length ?: 0) +
             previousSummaries.sumOf { it.length } +
             articles.sumOf { it.title.length + it.description.length }
-        record(promptChars, result.length)
+        record(promptChars, result.length, durationMs = elapsedMs(start))
         return result
     }
 
@@ -74,6 +78,7 @@ class MeteredLlmClient(
         renderSystemPrompt: String,
         renderUserPromptTemplate: String
     ): String {
+        val start = System.nanoTime()
         val result = inner.summarizeShortlist(
             category, emoji, shortlist, articles, renderSystemPrompt, renderUserPromptTemplate
         )
@@ -81,7 +86,7 @@ class MeteredLlmClient(
             renderSystemPrompt.length + renderUserPromptTemplate.length +
             shortlist.sumOf { it.toString().length } +
             articles.sumOf { it.title.length + it.description.length }
-        record(promptChars, result.length)
+        record(promptChars, result.length, durationMs = elapsedMs(start))
         return result
     }
 
@@ -118,7 +123,12 @@ class MeteredLlmClient(
             .whenComplete { result, _ -> record(0, result?.length ?: 0, isBatch = true) }
     }
 
-    private fun record(promptChars: Int, completionChars: Int, isBatch: Boolean = false) {
+    private fun record(
+        promptChars: Int,
+        completionChars: Int,
+        isBatch: Boolean = false,
+        durationMs: Long? = null
+    ) {
         recorder.record(
             provider = provider,
             model = model,
@@ -126,9 +136,13 @@ class MeteredLlmClient(
             useCase = useCase,
             promptTokens = estimateTokens(promptChars),
             completionTokens = estimateTokens(completionChars),
-            isBatch = isBatch
+            isBatch = isBatch,
+            durationMs = durationMs
         )
     }
+
+    /** Elapsed wall-clock since [startNanos] (a [System.nanoTime] reading) in whole milliseconds. */
+    private fun elapsedMs(startNanos: Long): Long = (System.nanoTime() - startNanos) / 1_000_000
 
     companion object {
         /** Rough chars-to-tokens conversion. ~4 chars per token across English/Ukrainian/JSON. */

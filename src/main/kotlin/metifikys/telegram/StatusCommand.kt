@@ -1,8 +1,9 @@
 package metifikys.telegram
 
 import metifikys.config.AppConfig
-import metifikys.db.LlmCostStat
+import metifikys.db.CategoryArticleCounts
 import metifikys.db.NewsDatabase
+import metifikys.db.ProviderLatency
 import metifikys.digest.CycleErrorLog
 import java.time.Duration
 import java.time.LocalDateTime
@@ -35,6 +36,7 @@ class StatusCommand(
     fun buildSnapshot(): BuiltStatus {
         val readyByCategory = db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours)
         val pendingByCategory = db.fetchPendingBatchesByCategory()
+        val articleCounts = safeFetchArticleCounts(24)
         val errors = errorLog.list()
         val sb = StringBuilder()
         sb.append("📊 *Status* — ${LocalDateTime.now().format(stampFmt)}\n")
@@ -51,13 +53,14 @@ class StatusCommand(
             sb.append("*${escapeMarkdown(name)}* ${category.emoji}\n")
             sb.append("  last digest: $whenCell\n")
             sb.append("  ready for next batch: $readyCount\n")
+            sb.append("  ").append(formatArticleCounts(articleCounts[name])).append('\n')
             val pending = pendingByCategory[name].orEmpty()
             for (batch in pending) {
                 sb.append("  pending: `${escapeMarkdown(batch.batchId)}` started ${batch.createdAt.format(timeFmt)}\n")
             }
         }
 
-        appendCostSection(sb)
+        appendLatencySection(sb)
 
         val errorCommitToken = if (errors.isEmpty()) {
             -1L
@@ -77,46 +80,54 @@ class StatusCommand(
         return BuiltStatus(sb.toString().trimEnd(), errorCommitToken)
     }
 
-    private fun appendCostSection(sb: StringBuilder) {
-        val day = safeFetchStats(24)
-        val week = safeFetchStats(7 * 24)
-        sb.append('\n').append("💰 *LLM cost* (24h / 7d)\n")
-        val dayTotal = day.sumOf { it.totalCostUsd }
-        val weekTotal = week.sumOf { it.totalCostUsd }
-        sb.append("  total: ").append(formatUsd(dayTotal)).append(" / ").append(formatUsd(weekTotal)).append('\n')
-        if (day.isEmpty() && week.isEmpty()) return
-
-        val weekIndex: Map<Pair<String, String?>, LlmCostStat> =
-            week.associateBy { it.provider to it.category }
-        val rows = day.sortedByDescending { it.totalCostUsd }.take(10)
-        for (row in rows) {
-            val w = weekIndex[row.provider to row.category]?.totalCostUsd ?: 0.0
-            val cat = row.category?.let { escapeMarkdown(it) } ?: "-"
-            sb.append("  ").append(escapeMarkdown(row.provider)).append(" · ").append(cat).append(": ")
-            val showCost = row.totalCostUsd > 0.0 || w > 0.0
-            if (showCost) {
-                sb.append(formatUsd(row.totalCostUsd)).append(" / ").append(formatUsd(w)).append(' ')
-            }
-            sb.append('(')
-                .append(formatTokens(row.promptTokens)).append(" in / ")
-                .append(formatTokens(row.completionTokens)).append(" out, ")
-                .append(row.callCount).append(" calls)\n")
+    /**
+     * Per-provider LLM latency, two windows side by side: `avg/p95 (calls)` for 24h
+     * then 7d. Providers are ordered by 24h call volume (falling back to 7d). Batch
+     * jobs are excluded upstream (they record no `duration_ms`).
+     */
+    private fun appendLatencySection(sb: StringBuilder) {
+        val day = safeFetchLatency(24).associateBy { it.provider }
+        val week = safeFetchLatency(7 * 24).associateBy { it.provider }
+        sb.append('\n').append("⏱ *LLM latency* (24h / 7d)\n")
+        if (day.isEmpty() && week.isEmpty()) {
+            sb.append("  no timed calls recorded\n")
+            return
+        }
+        val providers = (day.keys + week.keys).distinct()
+            .sortedByDescending { day[it]?.callCount ?: week[it]?.callCount ?: 0L }
+        for (p in providers) {
+            sb.append("  ").append(escapeMarkdown(p)).append(": ")
+                .append(latencyCell(day[p])).append(" / ").append(latencyCell(week[p]))
+                .append('\n')
         }
     }
 
-    private fun safeFetchStats(sinceHours: Long): List<LlmCostStat> = try {
-        db.fetchLlmCallStats(sinceHours)
+    private fun latencyCell(l: ProviderLatency?): String =
+        if (l == null) "—" else "avg ${formatMs(l.avgMs)} p95 ${formatMs(l.p95Ms.toDouble())} (${l.callCount})"
+
+    /** `published: N · blocked: M (X%)` — block% omitted when nothing was seen this window. */
+    private fun formatArticleCounts(c: CategoryArticleCounts?): String {
+        val published = c?.published ?: 0L
+        val blocked = c?.blocked ?: 0L
+        val denom = published + blocked
+        val pct = if (denom > 0L) " (${blocked * 100 / denom}%)" else ""
+        return "published: $published · blocked: $blocked$pct"
+    }
+
+    private fun safeFetchLatency(sinceHours: Long): List<ProviderLatency> = try {
+        db.fetchProviderLatency(sinceHours)
     } catch (e: Exception) {
         emptyList()
     }
 
-    private fun formatUsd(v: Double): String = "$" + String.format(Locale.ROOT, "%.2f", v)
-
-    private fun formatTokens(n: Long): String = when {
-        n < 1_000L -> n.toString()
-        n < 1_000_000L -> String.format(Locale.ROOT, "%.1fk", n / 1_000.0)
-        else -> String.format(Locale.ROOT, "%.1fM", n / 1_000_000.0)
+    private fun safeFetchArticleCounts(sinceHours: Long): Map<String, CategoryArticleCounts> = try {
+        db.fetchArticleStatusCounts(sinceHours)
+    } catch (e: Exception) {
+        emptyMap()
     }
+
+    private fun formatMs(ms: Double): String =
+        if (ms < 1000.0) "${ms.toLong()}ms" else String.format(Locale.ROOT, "%.1fs", ms / 1000.0)
 
     private fun escapeMarkdown(text: String): String =
         text.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")

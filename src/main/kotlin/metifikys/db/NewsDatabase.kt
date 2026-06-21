@@ -12,6 +12,7 @@ import org.jetbrains.exposed.sql.javatime.datetime
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.sql.DriverManager
 import java.time.LocalDateTime
+import kotlin.math.ceil
 
 object ArticlesTable : Table("articles") {
     val id = integer("id").autoIncrement()
@@ -93,6 +94,13 @@ object LlmCallsTable : Table("llm_calls") {
     val completionTokens = integer("completion_tokens").default(0)
     val estCostUsd = double("est_cost_usd").default(0.0)
     val ts = datetime("ts").index()
+
+    /**
+     * Wall-clock latency of the LLM call in milliseconds. Nullable: only the
+     * synchronous code paths in [metifikys.ai.MeteredLlmClient] record it; batch
+     * jobs leave it null (their wall-clock is poll-wait, not model latency).
+     */
+    val durationMs = long("duration_ms").nullable()
 
     override val primaryKey = PrimaryKey(id)
 }
@@ -230,6 +238,29 @@ data class LlmCostStat(
     val promptTokens: Long,
     val completionTokens: Long,
     val callCount: Long
+)
+
+/**
+ * Per-provider latency aggregate produced by [NewsDatabase.fetchProviderLatency]
+ * over the rows that recorded a `duration_ms` (synchronous calls only). [p95Ms]
+ * is a nearest-rank percentile computed in-process.
+ */
+data class ProviderLatency(
+    val provider: String,
+    val callCount: Long,
+    val avgMs: Double,
+    val p95Ms: Long
+)
+
+/**
+ * Per-category article outcome counts produced by [NewsDatabase.fetchArticleStatusCounts]
+ * within a time window: [published] = rows in status PROCESSED, [blocked] = rows the
+ * semantic/event dedup filter hard-rejected (status DUPLICATE).
+ */
+data class CategoryArticleCounts(
+    val category: String,
+    val published: Long,
+    val blocked: Long
 )
 
 /**
@@ -806,7 +837,8 @@ class NewsDatabase(dbPath: String) {
         promptTokens: Int,
         completionTokens: Int,
         estCostUsd: Double,
-        ts: LocalDateTime = LocalDateTime.now()
+        ts: LocalDateTime = LocalDateTime.now(),
+        durationMs: Long? = null
     ) {
         transaction {
             LlmCallsTable.insert {
@@ -818,6 +850,7 @@ class NewsDatabase(dbPath: String) {
                 it[LlmCallsTable.completionTokens] = completionTokens
                 it[LlmCallsTable.estCostUsd] = estCostUsd
                 it[LlmCallsTable.ts] = ts
+                it[LlmCallsTable.durationMs] = durationMs
             }
         }
     }
@@ -850,6 +883,70 @@ class NewsDatabase(dbPath: String) {
                         callCount = it[callCount]
                     )
                 }
+        }
+    }
+
+    /**
+     * Per-provider latency over the last [sinceHours] hours, computed from rows that
+     * recorded a `duration_ms` (synchronous calls; batch jobs are excluded). Returns
+     * avg and nearest-rank p95, sorted by call count descending. Empty when no timed
+     * rows fall in the window.
+     */
+    fun fetchProviderLatency(sinceHours: Long): List<ProviderLatency> {
+        val cutoff = LocalDateTime.now().minusHours(sinceHours)
+        val byProvider = transaction {
+            LlmCallsTable
+                .select(LlmCallsTable.provider, LlmCallsTable.durationMs)
+                .where { LlmCallsTable.ts greaterEq cutoff }
+                .mapNotNull { row ->
+                    val d = row[LlmCallsTable.durationMs] ?: return@mapNotNull null
+                    row[LlmCallsTable.provider] to d
+                }
+        }.groupBy({ it.first }, { it.second })
+
+        return byProvider.map { (provider, durations) ->
+            val sorted = durations.sorted()
+            ProviderLatency(
+                provider = provider,
+                callCount = sorted.size.toLong(),
+                avgMs = sorted.average(),
+                p95Ms = nearestRankPercentile(sorted, 95)
+            )
+        }.sortedByDescending { it.callCount }
+    }
+
+    /** Nearest-rank percentile [p] (1..100) over an ascending-sorted list; 0 when empty. */
+    private fun nearestRankPercentile(sortedAsc: List<Long>, p: Int): Long {
+        if (sortedAsc.isEmpty()) return 0L
+        val rank = ceil(p / 100.0 * sortedAsc.size).toInt().coerceIn(1, sortedAsc.size)
+        return sortedAsc[rank - 1]
+    }
+
+    /**
+     * Per-category article outcome counts over the last [sinceHours] hours, windowed by
+     * `pubDate`. Each entry reports PROCESSED (published) and DUPLICATE (dedup-blocked)
+     * counts. Categories with no in-window rows are absent from the map.
+     */
+    fun fetchArticleStatusCounts(sinceHours: Long): Map<String, CategoryArticleCounts> {
+        val cutoff = LocalDateTime.now().minusHours(sinceHours)
+        val countExpr = ArticlesTable.id.count()
+        val rows = transaction {
+            ArticlesTable
+                .select(ArticlesTable.category, ArticlesTable.status, countExpr)
+                .where { ArticlesTable.pubDate greaterEq cutoff }
+                .groupBy(ArticlesTable.category, ArticlesTable.status)
+                .map { Triple(it[ArticlesTable.category], it[ArticlesTable.status], it[countExpr]) }
+        }
+        val byCategory = mutableMapOf<String, MutableMap<String, Long>>()
+        for ((cat, status, cnt) in rows) {
+            byCategory.getOrPut(cat) { mutableMapOf() }[status] = cnt
+        }
+        return byCategory.mapValues { (cat, statusCounts) ->
+            CategoryArticleCounts(
+                category = cat,
+                published = statusCounts[ArticleStatus.PROCESSED.name] ?: 0L,
+                blocked = statusCounts[ArticleStatus.DUPLICATE.name] ?: 0L
+            )
         }
     }
 

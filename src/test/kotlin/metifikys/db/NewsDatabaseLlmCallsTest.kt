@@ -1,5 +1,6 @@
 package metifikys.db
 
+import metifikys.model.Article
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
@@ -90,5 +91,89 @@ class NewsDatabaseLlmCallsTest {
         val db = NewsDatabase(tmp.resolve("llm-empty.db").toString())
         val stats = db.fetchLlmCallStats(24)
         assertTrue(stats.isEmpty())
+    }
+
+    @Test
+    fun `fetchProviderLatency averages and p95s over timed calls, excluding null durations`(
+        @TempDir tmp: Path
+    ) {
+        val db = NewsDatabase(tmp.resolve("llm-lat.db").toString())
+        val now = LocalDateTime.now()
+
+        // openai: five timed calls 100..500ms, plus one batch row (null) that must be excluded.
+        listOf(100L, 200L, 300L, 400L, 500L).forEach { d ->
+            db.insertLlmCall("openai", "m", "C", "RENDER", 1, 1, 0.0, now, d)
+        }
+        db.insertLlmCall("openai", "m", "C", "BATCH", 1, 1, 0.0, now, null)
+        db.insertLlmCall("codexcli", "m", "C", "RENDER", 1, 1, 0.0, now, 1000L)
+
+        val lat = db.fetchProviderLatency(24)
+
+        // Sorted by call count descending: openai (5 timed) before codexcli (1).
+        assertEquals(2, lat.size)
+        assertEquals("openai", lat[0].provider)
+        assertEquals(5L, lat[0].callCount)            // null-duration batch row excluded
+        assertEquals(300.0, lat[0].avgMs, 1e-9)
+        assertEquals(500L, lat[0].p95Ms)             // nearest-rank: ceil(0.95*5)=5 -> 5th value
+        assertEquals("codexcli", lat[1].provider)
+        assertEquals(1L, lat[1].callCount)
+        assertEquals(1000L, lat[1].p95Ms)
+    }
+
+    @Test
+    fun `fetchProviderLatency excludes rows outside the window`(@TempDir tmp: Path) {
+        val db = NewsDatabase(tmp.resolve("llm-lat-window.db").toString())
+        val now = LocalDateTime.now()
+        db.insertLlmCall("openai", "m", "C", "RENDER", 1, 1, 0.0, now, 100L)
+        db.insertLlmCall("openai", "m", "C", "RENDER", 1, 1, 0.0, now.minusHours(48), 999L)
+
+        val day = db.fetchProviderLatency(24)
+        assertEquals(1, day.size)
+        assertEquals(1L, day[0].callCount)
+        assertEquals(100.0, day[0].avgMs, 1e-9)
+    }
+
+    @Test
+    fun `fetchArticleStatusCounts tallies published and blocked per category`(@TempDir tmp: Path) {
+        val db = NewsDatabase(tmp.resolve("article-counts.db").toString())
+        val now = LocalDateTime.now()
+
+        db.insertArticles(
+            listOf(
+                Article("tech", "t1", "l1", "d", now),
+                Article("tech", "t2", "l2", "d", now),
+                Article("tech", "t3", "l3", "d", now),   // stays UNPROCESSED
+                Article("tech", "t4", "l4", "d", now),    // will be DUPLICATE
+                Article("gaming", "g1", "lg1", "d", now)
+            )
+        )
+        db.markProcessed(listOf("l1", "l2", "lg1"))
+        val ids = db.fetchArticleIdsByLinks(listOf("l1", "l4"))
+        db.markDuplicate(ids.getValue("l4"), ids.getValue("l1"))
+
+        val counts = db.fetchArticleStatusCounts(24)
+
+        val tech = counts.getValue("tech")
+        assertEquals(2L, tech.published)   // l1, l2
+        assertEquals(1L, tech.blocked)     // l4
+        val gaming = counts.getValue("gaming")
+        assertEquals(1L, gaming.published)
+        assertEquals(0L, gaming.blocked)
+    }
+
+    @Test
+    fun `fetchArticleStatusCounts excludes articles published before the window`(@TempDir tmp: Path) {
+        val db = NewsDatabase(tmp.resolve("article-counts-window.db").toString())
+        val now = LocalDateTime.now()
+        db.insertArticles(
+            listOf(
+                Article("tech", "t1", "l1", "d", now),
+                Article("tech", "t2", "l2", "d", now.minusHours(48))
+            )
+        )
+        db.markProcessed(listOf("l1", "l2"))
+
+        val counts = db.fetchArticleStatusCounts(24)
+        assertEquals(1L, counts.getValue("tech").published)  // only the in-window row
     }
 }

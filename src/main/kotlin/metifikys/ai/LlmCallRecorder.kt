@@ -24,7 +24,8 @@ class LlmCallRecorder(
         promptTokens: Int,
         completionTokens: Int,
         isBatch: Boolean = false,
-        ts: LocalDateTime = LocalDateTime.now()
+        ts: LocalDateTime = LocalDateTime.now(),
+        durationMs: Long? = null
     ) {
         try {
             val cost = pricing.estimateUsd(provider, model, promptTokens, completionTokens, isBatch)
@@ -36,7 +37,8 @@ class LlmCallRecorder(
                 promptTokens = promptTokens,
                 completionTokens = completionTokens,
                 estCostUsd = cost,
-                ts = ts
+                ts = ts,
+                durationMs = durationMs
             )
         } catch (e: Exception) {
             logger.warn(e) {

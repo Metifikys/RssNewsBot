@@ -3,8 +3,10 @@ package metifikys.telegram
 import io.mockk.every
 import io.mockk.mockk
 import metifikys.config.AppConfig
-import metifikys.db.LlmCostStat
+import metifikys.config.CategoryConfig
+import metifikys.db.CategoryArticleCounts
 import metifikys.db.NewsDatabase
+import metifikys.db.ProviderLatency
 import metifikys.digest.CycleErrorLog
 import org.junit.jupiter.api.Test
 import java.time.Duration
@@ -53,31 +55,29 @@ class StatusCommandTest {
     }
 
     @Test
-    fun `cost section renders zero totals when no calls recorded`() {
+    fun `latency section renders placeholder when no timed calls recorded`() {
         val db = mockk<NewsDatabase>(relaxed = true)
-        every { db.fetchLlmCallStats(any()) } returns emptyList()
+        every { db.fetchProviderLatency(any()) } returns emptyList()
         val statusCmd = StatusCommand(
             config = mockk<AppConfig>(relaxed = true),
             db = db,
             errorLog = CycleErrorLog()
         )
         val text = statusCmd.build()
-        assertTrue(text.contains("💰 *LLM cost* (24h / 7d)"))
-        assertTrue(text.contains("total: \$0.00 / \$0.00"))
+        assertTrue(text.contains("⏱ *LLM latency* (24h / 7d)"))
+        assertTrue(text.contains("no timed calls recorded"))
     }
 
     @Test
-    fun `cost section lists rows sorted by 24h cost descending`() {
+    fun `latency section lists providers sorted by 24h call count with both windows`() {
         val db = mockk<NewsDatabase>(relaxed = true)
-        every { db.fetchLlmCallStats(24L) } returns listOf(
-            LlmCostStat("openai", "Tech", totalCostUsd = 0.05, promptTokens = 10_000, completionTokens = 5_000, callCount = 7),
-            LlmCostStat("anthropic", "News", totalCostUsd = 0.30, promptTokens = 50_000, completionTokens = 20_000, callCount = 3),
-            LlmCostStat("openai", "News", totalCostUsd = 0.10, promptTokens = 20_000, completionTokens = 8_000, callCount = 5)
+        every { db.fetchProviderLatency(24L) } returns listOf(
+            ProviderLatency("openai", callCount = 180, avgMs = 1100.0, p95Ms = 2300),
+            ProviderLatency("codexcli", callCount = 36, avgMs = 5100.0, p95Ms = 12000)
         )
-        every { db.fetchLlmCallStats(7L * 24L) } returns listOf(
-            LlmCostStat("openai", "Tech", 0.50, 100_000, 50_000, 70),
-            LlmCostStat("anthropic", "News", 1.20, 200_000, 80_000, 30),
-            LlmCostStat("openai", "News", 0.40, 80_000, 32_000, 25)
+        every { db.fetchProviderLatency(7L * 24L) } returns listOf(
+            ProviderLatency("openai", callCount = 1240, avgMs = 1000.0, p95Ms = 2100),
+            ProviderLatency("codexcli", callCount = 300, avgMs = 5000.0, p95Ms = 11000)
         )
         val statusCmd = StatusCommand(
             config = mockk<AppConfig>(relaxed = true),
@@ -85,28 +85,23 @@ class StatusCommandTest {
             errorLog = CycleErrorLog()
         )
         val text = statusCmd.build()
-        assertTrue(text.contains("💰 *LLM cost* (24h / 7d)"))
-        assertTrue(text.contains("total: \$0.45 / \$2.10"))
+        assertTrue(text.contains("⏱ *LLM latency* (24h / 7d)"))
 
-        val anthropicIdx = text.indexOf("anthropic · News")
-        val openaiNewsIdx = text.indexOf("openai · News")
-        val openaiTechIdx = text.indexOf("openai · Tech")
-        assertTrue(anthropicIdx in 0 until openaiNewsIdx, "anthropic row should come before openai/News")
-        assertTrue(openaiNewsIdx in 0 until openaiTechIdx, "openai/News should come before openai/Tech")
+        // Ordered by 24h call volume: openai (180) before codexcli (36).
+        val openaiIdx = text.indexOf("openai: ")
+        val codexIdx = text.indexOf("codexcli: ")
+        assertTrue(openaiIdx in 0 until codexIdx, "openai row should come before codexcli")
 
-        assertTrue(text.contains("\$0.30 / \$1.20"))
-        assertTrue(text.contains("10.0k in"))
-        assertTrue(text.contains("3 calls"))
+        assertTrue(text.contains("openai: avg 1.1s p95 2.3s (180) / avg 1.0s p95 2.1s (1240)"))
+        assertTrue(text.contains("codexcli: avg 5.1s p95 12.0s (36) / avg 5.0s p95 11.0s (300)"))
     }
 
     @Test
-    fun `cost row omits dollar columns when both windows are zero`() {
+    fun `latency cell shows dash for a provider absent in one window`() {
         val db = mockk<NewsDatabase>(relaxed = true)
-        every { db.fetchLlmCallStats(24L) } returns listOf(
-            LlmCostStat("openrouter", "tech", totalCostUsd = 0.0, promptTokens = 29_500, completionTokens = 7_500, callCount = 80)
-        )
-        every { db.fetchLlmCallStats(7L * 24L) } returns listOf(
-            LlmCostStat("openrouter", "tech", totalCostUsd = 0.0, promptTokens = 29_500, completionTokens = 7_500, callCount = 80)
+        every { db.fetchProviderLatency(24L) } returns emptyList()
+        every { db.fetchProviderLatency(7L * 24L) } returns listOf(
+            ProviderLatency("openrouter", callCount = 50, avgMs = 800.0, p95Ms = 1500)
         )
         val statusCmd = StatusCommand(
             config = mockk<AppConfig>(relaxed = true),
@@ -114,8 +109,31 @@ class StatusCommandTest {
             errorLog = CycleErrorLog()
         )
         val text = statusCmd.build()
-        // Zero-cost row collapses to "provider · category: (tokens in / out, N calls)"
-        assertTrue(text.contains("openrouter · tech: (29.5k in / 7.5k out, 80 calls)"))
-        assertTrue(!text.contains("openrouter · tech: \$0.00"))
+        // 24h missing → dash; avg < 1s renders in ms, p95 ≥ 1s in seconds.
+        assertTrue(text.contains("openrouter: — / avg 800ms p95 1.5s (50)"))
+    }
+
+    @Test
+    fun `category block shows published and blocked counts with block percentage`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchArticleStatusCounts(24L) } returns mapOf(
+            "tech" to CategoryArticleCounts("tech", published = 12, blocked = 4)
+        )
+        val config = mockk<AppConfig>(relaxed = true)
+        every { config.categories } returns mapOf("tech" to mockk<CategoryConfig>(relaxed = true))
+        val text = StatusCommand(config = config, db = db, errorLog = CycleErrorLog()).build()
+        // block% = 4 / (12 + 4) = 25%
+        assertTrue(text.contains("published: 12 · blocked: 4 (25%)"))
+    }
+
+    @Test
+    fun `category block omits percentage when nothing seen in window`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchArticleStatusCounts(24L) } returns emptyMap()
+        val config = mockk<AppConfig>(relaxed = true)
+        every { config.categories } returns mapOf("tech" to mockk<CategoryConfig>(relaxed = true))
+        val text = StatusCommand(config = config, db = db, errorLog = CycleErrorLog()).build()
+        assertTrue(text.contains("published: 0 · blocked: 0"))
+        assertTrue(!text.contains("published: 0 · blocked: 0 ("))
     }
 }
