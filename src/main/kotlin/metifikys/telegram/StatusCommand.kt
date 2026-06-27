@@ -37,6 +37,7 @@ class StatusCommand(
         val readyByCategory = db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours)
         val pendingByCategory = db.fetchPendingBatchesByCategory()
         val articleCounts = safeFetchArticleCounts(24)
+        val publishedCounts = safeFetchPublishedCounts(24)
         val errors = errorLog.list()
         val sb = StringBuilder()
         sb.append("📊 *Status* — ${LocalDateTime.now().format(stampFmt)}\n")
@@ -53,7 +54,7 @@ class StatusCommand(
             sb.append("*${escapeMarkdown(name)}* ${category.emoji}\n")
             sb.append("  last digest: $whenCell\n")
             sb.append("  ready for next batch: $readyCount\n")
-            sb.append("  ").append(formatArticleCounts(articleCounts[name])).append('\n')
+            sb.append("  ").append(formatArticleCounts(articleCounts[name], publishedCounts[name] ?: 0L)).append('\n')
             val pending = pendingByCategory[name].orEmpty()
             for (batch in pending) {
                 sb.append("  pending: `${escapeMarkdown(batch.batchId)}` started ${batch.createdAt.format(timeFmt)}\n")
@@ -88,7 +89,7 @@ class StatusCommand(
     private fun appendLatencySection(sb: StringBuilder) {
         val day = safeFetchLatency(24).associateBy { it.provider }
         val week = safeFetchLatency(7 * 24).associateBy { it.provider }
-        sb.append('\n').append("⏱ *LLM latency* (24h / 7d)\n")
+        sb.append('\n').append("⏱ *LLM latency* (avg / p95 · req · 24h / 7d)\n")
         if (day.isEmpty() && week.isEmpty()) {
             sb.append("  no timed calls recorded\n")
             return
@@ -96,22 +97,22 @@ class StatusCommand(
         val providers = (day.keys + week.keys).distinct()
             .sortedByDescending { day[it]?.callCount ?: week[it]?.callCount ?: 0L }
         for (p in providers) {
-            sb.append("  ").append(escapeMarkdown(p)).append(": ")
-                .append(latencyCell(day[p])).append(" / ").append(latencyCell(week[p]))
-                .append('\n')
+            sb.append(escapeMarkdown(p)).append(": ").append(latencyCell(day[p])).append('\n')
+            sb.append("  ").append(latencyCell(week[p])).append('\n')
         }
     }
 
     private fun latencyCell(l: ProviderLatency?): String =
-        if (l == null) "—" else "avg ${formatMs(l.avgMs)} p95 ${formatMs(l.p95Ms.toDouble())} (${l.callCount})"
+        if (l == null) "—" else "${formatMs(l.avgMs)} / ${formatMs(l.p95Ms.toDouble())} · ${l.callCount}"
 
-    /** `published: N · blocked: M (X%)` — block% omitted when nothing was seen this window. */
-    private fun formatArticleCounts(c: CategoryArticleCounts?): String {
-        val published = c?.published ?: 0L
+    /** `✅ P (x%) · 📰 A · ⛔ B (y%)` — percentages over (articles+blocked), omitted when that's 0. */
+    private fun formatArticleCounts(c: CategoryArticleCounts?, published: Long): String {
+        val articles = c?.articles ?: 0L
         val blocked = c?.blocked ?: 0L
-        val denom = published + blocked
-        val pct = if (denom > 0L) " (${blocked * 100 / denom}%)" else ""
-        return "published: $published · blocked: $blocked$pct"
+        val denom = articles + blocked
+        val pubPct = if (denom > 0L) " (${published * 100 / denom}%)" else ""
+        val blkPct = if (denom > 0L) " (${blocked * 100 / denom}%)" else ""
+        return "✅ $published$pubPct · 📰 $articles · ⛔ $blocked$blkPct"
     }
 
     private fun safeFetchLatency(sinceHours: Long): List<ProviderLatency> = try {
@@ -122,6 +123,12 @@ class StatusCommand(
 
     private fun safeFetchArticleCounts(sinceHours: Long): Map<String, CategoryArticleCounts> = try {
         db.fetchArticleStatusCounts(sinceHours)
+    } catch (e: Exception) {
+        emptyMap()
+    }
+
+    private fun safeFetchPublishedCounts(sinceHours: Long): Map<String, Long> = try {
+        db.fetchPublishedTopicCounts(sinceHours)
     } catch (e: Exception) {
         emptyMap()
     }

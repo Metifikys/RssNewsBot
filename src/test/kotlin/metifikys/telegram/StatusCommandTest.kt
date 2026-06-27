@@ -64,7 +64,7 @@ class StatusCommandTest {
             errorLog = CycleErrorLog()
         )
         val text = statusCmd.build()
-        assertTrue(text.contains("⏱ *LLM latency* (24h / 7d)"))
+        assertTrue(text.contains("⏱ *LLM latency* (avg / p95 · req · 24h / 7d)"))
         assertTrue(text.contains("no timed calls recorded"))
     }
 
@@ -85,15 +85,16 @@ class StatusCommandTest {
             errorLog = CycleErrorLog()
         )
         val text = statusCmd.build()
-        assertTrue(text.contains("⏱ *LLM latency* (24h / 7d)"))
+        assertTrue(text.contains("⏱ *LLM latency* (avg / p95 · req · 24h / 7d)"))
 
         // Ordered by 24h call volume: openai (180) before codexcli (36).
         val openaiIdx = text.indexOf("openai: ")
         val codexIdx = text.indexOf("codexcli: ")
         assertTrue(openaiIdx in 0 until codexIdx, "openai row should come before codexcli")
 
-        assertTrue(text.contains("openai: avg 1.1s p95 2.3s (180) / avg 1.0s p95 2.1s (1240)"))
-        assertTrue(text.contains("codexcli: avg 5.1s p95 12.0s (36) / avg 5.0s p95 11.0s (300)"))
+        // Two lines per provider: first 24h, second (indented) 7d.
+        assertTrue(text.contains("openai: 1.1s / 2.3s · 180\n  1.0s / 2.1s · 1240"))
+        assertTrue(text.contains("codexcli: 5.1s / 12.0s · 36\n  5.0s / 11.0s · 300"))
     }
 
     @Test
@@ -109,31 +110,33 @@ class StatusCommandTest {
             errorLog = CycleErrorLog()
         )
         val text = statusCmd.build()
-        // 24h missing → dash; avg < 1s renders in ms, p95 ≥ 1s in seconds.
-        assertTrue(text.contains("openrouter: — / avg 800ms p95 1.5s (50)"))
+        // 24h missing → dash on first line; avg < 1s renders in ms, p95 ≥ 1s in seconds.
+        assertTrue(text.contains("openrouter: —\n  800ms / 1.5s · 50"))
     }
 
     @Test
-    fun `category block shows published and blocked counts with block percentage`() {
+    fun `category block shows published articles and blocked counts with percentages`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         every { db.fetchArticleStatusCounts(24L) } returns mapOf(
-            "tech" to CategoryArticleCounts("tech", published = 12, blocked = 4)
+            "tech" to CategoryArticleCounts("tech", articles = 12, blocked = 4)
         )
+        every { db.fetchPublishedTopicCounts(24L) } returns mapOf("tech" to 7L)
         val config = mockk<AppConfig>(relaxed = true)
         every { config.categories } returns mapOf("tech" to mockk<CategoryConfig>(relaxed = true))
         val text = StatusCommand(config = config, db = db, errorLog = CycleErrorLog()).build()
-        // block% = 4 / (12 + 4) = 25%
-        assertTrue(text.contains("published: 12 · blocked: 4 (25%)"))
+        // denom = articles + blocked = 16; ✅% = 7/16 = 43%, ⛔% = 4/16 = 25%
+        assertTrue(text.contains("✅ 7 (43%) · 📰 12 · ⛔ 4 (25%)"))
     }
 
     @Test
-    fun `category block omits percentage when nothing seen in window`() {
+    fun `category block omits percentages when nothing seen in window`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         every { db.fetchArticleStatusCounts(24L) } returns emptyMap()
+        every { db.fetchPublishedTopicCounts(24L) } returns emptyMap()
         val config = mockk<AppConfig>(relaxed = true)
         every { config.categories } returns mapOf("tech" to mockk<CategoryConfig>(relaxed = true))
         val text = StatusCommand(config = config, db = db, errorLog = CycleErrorLog()).build()
-        assertTrue(text.contains("published: 0 · blocked: 0"))
-        assertTrue(!text.contains("published: 0 · blocked: 0 ("))
+        assertTrue(text.contains("✅ 0 · 📰 0 · ⛔ 0"))
+        assertTrue(!text.contains("✅ 0 ("))
     }
 }

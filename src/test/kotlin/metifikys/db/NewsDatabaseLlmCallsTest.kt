@@ -154,10 +154,10 @@ class NewsDatabaseLlmCallsTest {
         val counts = db.fetchArticleStatusCounts(24)
 
         val tech = counts.getValue("tech")
-        assertEquals(2L, tech.published)   // l1, l2
+        assertEquals(2L, tech.articles)   // l1, l2
         assertEquals(1L, tech.blocked)     // l4
         val gaming = counts.getValue("gaming")
-        assertEquals(1L, gaming.published)
+        assertEquals(1L, gaming.articles)
         assertEquals(0L, gaming.blocked)
     }
 
@@ -174,6 +174,6 @@ class NewsDatabaseLlmCallsTest {
         db.markProcessed(listOf("l1", "l2"))
 
         val counts = db.fetchArticleStatusCounts(24)
-        assertEquals(1L, counts.getValue("tech").published)  // only the in-window row
+        assertEquals(1L, counts.getValue("tech").articles)  // only the in-window row
     }
 }

@@ -254,12 +254,15 @@ data class ProviderLatency(
 
 /**
  * Per-category article outcome counts produced by [NewsDatabase.fetchArticleStatusCounts]
- * within a time window: [published] = rows in status PROCESSED, [blocked] = rows the
- * semantic/event dedup filter hard-rejected (status DUPLICATE).
+ * within a time window (windowed by `pubDate`): [articles] = rows in status PROCESSED,
+ * [blocked] = rows the semantic/event dedup filter hard-rejected (status DUPLICATE).
+ *
+ * NOTE: [articles] counts articles by RSS `pubDate`, not by when they reached the channel.
+ * For the actual publish-event count see [NewsDatabase.fetchPublishedTopicCounts].
  */
 data class CategoryArticleCounts(
     val category: String,
-    val published: Long,
+    val articles: Long,
     val blocked: Long
 )
 
@@ -975,9 +978,31 @@ class NewsDatabase(dbPath: String) {
         return byCategory.mapValues { (cat, statusCounts) ->
             CategoryArticleCounts(
                 category = cat,
-                published = statusCounts[ArticleStatus.PROCESSED.name] ?: 0L,
+                articles = statusCounts[ArticleStatus.PROCESSED.name] ?: 0L,
                 blocked = statusCounts[ArticleStatus.DUPLICATE.name] ?: 0L
             )
+        }
+    }
+
+    /**
+     * Per-category SUM of `articleCount` over digests actually published (windowed by
+     * `SummariesTable.createdAt`) in the last [sinceHours]. Each topic in a digest is one
+     * channel message, so this approximates the post count visible on the channel.
+     * Categories with no in-window digests are absent from the map.
+     */
+    fun fetchPublishedTopicCounts(sinceHours: Long): Map<String, Long> {
+        val cutoff = LocalDateTime.now().minusHours(sinceHours)
+        val sumExpr = SummariesTable.articleCount.sum()
+        return transaction {
+            SummariesTable
+                .select(SummariesTable.category, sumExpr)
+                .where { SummariesTable.createdAt greaterEq cutoff }
+                .groupBy(SummariesTable.category)
+                .mapNotNull { row ->
+                    val s = row[sumExpr] ?: return@mapNotNull null
+                    row[SummariesTable.category] to s.toLong()
+                }
+                .toMap()
         }
     }
 
