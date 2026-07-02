@@ -96,6 +96,10 @@ via a `/status` admin snapshot.
 ### Observability
 - **Logback** with day-rolling, gzipped archive; structured `[Category:foo]` /
   `[SemanticDedup]` / `[Batch]` / `[Ranker]` prefixes.
+- **Reaction tracking** (opt-in, `telegram.updatesPolling: true`) — a `getUpdates` long-poll loop
+  records anonymous channel-post reaction counts (`message_reaction_count`) into `reaction_counts`,
+  joined back to the rendering event via `digest_messages`, and surfaced in the `/status`
+  "Reactions (7d)" panel. One `getUpdates` consumer per token; the bot must be a channel admin.
 - **`/status` admin snapshot** — per-category last digest + ready count + pending batches +
   24h/7d LLM cost (per provider × category), posted one-message-at-a-time so the admin chat
   always shows the latest state.
@@ -776,6 +780,9 @@ providers.
 | `llm_calls`          | Per-call token + USD ledger feeding the `/status` cost panel             |
 | `article_embeddings` | One vector per article (Float32 little-endian blob, `dim * 4` bytes)     |
 | `event_embeddings`   | One vector per `(category, event_key)` for the log-only event-level analyzer (Float32 LE blob) |
+| `digest_messages`    | One row per delivered Telegram message linking `(chat_id, message_id)` → category + `event_key` + article links, for reaction attribution |
+| `reaction_counts`    | Current aggregated reaction counts per `(chat_id, message_id, emoji)` from `message_reaction_count` updates (replace-all per message) |
+| `bot_state`          | Key/value store for restart-surviving runtime state (currently the Telegram `getUpdates` offset) |
 
 Pruning runs at the tail of every cycle:
 
@@ -784,6 +791,7 @@ Pruning runs at the tail of every cycle:
   `summaryHistory.retentionDays`.
 - `deleteOldRejectedEvents(30)` — rejected events log.
 - `deleteOldBatches(2)` — completed/failed batch records.
+- `deleteOldDigestMessages(90)` / `deleteOldReactionCounts(90)` — reaction-tracking retention.
 
 ---
 

@@ -296,4 +296,66 @@ class NewsDatabaseTest {
         val results = db.fetchRecentSummaries("tech", 10)
         assertEquals(1, results.size)
     }
+
+    // ── Digest messages & reactions ──────────────────────────────────────────
+
+    private fun digestMsg(chatId: Long, messageId: Long, category: String = "tech", eventKey: String? = "evt-$messageId") =
+        DigestMessageRow(chatId, messageId, category, eventKey, "https://a.com/$messageId", LocalDateTime.now())
+
+    @Test
+    fun `fetchReactionSummary aggregates totals, post count, and top emoji per category`() {
+        db.insertDigestMessages(listOf(digestMsg(-100L, 1, "tech"), digestMsg(-100L, 2, "tech")))
+        db.replaceReactionCounts(-100L, 1, listOf(ReactionCount("👍", 5), ReactionCount("❤️", 2)))
+        db.replaceReactionCounts(-100L, 2, listOf(ReactionCount("👍", 3)))
+
+        val summary = db.fetchReactionSummary(24).getValue("tech")
+        assertEquals(10L, summary.totalReactions)          // 5 + 2 + 3
+        assertEquals(2L, summary.postCount)                // two distinct messages
+        assertEquals(ReactionCount("👍", 8), summary.byEmoji.first())  // top emoji, merged across posts
+    }
+
+    @Test
+    fun `replaceReactionCounts replaces the whole set, not increments`() {
+        db.insertDigestMessages(listOf(digestMsg(-100L, 1)))
+        db.replaceReactionCounts(-100L, 1, listOf(ReactionCount("👍", 5), ReactionCount("👎", 2)))
+        // A later update drops 👎 entirely and lowers 👍 (people removed reactions).
+        db.replaceReactionCounts(-100L, 1, listOf(ReactionCount("👍", 4)))
+
+        val summary = db.fetchReactionSummary(24).getValue("tech")
+        assertEquals(4L, summary.totalReactions)
+        assertEquals(listOf(ReactionCount("👍", 4)), summary.byEmoji)
+    }
+
+    @Test
+    fun `replaceReactionCounts with empty list clears the message`() {
+        db.insertDigestMessages(listOf(digestMsg(-100L, 1)))
+        db.replaceReactionCounts(-100L, 1, listOf(ReactionCount("👍", 1)))
+        db.replaceReactionCounts(-100L, 1, emptyList())
+
+        assertTrue(db.fetchReactionSummary(24).isEmpty())
+    }
+
+    @Test
+    fun `fetchReactionSummary ignores reactions on messages we did not send`() {
+        // No digest_messages row for (-100, 99) → its reactions are not attributable to a category.
+        db.replaceReactionCounts(-100L, 99, listOf(ReactionCount("👍", 7)))
+        assertTrue(db.fetchReactionSummary(24).isEmpty())
+    }
+
+    @Test
+    fun `getState and setState round-trip and upsert`() {
+        assertEquals(null, db.getState("updates_offset"))
+        db.setState("updates_offset", "42")
+        assertEquals("42", db.getState("updates_offset"))
+        db.setState("updates_offset", "43")
+        assertEquals("43", db.getState("updates_offset"))
+    }
+
+    @Test
+    fun `deleteOldReactionCounts preserves recent rows`() {
+        db.insertDigestMessages(listOf(digestMsg(-100L, 1)))
+        db.replaceReactionCounts(-100L, 1, listOf(ReactionCount("👍", 1)))
+        db.deleteOldReactionCounts(90)
+        assertEquals(1L, db.fetchReactionSummary(24).getValue("tech").totalReactions)
+    }
 }

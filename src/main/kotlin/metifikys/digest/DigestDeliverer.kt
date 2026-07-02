@@ -3,10 +3,12 @@ package metifikys.digest
 import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.AppConfig
 import metifikys.db.CoveredEventRow
+import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
 import metifikys.format.TopicFormatter
 import metifikys.model.Article
 import metifikys.model.ShortlistItem
+import metifikys.telegram.SentRef
 import metifikys.telegram.TelegramSender
 import java.time.LocalDateTime
 
@@ -91,8 +93,15 @@ class DigestDeliverer(
         val topicUrls: List<Set<String>> = topics.map { TopicFormatter.extractUrls(it) }
         val referencedLinks = topicUrls.flatten().toSet() intersect allArticleLinks
 
+        // Maps a topic's article URL back to the Step 1 event it rendered, so each delivered
+        // message can be tagged with its event_key for later reaction attribution. Empty for
+        // legacy single-step categories (no shortlist).
+        val eventKeyByUrl: Map<String, String> = shortlist?.associate { it.url to it.eventKey } ?: emptyMap()
+
         val sentTopics = mutableListOf<String>()
         val failedTopicIdx = mutableListOf<Int>()
+        val digestMessageRows = mutableListOf<DigestMessageRow>()
+        val sentAt = LocalDateTime.now()
 
         for ((idx, topic) in topics.withIndex()) {
             val image = if (categoryConfig.enableImages) {
@@ -113,15 +122,38 @@ class DigestDeliverer(
                 }
                 firstImage
             } else null
-            val sent = if (image != null) {
+            val refs: List<SentRef> = if (image != null) {
                 // Single post: photo + caption. Caption is truncated to Telegram's 1024-char
                 // limit inside TelegramSender (with markdown→plain-text fallback on parse errors).
-                sender.sendPhotoToChannel(channelId, image, caption = topic)
+                listOfNotNull(sender.sendPhotoToChannel(channelId, image, caption = topic))
             } else {
                 sender.sendToChannel(channelId, topic, disablePreview = true)
             }
-            if (sent) sentTopics += topic else failedTopicIdx += idx
+            if (refs.isNotEmpty()) {
+                sentTopics += topic
+                val topicLinks = (topicUrls[idx] intersect allArticleLinks)
+                val eventKey = topicUrls[idx].firstNotNullOfOrNull { eventKeyByUrl[it] }
+                val linksJson = topicLinks.joinToString("\n")
+                // One digest_messages row per Telegram message (a chunked topic yields several,
+                // all sharing the same event and article links).
+                for (ref in refs) {
+                    digestMessageRows += DigestMessageRow(
+                        chatId = ref.chatId,
+                        messageId = ref.messageId,
+                        category = categoryName,
+                        eventKey = eventKey,
+                        articleLinks = linksJson,
+                        sentAt = sentAt
+                    )
+                }
+            } else {
+                failedTopicIdx += idx
+            }
         }
+
+        // Persist message→event links for every message that was sent, regardless of whether
+        // sibling topics failed — a delivered message collects reactions on its own.
+        if (digestMessageRows.isNotEmpty()) db.insertDigestMessages(digestMessageRows)
 
         when {
             sentTopics.isEmpty() -> {

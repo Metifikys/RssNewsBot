@@ -13,6 +13,7 @@ import metifikys.ai.dedup.ResolvedDedupPrompts
 import metifikys.config.*
 import metifikys.format.TopicFormatter
 import metifikys.db.CoveredEventRow
+import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
 import metifikys.db.PendingBatch
 import metifikys.db.SummaryRecord
@@ -22,6 +23,7 @@ import metifikys.model.Article
 import metifikys.model.CategoryInput
 import metifikys.model.ExtractionResult
 import metifikys.model.ShortlistItem
+import metifikys.telegram.SentRef
 import metifikys.telegram.TelegramSender
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -94,7 +96,7 @@ class NewsBotTest {
         every { db.insertArticles(any()) } returns 2
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("AI summary")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -112,7 +114,7 @@ class NewsBotTest {
         every { db.insertArticles(any()) } returns 1
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary")
-        every { sender.sendToChannel(any(), any(), any()) } returns false
+        every { sender.sendToChannel(any(), any(), any()) } returns emptyList()
         every { db.deleteOlderThan(any()) } just Runs
 
         bot.runDigestCycle()
@@ -187,7 +189,7 @@ class NewsBotTest {
         every { openAIBatch.resumeBatch("batch-xyz") } returns
             CompletableFuture.completedFuture(mapOf("tech" to "Resumed summary"))
         every { db.fetchProcessingByCategory("tech") } returns articles
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOldBatches() } just Runs
 
@@ -256,7 +258,7 @@ class NewsBotTest {
             "gaming" to gamingArticles
         )
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -275,7 +277,7 @@ class NewsBotTest {
         every { db.insertArticles(any()) } returns 1
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -293,7 +295,7 @@ class NewsBotTest {
         every { db.insertArticles(any()) } returns 1
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("Tech digest")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -311,7 +313,7 @@ class NewsBotTest {
         every { db.insertArticles(any()) } returns 1
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary")
-        every { sender.sendToChannel(any(), any(), any()) } returns false
+        every { sender.sendToChannel(any(), any(), any()) } returns emptyList()
         every { db.deleteOlderThan(any()) } just Runs
 
         bot.runDigestCycle()
@@ -335,7 +337,7 @@ class NewsBotTest {
         val capturedInput = slot<CategoryInput>()
         every { openAIBatch.submitCategoryBatch(eq("tech"), capture(capturedInput)) } returns
             CompletableFuture.completedFuture("New digest")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -420,7 +422,7 @@ class NewsBotTest {
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { db.countPendingBatchesForCategory("tech") } returns 3
         every { openAI.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } returns "sync summary"
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -462,7 +464,7 @@ class NewsBotTest {
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { db.countPendingBatchesForCategory("tech") } returns 1
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -499,7 +501,7 @@ class NewsBotTest {
         every { db.fetchReadyForDigestByCategory(configWithFallback.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { db.countPendingBatchesForCategory("tech") } returns 2
         every { fallbackClient.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } returns "fallback summary"
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -546,7 +548,7 @@ class NewsBotTest {
         every { db.fetchReadyForDigestByCategory(configWithFallback.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { db.countPendingBatchesForCategory("tech") } returns 1
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -584,7 +586,7 @@ class NewsBotTest {
         every { db.fetchReadyForDigestByCategory(configWithFallback.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { db.countPendingBatchesForCategory("tech") } returns 3
         every { openAI.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } returns "render summary"
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -630,7 +632,7 @@ class NewsBotTest {
         // pending=1 falls into the secondary band under the custom thresholds.
         every { db.countPendingBatchesForCategory("tech") } returns 1
         every { fallbackClient.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } returns "fallback summary"
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -763,7 +765,7 @@ class NewsBotTest {
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture(
             "•Topic A\n•Content A\n•Topic B\n•Content B"
         )
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -808,7 +810,7 @@ class NewsBotTest {
         val summary = "•📰 Big news. [link](https://a.com/img-story)"
 
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to listOf(articleWithImg))
-        every { sender.sendPhotoToChannel(any(), any(), any()) } returns true
+        every { sender.sendPhotoToChannel(any(), any(), any()) } returns SentRef(1L, 1L)
         every { db.markProcessed(any()) } just Runs
 
         botWithImages(enableImages = true).deliverer.deliver("tech", summary, listOf(articleWithImg))
@@ -832,7 +834,7 @@ class NewsBotTest {
         val summary = "•📰 Big news. [link](https://a.com/img-story)"
 
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to listOf(articleWithImg))
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         botWithImages(enableImages = false).deliverer.deliver("tech", summary, listOf(articleWithImg))
@@ -854,7 +856,7 @@ class NewsBotTest {
         val summary = "•📰 Plain story. [link](https://a.com/no-img)"
 
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to listOf(articleNoImg))
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         botWithImages(enableImages = true).deliverer.deliver("tech", summary, listOf(articleNoImg))
@@ -880,7 +882,7 @@ class NewsBotTest {
         val summary = "•📰 Big news. [джерело]($url)"
 
         every { db.fetchRecentSummaries("tech", config.summaryHistory.maxCount) } returns emptyList()
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         bot.deliverer.deliver("tech", summary, listOf(articleWithLongTitle))
@@ -907,7 +909,7 @@ class NewsBotTest {
         val summary = "•📰 Big news. [custom label]($url)"
 
         every { db.fetchRecentSummaries("tech", config.summaryHistory.maxCount) } returns emptyList()
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         bot.deliverer.deliver("tech", summary, listOf(articleWithTitle))
@@ -945,7 +947,7 @@ class NewsBotTest {
         """.trimIndent()
 
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         bot.deliverer.deliver("tech", currentSummary, articles)
@@ -970,7 +972,7 @@ class NewsBotTest {
         val currentSummary = "•Mixed topic [Old](https://old.com/1) and [New](https://new.com/1)"
 
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         bot.deliverer.deliver("tech", currentSummary, articles)
@@ -1009,7 +1011,7 @@ class NewsBotTest {
         val currentSummary = "•Topic A [Link](https://a.com/1)•Topic B [Link](https://b.com/1)"
 
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         bot.deliverer.deliver("tech", currentSummary, articles)
@@ -1024,7 +1026,7 @@ class NewsBotTest {
         every { db.insertArticles(any()) } returns 1
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
 
@@ -1057,9 +1059,9 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel("@test_tech", match { it.contains("T1") }, any()) } returns true
-        every { sender.sendToChannel("@test_tech", match { it.contains("T2") }, any()) } returns false
-        every { sender.sendToChannel("@test_tech", match { it.contains("T3") }, any()) } returns true
+        every { sender.sendToChannel("@test_tech", match { it.contains("T1") }, any()) } returns listOf(SentRef(1L, 1L))
+        every { sender.sendToChannel("@test_tech", match { it.contains("T2") }, any()) } returns emptyList()
+        every { sender.sendToChannel("@test_tech", match { it.contains("T3") }, any()) } returns listOf(SentRef(1L, 1L))
 
         bot.deliverer.deliver("tech", summary, articles)
 
@@ -1085,8 +1087,8 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel("@test_tech", match { it.contains("Sent topic") }, any()) } returns true
-        every { sender.sendToChannel("@test_tech", match { it.contains("Failed topic") }, any()) } returns false
+        every { sender.sendToChannel("@test_tech", match { it.contains("Sent topic") }, any()) } returns listOf(SentRef(1L, 1L))
+        every { sender.sendToChannel("@test_tech", match { it.contains("Failed topic") }, any()) } returns emptyList()
 
         bot.deliverer.deliver("tech", summary, articles)
 
@@ -1110,8 +1112,8 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel("@test_tech", match { it.contains("Alpha") }, any()) } returns true
-        every { sender.sendToChannel("@test_tech", match { it.contains("Beta") }, any()) } returns false
+        every { sender.sendToChannel("@test_tech", match { it.contains("Alpha") }, any()) } returns listOf(SentRef(1L, 1L))
+        every { sender.sendToChannel("@test_tech", match { it.contains("Beta") }, any()) } returns emptyList()
 
         bot.deliverer.deliver("tech", summary, articles)
 
@@ -1142,8 +1144,8 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel("@test_tech", match { it.contains("Sent") }, any()) } returns true
-        every { sender.sendToChannel("@test_tech", match { it.contains("Fail") }, any()) } returns false
+        every { sender.sendToChannel("@test_tech", match { it.contains("Sent") }, any()) } returns listOf(SentRef(1L, 1L))
+        every { sender.sendToChannel("@test_tech", match { it.contains("Fail") }, any()) } returns emptyList()
 
         // Capture what gets saved so we can feed it back on cycle 2.
         val savedCycle1 = slot<String>()
@@ -1157,7 +1159,7 @@ class NewsBotTest {
         every { db.fetchRecentSummaries("tech", 2) } returns listOf(
             SummaryRecord("tech", savedCycle1.captured, LocalDateTime.now())
         )
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
 
         val cycle2Summary =
             "•Sent [link](https://a.com/sent)" +
@@ -1188,8 +1190,8 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel("@test_tech", match { it.contains("Mentioned") }, any()) } returns true
-        every { sender.sendToChannel("@test_tech", match { it.contains("Prose") }, any()) } returns false
+        every { sender.sendToChannel("@test_tech", match { it.contains("Mentioned") }, any()) } returns listOf(SentRef(1L, 1L))
+        every { sender.sendToChannel("@test_tech", match { it.contains("Prose") }, any()) } returns emptyList()
 
         bot.deliverer.deliver("tech", summary, articles)
 
@@ -1223,8 +1225,8 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel("@test_tech", match { it.contains("Good") }, any()) } returns true
-        every { sender.sendToChannel("@test_tech", match { it.contains("Bad") }, any()) } returns false
+        every { sender.sendToChannel("@test_tech", match { it.contains("Good") }, any()) } returns listOf(SentRef(1L, 1L))
+        every { sender.sendToChannel("@test_tech", match { it.contains("Bad") }, any()) } returns emptyList()
 
         bot.deliverer.deliver("tech", summary, articles)
 
@@ -1243,7 +1245,7 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns false
+        every { sender.sendToChannel(any(), any(), any()) } returns emptyList()
 
         bot.deliverer.deliver("tech", summary, articles)
 
@@ -1264,8 +1266,8 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel("@test_tech", match { it.contains("Real") }, any()) } returns true
-        every { sender.sendToChannel("@test_tech", match { it.contains("Ghost") }, any()) } returns false
+        every { sender.sendToChannel("@test_tech", match { it.contains("Real") }, any()) } returns listOf(SentRef(1L, 1L))
+        every { sender.sendToChannel("@test_tech", match { it.contains("Ghost") }, any()) } returns emptyList()
 
         bot.deliverer.deliver("tech", summary, articles)
 
@@ -1273,6 +1275,48 @@ class NewsBotTest {
         verify(exactly = 1) { db.markProcessed(match { it.toSet() == setOf("https://a.com/real") }) }
         // No UNPROCESSED write: hallucinated URL filtered by intersect with chunk links.
         verify(exactly = 0) { db.markUnprocessed(any()) }
+    }
+
+    // ── Reaction tracking: digest_messages persistence ───────────────────────
+
+    @Test
+    fun `deliver persists a digest_messages row with the sent message ids and event_key`() {
+        val a1 = article("https://a.com/1")
+        val summary = "•T1 [link](https://a.com/1)"
+        val shortlist = listOf(
+            ShortlistItem(eventKey = "evt-1", coreFact = "cf", url = "https://a.com/1", status = "new")
+        )
+
+        every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
+        every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to listOf(a1))
+        every { sender.sendToChannel("@test_tech", any(), any()) } returns listOf(SentRef(-100L, 555L))
+
+        val captured = slot<List<DigestMessageRow>>()
+        every { db.insertDigestMessages(capture(captured)) } just Runs
+
+        bot.deliverer.deliver("tech", summary, listOf(a1), shortlist)
+
+        assertEquals(1, captured.captured.size)
+        val row = captured.captured.first()
+        assertEquals(-100L, row.chatId)
+        assertEquals(555L, row.messageId)
+        assertEquals("evt-1", row.eventKey)
+        assertEquals("tech", row.category)
+        assertTrue(row.articleLinks.contains("https://a.com/1"))
+    }
+
+    @Test
+    fun `deliver does not persist digest_messages for a failed send`() {
+        val a1 = article("https://a.com/1")
+        val summary = "•T1 [link](https://a.com/1)"
+
+        every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
+        every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to listOf(a1))
+        every { sender.sendToChannel(any(), any(), any()) } returns emptyList()
+
+        bot.deliverer.deliver("tech", summary, listOf(a1), null)
+
+        verify(exactly = 0) { db.insertDigestMessages(any()) }
     }
 
     // ── BUG-002: resumePendingBatches hands wrong articles to deliverCategorySummary ──
@@ -1306,7 +1350,7 @@ class NewsBotTest {
             CompletableFuture.completedFuture(mapOf("tech" to "•Summary B1 [link](https://a.com/b1-1)"))
         every { openAIBatch.resumeBatch("batch-B2") } returns
             CompletableFuture.completedFuture(mapOf("tech" to "•Summary B2 [link](https://a.com/b2-1)"))
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOldBatches() } just Runs
 
@@ -1348,7 +1392,7 @@ class NewsBotTest {
             CompletableFuture.completedFuture(mapOf("tech" to "•Summary B1"))
         every { openAIBatch.resumeBatch("batch-B2") } returns
             CompletableFuture.completedFuture(mapOf("tech" to "•Summary B2"))
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOldBatches() } just Runs
 
@@ -1381,7 +1425,7 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         // Injected topic: URL is not in allArticleLinks → must be dropped.
@@ -1402,7 +1446,7 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         val summary =
@@ -1423,7 +1467,7 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         val summary =
@@ -1455,7 +1499,7 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         val injectedSummary = "•Normal [link](https://feed.example/news-42)" +
@@ -1476,7 +1520,7 @@ class NewsBotTest {
 
         every { db.fetchRecentSummaries("tech", 2) } returns emptyList()
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         val summary =
@@ -1505,7 +1549,7 @@ class NewsBotTest {
             SummaryRecord("tech", poisonedHistory, LocalDateTime.now().minusHours(3))
         )
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
 
         val summary = "•Repeat [Click](https://attacker.example/phish)"
@@ -1576,7 +1620,7 @@ class NewsBotTest {
         val capturedInput = slot<CategoryInput>()
         every { openAIBatch.submitCategoryBatch(eq("tech"), capture(capturedInput)) } returns
             CompletableFuture.completedFuture("•Topic [link](https://a.com/1)")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
 
         b.runDigestCycle()
         Thread.sleep(200)
@@ -1625,7 +1669,7 @@ class NewsBotTest {
                 renderUserPromptTemplate = "REN_USER"
             )
         } returns "•Topic [link](https://a.com/1)"
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
 
         b.runDigestCycle()
 
@@ -1677,7 +1721,7 @@ class NewsBotTest {
         val capturedInput = slot<CategoryInput>()
         every { openAIBatch.submitCategoryBatch(eq("tech"), capture(capturedInput)) } returns
             CompletableFuture.completedFuture("•Legacy topic [link](https://a.com/1)")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
 
         b.runDigestCycle()
         Thread.sleep(200)
@@ -1729,7 +1773,7 @@ class NewsBotTest {
         every { db.countPendingBatchesForCategory("tech") } returns 0
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns
             CompletableFuture.completedFuture("•Plain topic [link](https://a.com/1)")
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
 
         bot.runDigestCycle()
         Thread.sleep(200)
@@ -1773,7 +1817,7 @@ class NewsBotTest {
         every { db.fetchArticlesByLinks(listOf("https://a.com/1")) } returns articles
         every { openAIBatch.resumeBatch("b-resume") } returns
             CompletableFuture.completedFuture(mapOf("tech" to "•Topic [link](https://a.com/1)"))
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.deleteOldBatches() } just Runs
 
         bot.resumePendingBatches()
@@ -1801,7 +1845,7 @@ class NewsBotTest {
         every { db.fetchArticlesByLinks(listOf("https://a.com/1")) } returns articles
         every { openAIBatch.resumeBatch("b-legacy") } returns
             CompletableFuture.completedFuture(mapOf("tech" to "•Topic [link](https://a.com/1)"))
-        every { sender.sendToChannel(any(), any(), any()) } returns true
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.deleteOldBatches() } just Runs
 
         bot.resumePendingBatches()

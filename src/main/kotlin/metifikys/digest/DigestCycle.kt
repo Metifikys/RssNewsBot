@@ -86,6 +86,8 @@ class DigestCycle(
             db.pruneOldCoveredEvents(config.summaryHistory.retentionDays)
             db.pruneOldEventEmbeddings(config.summaryHistory.retentionDays)
             db.deleteOldRejectedEvents()
+            db.deleteOldDigestMessages()
+            db.deleteOldReactionCounts()
         } catch (e: Exception) {
             errorLog.recordError(null, "[Cycle]", e)
             logger.error(e) { "Digest cycle error" }

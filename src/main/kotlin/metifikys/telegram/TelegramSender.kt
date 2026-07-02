@@ -12,6 +12,14 @@ import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * Chat + message id of a message the bot actually delivered. Captured from the send response
+ * so digest topics can later be joined back to the reactions Telegram reports per message
+ * (see [metifikys.telegram.TelegramUpdatesPoller]). [chatId] is the numeric id from the
+ * response (channels report reactions under the `-100…` id, not the `@username` form).
+ */
+data class SentRef(val chatId: Long, val messageId: Long)
+
 class TelegramSender(private val botToken: String) {
 
     private val client = OkHttpClient.Builder()
@@ -50,7 +58,10 @@ class TelegramSender(private val botToken: String) {
     private data class SendMessageResponse(val ok: Boolean = false, val result: SentMessage? = null)
 
     @Serializable
-    private data class SentMessage(val message_id: Long)
+    private data class SentMessage(val message_id: Long, val chat: ChatRef? = null)
+
+    @Serializable
+    private data class ChatRef(val id: Long)
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
@@ -62,65 +73,80 @@ class TelegramSender(private val botToken: String) {
         val HTML_ANCHOR = Regex("""<a href="([^"]*)">(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
     }
 
-    fun sendToChannel(channelId: String, text: String, disablePreview: Boolean = false): Boolean {
+    /**
+     * Sends [text] to [channelId], chunking if needed. Returns a [SentRef] for every message
+     * actually delivered (usually one; long text may chunk into several). An empty list means
+     * nothing was sent — the caller treats that as the old `false`. Non-empty refs feed the
+     * reaction-tracking join in [metifikys.digest.DigestDeliverer].
+     */
+    fun sendToChannel(channelId: String, text: String, disablePreview: Boolean = false): List<SentRef> {
         val chunks = chunkMessage(text)
-        var allSuccess = true
+        val refs = ArrayList<SentRef>(chunks.size)
         for (chunk in chunks) {
             val html = TopicFormatter.toHtml(chunk)
-            val success = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview)
-                || sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview)
-            if (!success) allSuccess = false
+            val ref = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview)
+                ?: sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview)
+            if (ref != null) refs += ref
         }
-        return allSuccess
+        return refs
     }
 
     /**
      * Sends a photo with optional caption. Tries HTML parse mode first, falls back to plain text
      * (mirroring [sendToChannel]). Caption is truncated to [MAX_CAPTION_LEN] with an ellipsis if needed.
-     * Returns false if both attempts fail.
+     * Returns the delivered message's [SentRef], or null if both attempts fail.
      */
-    fun sendPhotoToChannel(channelId: String, photoUrl: String, caption: String? = null): Boolean {
+    fun sendPhotoToChannel(channelId: String, photoUrl: String, caption: String? = null): SentRef? {
         // Truncate the Markdown caption first (so we never cut inside an <a> tag), then render HTML.
         val htmlCaption = caption?.let { TopicFormatter.toHtml(truncateForCaption(it)) }
         return sendPhoto(channelId, photoUrl, htmlCaption, parseMode = "HTML")
-            || sendPhoto(channelId, photoUrl, htmlCaption?.htmlToPlainText(), parseMode = null)
+            ?: sendPhoto(channelId, photoUrl, htmlCaption?.htmlToPlainText(), parseMode = null)
     }
 
-    private fun sendPhoto(chatId: String, photoUrl: String, caption: String?, parseMode: String?): Boolean {
+    private fun sendPhoto(chatId: String, photoUrl: String, caption: String?, parseMode: String?): SentRef? {
         val payload = json.encodeToString(SendPhotoRequest(chatId, photoUrl, caption, parseMode))
-        val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val request = Request.Builder()
-            .url("https://api.telegram.org/bot$botToken/sendPhoto")
-            .post(body)
-            .build()
-
-        return try {
-            client.newCall(request).execute().use { it.isSuccessful }
-        } catch (e: Exception) {
-            logger.error(e) { "Telegram sendPhoto failed for $chatId" }
-            false
-        }
+        return postForRef("sendPhoto", payload, chatId)
     }
 
     private fun truncateForCaption(text: String): String =
         if (text.length <= MAX_CAPTION_LEN) text
         else text.substring(0, MAX_CAPTION_LEN - 1).trimEnd() + "…"
 
-    private fun sendMessage(chatId: String, text: String, parseMode: String?, disablePreview: Boolean = false): Boolean {
+    private fun sendMessage(chatId: String, text: String, parseMode: String?, disablePreview: Boolean = false): SentRef? {
         val payload = json.encodeToString(
             SendMessageRequest(chatId, text, parseMode, if (disablePreview) true else null)
         )
+        return postForRef("sendMessage", payload, chatId)
+    }
+
+    /**
+     * POSTs [payload] to the given Bot API [endpoint] and parses the sent message's ids.
+     * Returns null on any transport/parse failure or a non-`ok` response. The numeric chat id
+     * comes from the response `chat.id`; if absent it falls back to [chatId] when that is already
+     * numeric (a `@username` target cannot be resolved to a number here and yields 0).
+     */
+    private fun postForRef(endpoint: String, payload: String, chatId: String): SentRef? {
         val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
         val request = Request.Builder()
-            .url("https://api.telegram.org/bot$botToken/sendMessage")
+            .url("https://api.telegram.org/bot$botToken/$endpoint")
             .post(body)
             .build()
-
         return try {
-            client.newCall(request).execute().use { it.isSuccessful }
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    logger.warn { "Telegram $endpoint HTTP ${response.code} for $chatId" }
+                    return null
+                }
+                val responseBody = response.body?.string().orEmpty()
+                val parsed = json.decodeFromString(SendMessageResponse.serializer(), responseBody)
+                val result = if (parsed.ok) parsed.result else null
+                if (result == null) return null
+                val resolvedChatId = result.chat?.id ?: chatId.toLongOrNull() ?: 0L
+                SentRef(resolvedChatId, result.message_id)
+            }
         } catch (e: Exception) {
-            logger.error(e) { "Telegram send failed for $chatId" }
-            false
+            logger.error(e) { "Telegram $endpoint failed for $chatId" }
+            null
         }
     }
 

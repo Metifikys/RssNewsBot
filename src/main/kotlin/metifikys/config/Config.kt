@@ -167,7 +167,14 @@ data class LlmPriceEntry(
 )
 
 data class TelegramConfig(
-    val botToken: String
+    val botToken: String,
+    /**
+     * When true, start the `getUpdates` long-poll loop that records channel-post reactions
+     * ([metifikys.telegram.TelegramUpdatesPoller]). Off by default: Telegram permits only one
+     * `getUpdates` consumer per bot token, so a dev instance sharing the production token must
+     * leave this false to avoid a 409 conflict with the running server.
+     */
+    val updatesPolling: Boolean = false
 )
 
 data class OpenAIConfig(

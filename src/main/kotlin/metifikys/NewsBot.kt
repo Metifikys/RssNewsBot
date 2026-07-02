@@ -25,6 +25,7 @@ import metifikys.fetch.RssFetcher
 import metifikys.telegram.StatusCommand
 import metifikys.telegram.StatusPoster
 import metifikys.telegram.TelegramSender
+import metifikys.telegram.TelegramUpdatesPoller
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -76,6 +77,13 @@ class NewsBot(
     private val statusPoster: StatusPoster? = config.admin.statusChatId?.let { chatId ->
         StatusPoster(chatId, sender, StatusCommand(config, db, errorLog), errorLog)
     }
+
+    /**
+     * Optional Telegram reaction poller. Constructed only when `telegram.updatesPolling=true`,
+     * so no `getUpdates` loop runs (and no 409 risk) when the feature is off.
+     */
+    private val updatesPoller: TelegramUpdatesPoller? =
+        if (config.telegram.updatesPolling) TelegramUpdatesPoller(config.telegram.botToken, db) else null
 
     internal val deliverer = DigestDeliverer(config, db, sender)
 
@@ -188,6 +196,7 @@ class NewsBot(
             logger.info { "[Shutdown] Stopping scheduler..." }
             scheduler.shutdown()
             weeklyScheduler?.shutdown()
+            updatesPoller?.stop()
             try {
                 if (!scheduler.awaitTermination(30, TimeUnit.SECONDS)) {
                     logger.warn { "[Shutdown] Scheduler did not terminate in 30s; forcing." }
@@ -219,6 +228,8 @@ class NewsBot(
                     "lookback=${w.lookbackDays}d, minMentions=${w.minMentions}."
             }
         }
+
+        updatesPoller?.start()
     }
 
     fun runDigestCycle() = digestCycle.runCycle()

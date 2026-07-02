@@ -191,6 +191,50 @@ object CoveredEventsTable : Table("covered_events") {
     }
 }
 
+/**
+ * Links each delivered digest message to the article(s)/event it rendered, so reactions
+ * Telegram later reports per `(chat_id, message_id)` can be joined back to a category and event.
+ * One row per Telegram message actually sent (a topic is normally one message). `event_key` is
+ * null for legacy single-step categories that produce no shortlist.
+ */
+object DigestMessagesTable : Table("digest_messages") {
+    val chatId = long("chat_id")
+    val messageId = long("message_id")
+    val category = varchar("category", 100).index()
+    val eventKey = varchar("event_key", 3000).nullable()
+    val articleLinks = text("article_links").default("")   // newline-separated article links in this message
+    val sentAt = datetime("sent_at").index()
+
+    override val primaryKey = PrimaryKey(chatId, messageId)
+}
+
+/**
+ * Current aggregated reaction counts per `(chat_id, message_id, emoji)`, written by
+ * [metifikys.telegram.TelegramUpdatesPoller] from `message_reaction_count` updates. Each
+ * update carries the message's complete reaction set, so writes are replace-all for the
+ * message, not increments. Custom emoji are stored as `custom:<id>`, paid reactions as `paid`.
+ */
+object ReactionCountsTable : Table("reaction_counts") {
+    val chatId = long("chat_id")
+    val messageId = long("message_id")
+    val emoji = varchar("emoji", 64)
+    val count = integer("count")
+    val updatedAt = datetime("updated_at").index()
+
+    override val primaryKey = PrimaryKey(chatId, messageId, emoji)
+}
+
+/**
+ * Tiny key/value store for bot runtime state that must survive restarts. Currently holds the
+ * Telegram `getUpdates` offset so the updates poller resumes without reprocessing or missing.
+ */
+object BotStateTable : Table("bot_state") {
+    val key = varchar("key", 100)
+    val value = text("value")
+
+    override val primaryKey = PrimaryKey(key)
+}
+
 data class RejectedEventRow(
     val category: String,
     val eventKey: String,
@@ -300,6 +344,31 @@ data class EventEmbeddingRow(
     val createdAt: LocalDateTime
 )
 
+/** One delivered digest message, linking a Telegram `(chatId, messageId)` to what it rendered. */
+data class DigestMessageRow(
+    val chatId: Long,
+    val messageId: Long,
+    val category: String,
+    val eventKey: String?,
+    val articleLinks: String,
+    val sentAt: LocalDateTime
+)
+
+/** A single emoji's current aggregated count on a message. */
+data class ReactionCount(val emoji: String, val count: Int)
+
+/**
+ * Per-category reaction rollup produced by [NewsDatabase.fetchReactionSummary] over a time
+ * window: [totalReactions] summed across every emoji, [postCount] distinct messages carrying
+ * any reaction, and [byEmoji] the per-emoji totals sorted highest-first for a "top" line.
+ */
+data class CategoryReactionSummary(
+    val category: String,
+    val totalReactions: Long,
+    val postCount: Long,
+    val byEmoji: List<ReactionCount>
+)
+
 data class CoveredEventRow(
     val category: String,
     val eventKey: String,
@@ -331,7 +400,8 @@ class NewsDatabase(dbPath: String) {
         transaction {
             SchemaUtils.createMissingTablesAndColumns(
                 ArticlesTable, PendingBatchesTable, SummariesTable, CoveredEventsTable, RejectedEventsTable,
-                LlmCallsTable, ArticleEmbeddingsTable, EventEmbeddingsTable
+                LlmCallsTable, ArticleEmbeddingsTable, EventEmbeddingsTable,
+                DigestMessagesTable, ReactionCountsTable, BotStateTable
             )
         }
         migrateArticleStatuses(jdbcUrl)
@@ -1207,4 +1277,148 @@ class NewsDatabase(dbPath: String) {
             EventEmbeddingsTable.deleteWhere { createdAt less cutoff }
         }
     }
+
+    // ── Digest messages & reactions ──────────────────────────────────────────
+
+    /**
+     * Records one row per delivered digest message. Idempotent on `(chat_id, message_id)`:
+     * a redelivery with the same ids (should not happen) is ignored rather than duplicated.
+     */
+    fun insertDigestMessages(rows: List<DigestMessageRow>) {
+        if (rows.isEmpty()) return
+        transaction {
+            for (r in rows) {
+                DigestMessagesTable.insertIgnore {
+                    it[chatId] = r.chatId
+                    it[messageId] = r.messageId
+                    it[category] = r.category
+                    it[eventKey] = r.eventKey
+                    it[articleLinks] = r.articleLinks
+                    it[sentAt] = r.sentAt
+                }
+            }
+        }
+    }
+
+    /**
+     * Replaces the stored reaction set for one message with [counts]. A `message_reaction_count`
+     * update always carries the message's *complete* current reactions, so this deletes the old
+     * rows and re-inserts the new set in one transaction — an empty [counts] (last reaction
+     * removed) therefore clears the message. Zero/negative counts are skipped.
+     */
+    fun replaceReactionCounts(chatId: Long, messageId: Long, counts: List<ReactionCount>) {
+        transaction {
+            ReactionCountsTable.deleteWhere {
+                (ReactionCountsTable.chatId eq chatId) and (ReactionCountsTable.messageId eq messageId)
+            }
+            val now = LocalDateTime.now()
+            for (c in counts) {
+                if (c.count <= 0) continue
+                ReactionCountsTable.insert {
+                    it[ReactionCountsTable.chatId] = chatId
+                    it[ReactionCountsTable.messageId] = messageId
+                    it[emoji] = c.emoji
+                    it[count] = c.count
+                    it[updatedAt] = now
+                }
+            }
+        }
+    }
+
+    /**
+     * Per-category reaction rollup over the last [sinceHours] hours, windowed by the digest
+     * message's `sent_at`. Joins reactions to their digest message so counts are attributed to a
+     * category; messages we didn't send (no `digest_messages` row) are excluded. Categories with
+     * no in-window reactions are absent from the map. Aggregated in-process — the reaction volume
+     * is tiny relative to articles.
+     */
+    fun fetchReactionSummary(sinceHours: Long): Map<String, CategoryReactionSummary> {
+        val cutoff = LocalDateTime.now().minusHours(sinceHours)
+        val recs = transaction {
+            ReactionCountsTable
+                .join(
+                    DigestMessagesTable, JoinType.INNER,
+                    additionalConstraint = {
+                        (ReactionCountsTable.chatId eq DigestMessagesTable.chatId) and
+                            (ReactionCountsTable.messageId eq DigestMessagesTable.messageId)
+                    }
+                )
+                .select(
+                    DigestMessagesTable.category, ReactionCountsTable.chatId,
+                    ReactionCountsTable.messageId, ReactionCountsTable.emoji, ReactionCountsTable.count
+                )
+                .where { DigestMessagesTable.sentAt greaterEq cutoff }
+                .map {
+                    ReactionRec(
+                        category = it[DigestMessagesTable.category],
+                        chatId = it[ReactionCountsTable.chatId],
+                        messageId = it[ReactionCountsTable.messageId],
+                        emoji = it[ReactionCountsTable.emoji],
+                        count = it[ReactionCountsTable.count]
+                    )
+                }
+        }
+        return recs.groupBy { it.category }.mapValues { (cat, list) ->
+            val byEmoji = list.groupBy { it.emoji }
+                .map { (emoji, rows) -> ReactionCount(emoji, rows.sumOf { it.count }) }
+                .sortedByDescending { it.count }
+            CategoryReactionSummary(
+                category = cat,
+                totalReactions = list.sumOf { it.count.toLong() },
+                postCount = list.map { it.chatId to it.messageId }.distinct().size.toLong(),
+                byEmoji = byEmoji
+            )
+        }
+    }
+
+    /** Deletes digest-message links older than [days] days (by `sent_at`). */
+    fun deleteOldDigestMessages(days: Long = 90) {
+        val cutoff = LocalDateTime.now().minusDays(days)
+        transaction {
+            DigestMessagesTable.deleteWhere { sentAt less cutoff }
+        }
+    }
+
+    /** Deletes reaction-count rows not touched in [days] days (by `updated_at`). */
+    fun deleteOldReactionCounts(days: Long = 90) {
+        val cutoff = LocalDateTime.now().minusDays(days)
+        transaction {
+            ReactionCountsTable.deleteWhere { updatedAt less cutoff }
+        }
+    }
+
+    // ── Bot state (key/value) ────────────────────────────────────────────────
+
+    /** Reads a persisted state value, or null if the key was never set. */
+    fun getState(key: String): String? = transaction {
+        BotStateTable
+            .select(BotStateTable.value)
+            .where { BotStateTable.key eq key }
+            .map { it[BotStateTable.value] }
+            .firstOrNull()
+    }
+
+    /** Upserts a persisted state value. */
+    fun setState(key: String, value: String) {
+        transaction {
+            val updated = BotStateTable.update({ BotStateTable.key eq key }) {
+                it[BotStateTable.value] = value
+            }
+            if (updated == 0) {
+                BotStateTable.insertIgnore {
+                    it[BotStateTable.key] = key
+                    it[BotStateTable.value] = value
+                }
+            }
+        }
+    }
+
+    /** Internal join-row for [fetchReactionSummary] aggregation. */
+    private data class ReactionRec(
+        val category: String,
+        val chatId: Long,
+        val messageId: Long,
+        val emoji: String,
+        val count: Int
+    )
 }

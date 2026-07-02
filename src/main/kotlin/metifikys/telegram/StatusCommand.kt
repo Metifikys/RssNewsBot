@@ -2,6 +2,7 @@ package metifikys.telegram
 
 import metifikys.config.AppConfig
 import metifikys.db.CategoryArticleCounts
+import metifikys.db.CategoryReactionSummary
 import metifikys.db.NewsDatabase
 import metifikys.db.ProviderLatency
 import metifikys.digest.CycleErrorLog
@@ -62,6 +63,7 @@ class StatusCommand(
         }
 
         appendLatencySection(sb)
+        appendReactionsSection(sb)
 
         val errorCommitToken = if (errors.isEmpty()) {
             -1L
@@ -104,6 +106,29 @@ class StatusCommand(
 
     private fun latencyCell(l: ProviderLatency?): String =
         if (l == null) "—" else "${formatMs(l.avgMs)} / ${formatMs(l.p95Ms.toDouble())} · ${l.callCount}"
+
+    /**
+     * 7-day reaction rollup, one line per category that has any reactions: total reactions,
+     * distinct posts reacted on, and the top few emoji by count. Silently omitted when reaction
+     * tracking is off or nothing has accumulated yet (no rows → empty map).
+     */
+    private fun appendReactionsSection(sb: StringBuilder) {
+        val summary = safeFetchReactions(7 * 24)
+        if (summary.isEmpty()) return
+        sb.append('\n').append("👍 *Reactions* (7d)\n")
+        for ((name, _) in config.categories) {
+            val r = summary[name] ?: continue
+            val top = r.byEmoji.take(3).joinToString(", ") { "${it.emoji} ${it.count}" }
+            val topCell = if (top.isNotEmpty()) " · top: $top" else ""
+            sb.append("  ${escapeMarkdown(name)}: ${r.totalReactions} across ${r.postCount} posts$topCell\n")
+        }
+    }
+
+    private fun safeFetchReactions(sinceHours: Long): Map<String, CategoryReactionSummary> = try {
+        db.fetchReactionSummary(sinceHours)
+    } catch (e: Exception) {
+        emptyMap()
+    }
 
     /** `✅ P (x%) · 📰 A · ⛔ B (y%)` — percentages over (articles+blocked), omitted when that's 0. */
     private fun formatArticleCounts(c: CategoryArticleCounts?, published: Long): String {

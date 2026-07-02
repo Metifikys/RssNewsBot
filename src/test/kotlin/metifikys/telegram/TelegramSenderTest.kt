@@ -55,10 +55,10 @@ class TelegramSenderTest {
     }
 
     @Test
-    fun `sendToChannel returns false when send fails`() {
-        // Sender with a bogus token will get network/connection errors → false
+    fun `sendToChannel returns no refs when send fails`() {
+        // Sender with a bogus token will get network/connection errors → no delivered refs
         val unreachableSender = TelegramSender("invalid-token")
         val result = unreachableSender.sendToChannel("@test_channel", "test message")
-        assertFalse(result, "Expected false when network call fails")
+        assertTrue(result.isEmpty(), "Expected no refs when network call fails")
     }
 }

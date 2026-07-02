@@ -1,6 +1,12 @@
 telegram:
   # Set via env var TELEGRAM_BOT_TOKEN or replace the placeholder below
   botToken: "YOUR_TELEGRAM_BOT_TOKEN"
+  # Start the getUpdates long-poll loop that records channel-post reactions (👍/👎 …) into
+  # `reaction_counts`, surfaced in the /status "Reactions (7d)" section. Off by default.
+  # IMPORTANT: Telegram allows only ONE getUpdates consumer per bot token, and the bot must be
+  # an admin of each channel. Never enable this on two instances sharing the same token (e.g. a
+  # dev box and the production server) — the second one gets an HTTP 409 conflict.
+  updatesPolling: false
 
 openai:
   # Set via env var OPENAI_API_KEY or replace the placeholder below

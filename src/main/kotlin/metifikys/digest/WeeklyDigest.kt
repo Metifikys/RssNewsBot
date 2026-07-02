@@ -465,7 +465,7 @@ class WeeklyDigest(
         }
         weekly.hashtag?.trim()?.takeIf { it.isNotEmpty() }?.let { out.append("\n\n").append(it) }
 
-        val sent = sender.sendToChannel(channelId, out.toString(), disablePreview = true)
+        val sent = sender.sendToChannel(channelId, out.toString(), disablePreview = true).isNotEmpty()
         if (sent) {
             logger.info { "[Weekly:$name] weekly roundup posted to $channelId ($bullets bullet(s))." }
         } else {
