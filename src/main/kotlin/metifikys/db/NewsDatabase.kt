@@ -1,5 +1,6 @@
 package metifikys.db
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.model.Article
 import metifikys.model.ArticleStatus
 import org.jetbrains.exposed.sql.*
@@ -13,6 +14,8 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import java.sql.DriverManager
 import java.time.LocalDateTime
 import kotlin.math.ceil
+
+private val logger = KotlinLogging.logger {}
 
 object ArticlesTable : Table("articles") {
     val id = integer("id").autoIncrement()
@@ -391,11 +394,21 @@ class NewsDatabase(dbPath: String) {
         require(!dbPath.contains("..")) { "Database path must not contain '..' (path traversal): $dbPath" }
         val canonicalPath = java.io.File(dbPath).canonicalPath
 
-        // busy_timeout makes a connection that hits a held write lock wait-and-retry (up to 5s)
-        // instead of failing fast with SQLITE_BUSY. xerial applies this per-connection, so it
-        // covers every Exposed `transaction { }` (each opens its own connection) — important now
-        // that categories are processed concurrently and several may write in the same window.
-        val jdbcUrl = "jdbc:sqlite:$canonicalPath?busy_timeout=5000"
+        // Concurrency hardening for the multi-writer workload (category workers, reaction poller,
+        // batch callbacks, weekly digest). Xerial parses these query params into SQLiteConfig and
+        // applies them per-connection, so every Exposed `transaction { }` (each opens its own
+        // connection) is covered:
+        //   journal_mode=WAL   — readers no longer block the single writer; kills most
+        //                        "database is locked". WAL is a persistent property of the db file.
+        //   synchronous=NORMAL — SQLite-recommended pairing with WAL; holds write locks for less
+        //                        time. Only the last transaction(s) can be lost on an OS/power
+        //                        crash (not on a normal app crash) — fine for a news bot.
+        //   busy_timeout=15000 — a writer that still hits a held write lock waits-and-retries up
+        //                        to 15s instead of failing fast with SQLITE_BUSY.
+        val jdbcUrl = "jdbc:sqlite:$canonicalPath" +
+            "?journal_mode=WAL" +
+            "&synchronous=NORMAL" +
+            "&busy_timeout=15000"
         Database.connect(jdbcUrl, driver = "org.sqlite.JDBC")
         transaction {
             SchemaUtils.createMissingTablesAndColumns(
@@ -410,6 +423,13 @@ class NewsDatabase(dbPath: String) {
     private fun migrateArticleStatuses(jdbcUrl: String) {
         DriverManager.getConnection(jdbcUrl).use { connection ->
             connection.createStatement().use { statement ->
+                // Confirm WAL actually engaged. SQLite silently falls back to a rollback journal
+                // when the db file is on a network share; production is local disk, so expect "wal".
+                statement.executeQuery("PRAGMA journal_mode=WAL").use { rs ->
+                    val mode = if (rs.next()) rs.getString(1) else "?"
+                    logger.info { "SQLite journal_mode=$mode" }
+                }
+
                 val hasProcessedColumn = statement.executeQuery("PRAGMA table_info(articles)").use { rs ->
                     var exists = false
                     while (rs.next()) {
