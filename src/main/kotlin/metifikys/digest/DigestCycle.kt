@@ -51,6 +51,12 @@ class DigestCycle(
     fun runCycle() {
         logger.info { "=== Digest cycle started at ${LocalDateTime.now()} ===" }
         try {
+            // BUG-012: retention cleanup runs at the START of the cycle, and only when no batch is
+            // still in flight. A pending batch callback (on a daemon thread) may later read
+            // summaries/articles that a mid-cycle cleanup would delete, collapsing the previousUrls
+            // dedup snapshot and letting duplicate posts through.
+            runCleanup()
+
             val rawArticles = fetcher.fetchAll(config.categories)
             logger.info { "Fetched ${rawArticles.size} articles total." }
 
@@ -80,18 +86,6 @@ class DigestCycle(
             }
 
             categoryProcessor.process(byCategory)
-
-            db.deleteOlderThan(config.processing.articleRetentionDays)
-            db.deleteOldSummaries(config.summaryHistory.retentionDays)
-            db.pruneOldCoveredEvents(config.summaryHistory.retentionDays)
-            db.pruneOldEventEmbeddings(config.summaryHistory.retentionDays)
-            db.deleteOldRejectedEvents()
-            db.deleteOldDigestMessages()
-            db.deleteOldReactionCounts()
-            // These two were the dominant DB-growth source (news.db reached 700+ MB): the
-            // llm_calls ledger and the article-embedding table were only pruned from tests.
-            db.deleteOldLlmCalls(config.processing.llmCallRetentionDays)
-            db.pruneOldEmbeddings(config.processing.embeddingRetentionDays)
         } catch (e: Exception) {
             errorLog.recordError(null, "[Cycle]", e)
             logger.error(e) { "Digest cycle error" }
@@ -101,6 +95,28 @@ class DigestCycle(
             statusPoster?.post()
             logger.info { "=== Digest cycle finished ===" }
         }
+    }
+
+    /**
+     * Retention cleanup, run at the start of a cycle. Skipped while any batch is still pending so an
+     * in-flight callback never has the summaries/articles it depends on deleted out from under it
+     * (BUG-012). Bounded by the configurable retention windows; the last two lines are the ones that
+     * kept news.db growing to 700+ MB (llm_calls + article embeddings were only pruned from tests).
+     */
+    private fun runCleanup() {
+        if (db.fetchPendingBatches().isNotEmpty()) {
+            logger.info { "[Cleanup] Skipping retention cleanup — batch(es) still pending." }
+            return
+        }
+        db.deleteOlderThan(config.processing.articleRetentionDays)
+        db.deleteOldSummaries(config.summaryHistory.retentionDays)
+        db.pruneOldCoveredEvents(config.summaryHistory.retentionDays)
+        db.pruneOldEventEmbeddings(config.summaryHistory.retentionDays)
+        db.deleteOldRejectedEvents()
+        db.deleteOldDigestMessages()
+        db.deleteOldReactionCounts()
+        db.deleteOldLlmCalls(config.processing.llmCallRetentionDays)
+        db.pruneOldEmbeddings(config.processing.embeddingRetentionDays)
     }
 
     /**

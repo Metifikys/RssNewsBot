@@ -1873,10 +1873,25 @@ class NewsBotTest {
 
         bot.runDigestCycle()
 
-        // retention defaults to 14 days in config
+        // BUG-012: cleanup now runs at the START of the cycle (guarded by no pending batches),
+        // so it fires even when there are no ready articles and the cycle short-circuits.
+        verify { db.pruneOldCoveredEvents(any()) }
+    }
+
+    @Test
+    fun `runDigestCycle skips cleanup while batches are still pending`() {
+        every { db.fetchPendingBatches() } returns listOf(
+            PendingBatch("b1", 0, 1, categoryNames = "tech", createdAt = LocalDateTime.now(), status = "pending")
+        )
+        every { fetcher.fetchAll(any()) } returns emptyList()
+        every { db.insertArticles(any()) } returns 0
+        every { db.fetchReadyForDigestByCategory(any()) } returns emptyMap()
+
+        bot.runDigestCycle()
+
+        // BUG-012: with a batch in flight, retention cleanup must not run (its deletes could
+        // pull summaries/articles out from under the pending callback).
         verify(exactly = 0) { db.pruneOldCoveredEvents(any()) }
-        // Wait: pruneOldCoveredEvents sits alongside the other cleanups AFTER the early
-        // `return` when byCategory is empty. It won't be called here. So assertion above
-        // is correct (not called). If the early-return is removed, update this test.
+        verify(exactly = 0) { db.deleteOlderThan(any()) }
     }
 }
