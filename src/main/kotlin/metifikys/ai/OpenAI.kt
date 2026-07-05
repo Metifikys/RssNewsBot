@@ -192,7 +192,8 @@ class OpenAI(
                     "Якщо надано попередні дайджести, уникай повторення вже висвітленої інформації — " +
                     "згадуй попередні теми лише якщо є суттєво нові деталі або розвиток подій.")
 
-        logger.info { "[LLM][sync] REQUEST | model=$model\n--- system ---\n$systemPrompt\n--- user ---\n$prompt" }
+        logger.info { "[LLM][sync] REQUEST | model=$model sysLen=${systemPrompt.length} usrLen=${prompt.length}" }
+        logger.debug { "[LLM][sync] REQUEST | model=$model\n--- system ---\n$systemPrompt\n--- user ---\n$prompt" }
 
         val requestBody = ChatCompletionRequest(
             model = model,
@@ -229,7 +230,8 @@ class OpenAI(
                     if (result.isBlank()) {
                         logger.warn { "Empty summary in response. Model=$model | raw: ${responseBody.take(500)}" }
                     }
-                    logger.info { "[LLM][sync] RESPONSE | model=$model\n$result" }
+                    logger.info { "[LLM][sync] RESPONSE | model=$model len=${result.length}" }
+                    logger.debug { "[LLM][sync] RESPONSE | model=$model\n$result" }
                     return result
                 }
             } catch (e: BillingException) {
@@ -345,7 +347,8 @@ class OpenAI(
             stream = false
         )
 
-        logger.info { "[LLM][json] REQUEST | model=$model\n--- system ---\n$systemPrompt\n--- user ---\n$userPrompt" }
+        logger.info { "[LLM][json] REQUEST | model=$model sysLen=${systemPrompt.length} usrLen=${userPrompt.length}" }
+        logger.debug { "[LLM][json] REQUEST | model=$model\n--- system ---\n$systemPrompt\n--- user ---\n$userPrompt" }
 
         val body = json.encodeToString(requestBody)
             .toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -371,7 +374,8 @@ class OpenAI(
                     if (result.isBlank()) {
                         logger.warn { "Empty JSON response. Model=$model | raw: ${responseBody.take(500)}" }
                     }
-                    logger.info { "[LLM][json] RESPONSE | model=$model\n$result" }
+                    logger.info { "[LLM][json] RESPONSE | model=$model len=${result.length}" }
+                    logger.debug { "[LLM][json] RESPONSE | model=$model\n$result" }
                     return result
                 }
             } catch (e: BillingException) {

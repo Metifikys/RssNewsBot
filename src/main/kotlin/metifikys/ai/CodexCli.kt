@@ -149,7 +149,8 @@ class CodexCli(
     private fun request(prompt: String, systemPromptOverride: String? = null): String {
         val systemPrompt = systemPromptOverride ?: PromptBuilder.LEGACY_SYSTEM_PROMPT
 
-        logger.info { "[LLM][sync][codexcli] REQUEST | model=${model.ifBlank { "<cli-default>" }}\n--- system ---\n$systemPrompt\n--- user ---\n$prompt" }
+        logger.info { "[LLM][sync][codexcli] REQUEST | model=${model.ifBlank { "<cli-default>" }} sysLen=${systemPrompt.length} usrLen=${prompt.length}" }
+        logger.debug { "[LLM][sync][codexcli] REQUEST | model=${model.ifBlank { "<cli-default>" }}\n--- system ---\n$systemPrompt\n--- user ---\n$prompt" }
 
         // Pass the system prompt via a UTF-8 FILE referenced by codex's `model_instructions_file`
         // config key, not an argv. On Windows the JVM encodes process arguments with
@@ -182,7 +183,8 @@ class CodexCli(
                     if (result.isBlank()) {
                         logger.warn { "Empty CodexCli response. model=${model.ifBlank { "<cli-default>" }}" }
                     }
-                    logger.info { "[LLM][sync][codexcli] RESPONSE | model=${model.ifBlank { "<cli-default>" }}\n$result" }
+                    logger.info { "[LLM][sync][codexcli] RESPONSE | model=${model.ifBlank { "<cli-default>" }} len=${result.length}" }
+                    logger.debug { "[LLM][sync][codexcli] RESPONSE | model=${model.ifBlank { "<cli-default>" }}\n$result" }
                     return result
                 } catch (e: BillingException) {
                     throw e

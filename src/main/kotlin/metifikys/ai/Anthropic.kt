@@ -171,7 +171,8 @@ class Anthropic(
     private fun request(prompt: String, systemPromptOverride: String? = null): String {
         val systemPrompt = systemPromptOverride ?: PromptBuilder.LEGACY_SYSTEM_PROMPT
 
-        logger.info { "[LLM][sync][anthropic] REQUEST | model=$model\n--- system ---\n$systemPrompt\n--- user ---\n$prompt" }
+        logger.info { "[LLM][sync][anthropic] REQUEST | model=$model sysLen=${systemPrompt.length} usrLen=${prompt.length}" }
+        logger.debug { "[LLM][sync][anthropic] REQUEST | model=$model\n--- system ---\n$systemPrompt\n--- user ---\n$prompt" }
 
         val payload = MessagesRequest(
             model = model,
@@ -211,7 +212,8 @@ class Anthropic(
                     if (result.isBlank()) {
                         logger.warn { "Empty Anthropic response. Model=$model | raw: ${responseBody.take(500)}" }
                     }
-                    logger.info { "[LLM][sync][anthropic] RESPONSE | model=$model\n$result" }
+                    logger.info { "[LLM][sync][anthropic] RESPONSE | model=$model len=${result.length}" }
+                    logger.debug { "[LLM][sync][anthropic] RESPONSE | model=$model\n$result" }
                     return result
                 }
             } catch (e: BillingException) {

@@ -160,7 +160,8 @@ class AnthropicBatch(
             val rawText = results[category]
                 ?: throw IOException("No extract result for category '$category' in batch $batchId")
             val content = stripCodeFences(rawText)
-            logger.info { "[LLM][batch][extract][anthropic] RESPONSE | id=$category\n$content" }
+            logger.info { "[LLM][batch][extract][anthropic] RESPONSE | id=$category len=${content.length}" }
+            logger.debug { "[LLM][batch][extract][anthropic] RESPONSE | id=$category\n$content" }
             content
         }, pollExecutor)
     }
@@ -230,9 +231,11 @@ class AnthropicBatch(
         }
 
         entries.forEach { e ->
-            logger.info {
+            val usr = e.params.messages.firstOrNull()?.content.orEmpty()
+            logger.info { "[LLM][batch][anthropic] REQUEST | id=${e.custom_id} model=${e.params.model} sysLen=${e.params.system.length} usrLen=${usr.length}" }
+            logger.debug {
                 "[LLM][batch][anthropic] REQUEST | id=${e.custom_id} model=${e.params.model}\n" +
-                        "--- system ---\n${e.params.system}\n--- user ---\n${e.params.messages.firstOrNull()?.content.orEmpty()}"
+                        "--- system ---\n${e.params.system}\n--- user ---\n$usr"
             }
         }
 
@@ -362,7 +365,8 @@ class AnthropicBatch(
                     ?.firstOrNull { it.jsonObject["type"]?.jsonPrimitive?.content == "text" }
                     ?.jsonObject?.get("text")?.jsonPrimitive?.content
                 if (text != null) {
-                    logger.info { "[LLM][batch][anthropic] RESPONSE | id=$customId\n$text" }
+                    logger.info { "[LLM][batch][anthropic] RESPONSE | id=$customId len=${text.length}" }
+                    logger.debug { "[LLM][batch][anthropic] RESPONSE | id=$customId\n$text" }
                     results[customId] = text
                 } else {
                     logger.warn { "[AnthropicBatch] No text content for custom_id=$customId" }

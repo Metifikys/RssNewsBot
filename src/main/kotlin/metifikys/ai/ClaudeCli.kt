@@ -145,7 +145,8 @@ class ClaudeCli(
     private fun request(prompt: String, systemPromptOverride: String? = null): String {
         val systemPrompt = systemPromptOverride ?: PromptBuilder.LEGACY_SYSTEM_PROMPT
 
-        logger.info { "[LLM][sync][claudecli] REQUEST | model=${model.ifBlank { "<cli-default>" }}\n--- system ---\n$systemPrompt\n--- user ---\n$prompt" }
+        logger.info { "[LLM][sync][claudecli] REQUEST | model=${model.ifBlank { "<cli-default>" }} sysLen=${systemPrompt.length} usrLen=${prompt.length}" }
+        logger.debug { "[LLM][sync][claudecli] REQUEST | model=${model.ifBlank { "<cli-default>" }}\n--- system ---\n$systemPrompt\n--- user ---\n$prompt" }
 
         // Pass the system prompt via a UTF-8 FILE, not an argv. On Windows the JVM encodes
         // process arguments with sun.jnu.encoding (cp1251/cp1252), which mangles the Cyrillic
@@ -173,7 +174,8 @@ class ClaudeCli(
                     if (result.isBlank()) {
                         logger.warn { "Empty ClaudeCli response. model=${model.ifBlank { "<cli-default>" }}" }
                     }
-                    logger.info { "[LLM][sync][claudecli] RESPONSE | model=${model.ifBlank { "<cli-default>" }}\n$result" }
+                    logger.info { "[LLM][sync][claudecli] RESPONSE | model=${model.ifBlank { "<cli-default>" }} len=${result.length}" }
+                    logger.debug { "[LLM][sync][claudecli] RESPONSE | model=${model.ifBlank { "<cli-default>" }}\n$result" }
                     return result
                 } catch (e: BillingException) {
                     throw e

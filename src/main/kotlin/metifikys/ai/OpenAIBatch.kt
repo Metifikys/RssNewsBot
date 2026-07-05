@@ -216,7 +216,8 @@ class OpenAIBatch(
         lines.forEach { line ->
             val sys = line.body.messages.firstOrNull { it.role == "system" }?.content.orEmpty()
             val usr = line.body.messages.firstOrNull { it.role == "user" }?.content.orEmpty()
-            logger.info { "[LLM][batch] REQUEST | id=${line.custom_id} model=${line.body.model}\n--- system ---\n$sys\n--- user ---\n$usr" }
+            logger.info { "[LLM][batch] REQUEST | id=${line.custom_id} model=${line.body.model} sysLen=${sys.length} usrLen=${usr.length}" }
+            logger.debug { "[LLM][batch] REQUEST | id=${line.custom_id} model=${line.body.model}\n--- system ---\n$sys\n--- user ---\n$usr" }
         }
 
         val jsonl = lines.joinToString("\n") { json.encodeToString(it) }
@@ -278,7 +279,8 @@ class OpenAIBatch(
             db.savePendingBatch(batchId, 0, 1, category, articleLinks, null, kind = "extract")
             val results = pollAndCollect(batchId)
             val content = results[category] ?: throw IOException("No extract result for category '$category' in batch $batchId")
-            logger.info { "[LLM][batch][extract] RESPONSE | id=$category\n$content" }
+            logger.info { "[LLM][batch][extract] RESPONSE | id=$category len=${content.length}" }
+            logger.debug { "[LLM][batch][extract] RESPONSE | id=$category\n$content" }
             content
         }, pollExecutor)
     }
@@ -440,7 +442,8 @@ class OpenAIBatch(
                     ?.get("message")?.jsonObject
                     ?.get("content")?.jsonPrimitive?.content
                 if (content != null) {
-                    logger.info { "[LLM][batch] RESPONSE | id=$customId\n$content" }
+                    logger.info { "[LLM][batch] RESPONSE | id=$customId len=${content.length}" }
+                    logger.debug { "[LLM][batch] RESPONSE | id=$customId\n$content" }
                     results[customId] = content
                 } else {
                     logger.warn { "[Batch] No content for custom_id=$customId" }
