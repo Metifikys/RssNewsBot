@@ -208,6 +208,10 @@ class NewsBot(
             logger.info { "[Shutdown] Done." }
         }, "shutdown-hook"))
 
+        // Start the reaction poller before the first cycle so it isn't blocked behind a slow
+        // (or failing) digest run — reaction collection is independent of the digest pipeline.
+        updatesPoller?.start()
+
         digestCycle.resumePendingBatches()
         logger.info { "Running first digest cycle immediately." }
         runDigestCycle()
@@ -228,8 +232,6 @@ class NewsBot(
                     "lookback=${w.lookbackDays}d, minMentions=${w.minMentions}."
             }
         }
-
-        updatesPoller?.start()
     }
 
     fun runDigestCycle() = digestCycle.runCycle()
