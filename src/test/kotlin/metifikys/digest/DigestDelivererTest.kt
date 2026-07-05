@@ -60,6 +60,22 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `topic carrying a bare non-markdown URL is dropped as injection (BUG-011)`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+
+        val articles = listOf(article(1))
+        // A valid whitelisted markdown link plus an injected bare URL in the body.
+        val summary = "• **Story.**\n\nBody visit https://evil.example now [Title 1](https://example.com/1)"
+
+        DigestDeliverer(config(), db, sender).deliver("tech", summary, articles)
+
+        verify(exactly = 0) { sender.sendToChannel(any(), any(), any()) }
+        verify { db.markUnprocessed(articles.map { it.link }) }
+    }
+
+    @Test
     fun `all topics duplicates of a prior digest marks articles PROCESSED`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

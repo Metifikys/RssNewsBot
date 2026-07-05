@@ -14,6 +14,12 @@ import java.time.LocalDateTime
 
 private val logger = KotlinLogging.logger {}
 
+/** A Markdown `[label](url)` link — stripped out before scanning a topic for bare URLs. */
+private val MARKDOWN_LINK = Regex("""\[[^\[\]]*]\([^()]*\)""")
+
+/** Any `http(s)://` occurrence. In a well-formed topic every URL lives inside a Markdown link. */
+private val BARE_URL_SCHEME = Regex("""https?://""", RegexOption.IGNORE_CASE)
+
 /**
  * Renders an LLM summary into Telegram-ready topics, posts them to the category channel,
  * and reconciles per-article status (`PROCESSED` / `UNPROCESSED`) against partial-send outcomes.
@@ -73,6 +79,15 @@ class DigestDeliverer(
                     logger.warn {
                         "[Category:$categoryName] Dropping topic with non-whitelisted URL(s) $foreignUrls " +
                             "— possible prompt injection."
+                    }
+                    return@filter false
+                }
+                // BUG-011 (bare-URL bypass): extractUrls only sees Markdown [label](url) links, so an
+                // injected *bare* URL (https://evil.example with no markdown) slips past the whitelist
+                // above. Strip the markdown links, then reject any remaining http(s):// in the topic.
+                if (BARE_URL_SCHEME.containsMatchIn(MARKDOWN_LINK.replace(topic, " "))) {
+                    logger.warn {
+                        "[Category:$categoryName] Dropping topic with a bare (non-markdown) URL — possible prompt injection."
                     }
                     return@filter false
                 }
