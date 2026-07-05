@@ -516,6 +516,9 @@ class NewsDatabase(dbPath: String) {
                                 (ArticlesTable.processingStartedAt.isNull() or (ArticlesTable.processingStartedAt less cutoff))
                             )
                 }
+                // BUG-015: deterministic, newest-first order so the prompt's article order is stable
+                // across runs. id DESC breaks ties when several rows share a pubDate.
+                .orderBy(ArticlesTable.pubDate to SortOrder.DESC, ArticlesTable.id to SortOrder.DESC)
                 .map {
                     Article(
                         category = it[ArticlesTable.category],
