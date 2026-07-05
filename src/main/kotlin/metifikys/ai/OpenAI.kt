@@ -212,53 +212,46 @@ class OpenAI(
         val request = buildRequest(body)
 
         val maxRetries = 5
-        var attempt = 0
-        var lastException: Exception? = null
 
-        while (attempt <= maxRetries) {
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val responseBody = response.body?.string()
-                        throwOpenAIErrorIfPresent(
-                            responseBody, response.code, parseRetryAfterHeader(response.header("Retry-After"))
-                        )
-                        throw IOException("Unexpected code $response\nBody: $responseBody")
-                    }
-
+        // NOTE: the retry sleep blocks the calling thread; this sync path runs off the scheduler.
+        return RetryPolicy.retry(
+            maxRetries = maxRetries,
+            isFatal = { it is BillingException || (it is OpenAIResponseException && !it.retryable) },
+            onRetry = { attempt, e -> logger.error(e) { "OpenAI attempt $attempt failed" } },
+            delayMillis = { _, e -> openAiRetryDelayMs(e) }
+        ) {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
                     val responseBody = response.body?.string()
-                        ?: throw IOException("Empty response body")
+                    throwOpenAIErrorIfPresent(
+                        responseBody, response.code, parseRetryAfterHeader(response.header("Retry-After"))
+                    )
+                    throw IOException("Unexpected code $response\nBody: $responseBody")
+                }
 
-                    val parsed = decodeChatCompletionResponse(responseBody)
-                    val result = parsed.choices.firstOrNull()?.message?.content.orEmpty()
-                    if (result.isBlank()) {
-                        logger.warn { "Empty summary in response. Model=$model | raw: ${responseBody.take(500)}" }
-                    }
-                    logger.info { "[LLM][sync] RESPONSE | model=$model len=${result.length}" }
-                    logger.debug { "[LLM][sync] RESPONSE | model=$model\n$result" }
-                    return result
+                val responseBody = response.body?.string()
+                    ?: throw IOException("Empty response body")
+
+                val parsed = decodeChatCompletionResponse(responseBody)
+                val result = parsed.choices.firstOrNull()?.message?.content.orEmpty()
+                if (result.isBlank()) {
+                    logger.warn { "Empty summary in response. Model=$model | raw: ${responseBody.take(500)}" }
                 }
-            } catch (e: BillingException) {
-                throw e  // non-retryable — fail immediately
-            } catch (e: Exception) {
-                if (e is OpenAIResponseException && !e.retryable) throw e
-                lastException = e
-                attempt++
-                if (attempt > maxRetries) throw e
-                logger.error(e) { "OpenAI attempt $attempt failed" }
-                // BUG-023: prefer the Retry-After header; fall back to the regex-scraped wait.
-                val waitSeconds = (e as? OpenAIResponseException)?.retryAfterSeconds ?: extractWaitTime(e.message)
-                // NOTE: Thread.sleep here blocks the calling thread.
-                // This method is only used in the fallback sync path (outside the scheduler thread).
-                if (waitSeconds != null) {
-                    Thread.sleep((waitSeconds + 60) * 1000L)
-                } else {
-                    Thread.sleep(60 * 1000L) // 1-minute wait between retries
-                }
+                logger.info { "[LLM][sync] RESPONSE | model=$model len=${result.length}" }
+                logger.debug { "[LLM][sync] RESPONSE | model=$model\n$result" }
+                result
             }
         }
+    }
 
-        throw lastException ?: IOException("Unknown error")
+    /**
+     * Retry wait for a failed OpenAI sync call: prefer the Retry-After header carried on
+     * [OpenAIResponseException] (BUG-023), then the regex-scraped "try again in Ns", then a
+     * flat minute. The +60s cushion mirrors the historical behavior.
+     */
+    private fun openAiRetryDelayMs(e: Throwable): Long {
+        val waitSeconds = (e as? OpenAIResponseException)?.retryAfterSeconds ?: extractWaitTime(e.message)
+        return if (waitSeconds != null) (waitSeconds + 60) * 1000L else 60 * 1000L
     }
 
     private fun buildRequest(body: RequestBody): Request {
@@ -369,72 +362,45 @@ class OpenAI(
         val request = buildRequest(body)
 
         val maxRetries = 5
-        var attempt = 0
-        var lastException: Exception? = null
 
-        while (attempt <= maxRetries) {
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val responseBody = response.body?.string()
-                        throwOpenAIErrorIfPresent(
-                            responseBody, response.code, parseRetryAfterHeader(response.header("Retry-After"))
-                        )
-                        throw IOException("Unexpected code $response\nBody: $responseBody")
-                    }
+        return RetryPolicy.retry(
+            maxRetries = maxRetries,
+            isFatal = { it is BillingException || (it is OpenAIResponseException && !it.retryable) },
+            onRetry = { attempt, e -> logger.error(e) { "OpenAI completeJson attempt $attempt failed" } },
+            delayMillis = { _, e -> openAiRetryDelayMs(e) }
+        ) {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
                     val responseBody = response.body?.string()
-                        ?: throw IOException("Empty response body")
-                    val parsed = decodeChatCompletionResponse(responseBody)
-                    val result = parsed.choices.firstOrNull()?.message?.content.orEmpty()
-                    if (result.isBlank()) {
-                        logger.warn { "Empty JSON response. Model=$model | raw: ${responseBody.take(500)}" }
-                    }
-                    logger.info { "[LLM][json] RESPONSE | model=$model len=${result.length}" }
-                    logger.debug { "[LLM][json] RESPONSE | model=$model\n$result" }
-                    return result
+                    throwOpenAIErrorIfPresent(
+                        responseBody, response.code, parseRetryAfterHeader(response.header("Retry-After"))
+                    )
+                    throw IOException("Unexpected code $response\nBody: $responseBody")
                 }
-            } catch (e: BillingException) {
-                throw e
-            } catch (e: Exception) {
-                if (e is OpenAIResponseException && !e.retryable) throw e
-                lastException = e
-                attempt++
-                if (attempt > maxRetries) throw e
-                logger.error(e) { "OpenAI completeJson attempt $attempt failed" }
-                val waitSeconds = extractWaitTime(e.message)
-                if (waitSeconds != null) Thread.sleep((waitSeconds + 60) * 1000L)
-                else Thread.sleep(60 * 1000L)
+                val responseBody = response.body?.string()
+                    ?: throw IOException("Empty response body")
+                val parsed = decodeChatCompletionResponse(responseBody)
+                val result = parsed.choices.firstOrNull()?.message?.content.orEmpty()
+                if (result.isBlank()) {
+                    logger.warn { "Empty JSON response. Model=$model | raw: ${responseBody.take(500)}" }
+                }
+                logger.info { "[LLM][json] RESPONSE | model=$model len=${result.length}" }
+                logger.debug { "[LLM][json] RESPONSE | model=$model\n$result" }
+                result
             }
         }
-        throw lastException ?: IOException("Unknown error")
     }
 
-    override fun completeJson(systemPrompt: String, userPrompt: String, maxRetry: Int): String {
-        var attempt = 0
-        var lastException: Exception? = null
-        while (attempt <= maxRetry) {
-            try {
-                val jsonString = completeJson(systemPrompt, userPrompt)
-                Json.parseToJsonElement(jsonString)
-                return jsonString
-            } catch (e: BillingException) {
-                throw e
-            } catch (e: OpenAIResponseException) {
-                if (!e.retryable) throw e
-                lastException = e
-                attempt++
-                if (attempt > maxRetry) throw e
-                logger.error(e) { "OpenAI completeJson attempt $attempt failed" }
-                Thread.sleep(attempt * 20 * 1000L)
-            } catch (e: Exception) {
-                lastException = e
-                attempt++
-                if (attempt > maxRetry) throw e
-                logger.error(e) { "OpenAI completeJson attempt $attempt failed" }
-                Thread.sleep(attempt * 20 * 1000L)
-            }
+    override fun completeJson(systemPrompt: String, userPrompt: String, maxRetry: Int): String =
+        RetryPolicy.retry(
+            maxRetries = maxRetry,
+            isFatal = { it is BillingException || (it is OpenAIResponseException && !it.retryable) },
+            onRetry = { attempt, e -> logger.error(e) { "OpenAI completeJson attempt $attempt failed" } },
+            delayMillis = { attempt, _ -> attempt * 20 * 1000L }
+        ) {
+            val jsonString = completeJson(systemPrompt, userPrompt)
+            Json.parseToJsonElement(jsonString)
+            jsonString
         }
-        throw lastException ?: IOException("Unknown error")
-    }
 
 }

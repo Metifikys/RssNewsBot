@@ -91,10 +91,12 @@ class Embedder(
         for ((k, v) in endpoint.extraHeaders) builder.header(k, v)
         val request = builder.post(body).build()
 
-        var attempt = 0
-        var lastException: Exception? = null
-        while (attempt <= maxRetries) {
-            try {
+        return RetryPolicy.retry(
+            maxRetries = maxRetries,
+            isFatal = { it is BillingException || it is NonRetryableEmbedException },
+            onRetry = { attempt, e -> logger.warn(e) { "[Embed] attempt $attempt failed; retrying" } },
+            delayMillis = { attempt, _ -> attempt * 30 * 1000L }
+        ) {
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         val responseBody = response.body?.string()
@@ -120,20 +122,9 @@ class Embedder(
                     logger.info {
                         "[Embed] model=$model inputs=${texts.size} chars=$promptChars dim=${out.firstOrNull()?.size ?: 0}"
                     }
-                    return out
+                    out
                 }
-            } catch (e: BillingException) {
-                throw e
-            } catch (e: Exception) {
-                if (e is NonRetryableEmbedException) throw e
-                lastException = e
-                attempt++
-                if (attempt > maxRetries) throw e
-                logger.warn(e) { "[Embed] attempt $attempt failed; retrying" }
-                Thread.sleep(attempt * 30 * 1000L)
-            }
         }
-        throw lastException ?: IOException("Unknown error")
     }
 
     private fun decodeResponse(responseBody: String): EmbeddingResponse {

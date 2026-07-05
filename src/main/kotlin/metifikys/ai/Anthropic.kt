@@ -187,49 +187,41 @@ class Anthropic(
         val request = buildRequest(body)
 
         val maxRetries = 5
-        var attempt = 0
-        var lastException: Exception? = null
 
-        while (attempt <= maxRetries) {
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val responseBody = response.body?.string()
-                        if (isBillingError(responseBody)) {
-                            throw BillingException("Anthropic billing/quota limit reached: $responseBody")
-                        }
-                        throw IOException("Unexpected code $response\nBody: $responseBody")
-                    }
-
-                    val responseBody = response.body?.string()
-                        ?: throw IOException("Empty response body")
-
-                    val parsed = json.decodeFromString<MessagesResponse>(responseBody)
-                    val result = parsed.content
-                        .firstOrNull { it.type == "text" }
-                        ?.text
-                        .orEmpty()
-                    if (result.isBlank()) {
-                        logger.warn { "Empty Anthropic response. Model=$model | raw: ${responseBody.take(500)}" }
-                    }
-                    logger.info { "[LLM][sync][anthropic] RESPONSE | model=$model len=${result.length}" }
-                    logger.debug { "[LLM][sync][anthropic] RESPONSE | model=$model\n$result" }
-                    return result
-                }
-            } catch (e: BillingException) {
-                throw e
-            } catch (e: Exception) {
-                lastException = e
-                attempt++
-                if (attempt > maxRetries) throw e
-                logger.error(e) { "Anthropic attempt $attempt failed" }
+        return RetryPolicy.retry(
+            maxRetries = maxRetries,
+            isFatal = { it is BillingException },
+            onRetry = { attempt, e -> logger.error(e) { "Anthropic attempt $attempt failed" } },
+            delayMillis = { _, e ->
                 val waitSeconds = extractWaitTime(e.message)
-                if (waitSeconds != null) Thread.sleep((waitSeconds + 60) * 1000L)
-                else Thread.sleep(60 * 1000L)
+                if (waitSeconds != null) (waitSeconds + 60) * 1000L else 60 * 1000L
+            }
+        ) {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val responseBody = response.body?.string()
+                    if (isBillingError(responseBody)) {
+                        throw BillingException("Anthropic billing/quota limit reached: $responseBody")
+                    }
+                    throw IOException("Unexpected code $response\nBody: $responseBody")
+                }
+
+                val responseBody = response.body?.string()
+                    ?: throw IOException("Empty response body")
+
+                val parsed = json.decodeFromString<MessagesResponse>(responseBody)
+                val result = parsed.content
+                    .firstOrNull { it.type == "text" }
+                    ?.text
+                    .orEmpty()
+                if (result.isBlank()) {
+                    logger.warn { "Empty Anthropic response. Model=$model | raw: ${responseBody.take(500)}" }
+                }
+                logger.info { "[LLM][sync][anthropic] RESPONSE | model=$model len=${result.length}" }
+                logger.debug { "[LLM][sync][anthropic] RESPONSE | model=$model\n$result" }
+                result
             }
         }
-
-        throw lastException ?: IOException("Unknown error")
     }
 
     private fun buildRequest(body: RequestBody): Request {

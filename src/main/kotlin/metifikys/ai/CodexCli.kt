@@ -173,37 +173,25 @@ class CodexCli(
             add("-") // read the prompt from stdin
         }
 
-        var attempt = 0
-        var lastException: Exception? = null
-
         try {
-            while (attempt <= maxRetries) {
-                try {
-                    val result = runOnce(args, prompt, outFile)
-                    if (result.isBlank()) {
-                        logger.warn { "Empty CodexCli response. model=${model.ifBlank { "<cli-default>" }}" }
-                    }
-                    logger.info { "[LLM][sync][codexcli] RESPONSE | model=${model.ifBlank { "<cli-default>" }} len=${result.length}" }
-                    logger.debug { "[LLM][sync][codexcli] RESPONSE | model=${model.ifBlank { "<cli-default>" }}\n$result" }
-                    return result
-                } catch (e: BillingException) {
-                    throw e
-                } catch (e: NonRetryableCliException) {
-                    throw e
-                } catch (e: Exception) {
-                    lastException = e
-                    attempt++
-                    if (attempt > maxRetries) throw e
-                    logger.error(e) { "CodexCli attempt $attempt failed" }
-                    Thread.sleep(retryBackoffMillis)
+            return RetryPolicy.retry(
+                maxRetries = maxRetries,
+                isFatal = { it is BillingException || it is NonRetryableCliException },
+                onRetry = { attempt, e -> logger.error(e) { "CodexCli attempt $attempt failed" } },
+                delayMillis = { _, _ -> retryBackoffMillis }
+            ) {
+                val result = runOnce(args, prompt, outFile)
+                if (result.isBlank()) {
+                    logger.warn { "Empty CodexCli response. model=${model.ifBlank { "<cli-default>" }}" }
                 }
+                logger.info { "[LLM][sync][codexcli] RESPONSE | model=${model.ifBlank { "<cli-default>" }} len=${result.length}" }
+                logger.debug { "[LLM][sync][codexcli] RESPONSE | model=${model.ifBlank { "<cli-default>" }}\n$result" }
+                result
             }
         } finally {
             try { Files.deleteIfExists(systemPromptFile) } catch (_: IOException) { /* best effort */ }
             try { Files.deleteIfExists(outFile) } catch (_: IOException) { /* best effort */ }
         }
-
-        throw lastException ?: IOException("Unknown error")
     }
 
     /**
