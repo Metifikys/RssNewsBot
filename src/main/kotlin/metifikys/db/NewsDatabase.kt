@@ -703,11 +703,19 @@ class NewsDatabase(dbPath: String) {
 
     /** Counts pending batches for a given category name. */
     fun countPendingBatchesForCategory(category: String): Int = transaction {
+        // BUG-019: categoryNames stores one category today, but the (currently unused) multi-category
+        // batch path would store a comma-joined list. Match `category` as a full list element —
+        // exact, first, last, or middle — so re-enabling multi-category batches doesn't silently
+        // break this count. (Category names are config identifiers, so LIKE wildcards aren't a concern.)
         PendingBatchesTable
             .selectAll()
             .where {
-                (PendingBatchesTable.status eq "pending") and
-                    (PendingBatchesTable.categoryNames eq category)
+                (PendingBatchesTable.status eq "pending") and (
+                    (PendingBatchesTable.categoryNames eq category) or
+                        (PendingBatchesTable.categoryNames like "$category,%") or
+                        (PendingBatchesTable.categoryNames like "%,$category") or
+                        (PendingBatchesTable.categoryNames like "%,$category,%")
+                    )
             }
             .count().toInt()
     }
