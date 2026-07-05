@@ -95,7 +95,7 @@ class NewsBotTest {
         every { fetcher.fetchAll(any()) } returns articles
         every { db.insertArticles(any()) } returns 2
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("AI summary")
+        every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("AI summary [src](https://a.com/1)")
         every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
@@ -187,7 +187,7 @@ class NewsBotTest {
         )
         every { db.fetchPendingBatches() } returns listOf(pendingBatch)
         every { openAIBatch.resumeBatch("batch-xyz") } returns
-            CompletableFuture.completedFuture(mapOf("tech" to "Resumed summary"))
+            CompletableFuture.completedFuture(mapOf("tech" to "Resumed summary [src](https://a.com/1)"))
         every { db.fetchProcessingByCategory("tech") } returns articles
         every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
@@ -257,7 +257,12 @@ class NewsBotTest {
             "tech" to techArticles,
             "gaming" to gamingArticles
         )
-        every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary")
+        // Each category's render output must carry a whitelisted URL from its own article set
+        // (BUG-003 drops linkless topics), so return a per-category summary.
+        every { openAIBatch.submitCategoryBatch(any(), any()) } answers {
+            val url = if (firstArg<String>() == "tech") "https://a.com/1" else "https://b.com/1"
+            CompletableFuture.completedFuture("summary [src]($url)")
+        }
         every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
@@ -294,7 +299,7 @@ class NewsBotTest {
         every { fetcher.fetchAll(any()) } returns articles
         every { db.insertArticles(any()) } returns 1
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("Tech digest")
+        every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("Tech digest [src](https://a.com/1)")
         every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
@@ -303,7 +308,8 @@ class NewsBotTest {
 
         // BUG-011: saveSummary persists the filtered-topics reconstruction,
         // not the raw LLM output, so dropped injected URLs never reach history.
-        verify { db.saveSummary("tech", "• Tech digest", any()) }
+        // BUG-003: the reconstruction is the post-layout topic (headline body + source link).
+        verify { db.saveSummary("tech", "• Tech digest\n\n[src](https://a.com/1)", any()) }
     }
 
     @Test
@@ -421,7 +427,7 @@ class NewsBotTest {
         every { db.insertArticles(any()) } returns articles.size
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { db.countPendingBatchesForCategory("tech") } returns 3
-        every { openAI.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } returns "sync summary"
+        every { openAI.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } returns "sync summary [src](https://a.com/1)"
         every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
@@ -500,7 +506,7 @@ class NewsBotTest {
         every { db.insertArticles(any()) } returns articles.size
         every { db.fetchReadyForDigestByCategory(configWithFallback.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { db.countPendingBatchesForCategory("tech") } returns 2
-        every { fallbackClient.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } returns "fallback summary"
+        every { fallbackClient.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) } returns "fallback summary [src](https://a.com/1)"
         every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs
@@ -763,7 +769,8 @@ class NewsBotTest {
         every { db.insertArticles(any()) } returns 1
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
         every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture(
-            "•Topic A\n•Content A\n•Topic B\n•Content B"
+            "•Topic A [src](https://a.com/1)\n•Content A [src](https://a.com/1)\n" +
+                "•Topic B [src](https://a.com/1)\n•Content B [src](https://a.com/1)"
         )
         every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
@@ -982,7 +989,9 @@ class NewsBotTest {
 
     @Test
     fun `deliverCategorySummary marks processed and skips sending when all topics are duplicates`() {
-        val articles = listOf(article("https://a.com/1"))
+        // The article URL must match the summary's link so the topic is a genuine duplicate
+        // (whitelisted + already in previousUrls), not a foreign-URL drop — see BUG-003.
+        val articles = listOf(article("https://example.com/1"))
 
         val previousSummary = "• Topic [Link](https://example.com/1)"
         every { db.fetchRecentSummaries("tech", 2) } returns listOf(
@@ -1025,7 +1034,7 @@ class NewsBotTest {
         every { fetcher.fetchAll(any()) } returns articles
         every { db.insertArticles(any()) } returns 1
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns mapOf("tech" to articles)
-        every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary")
+        every { openAIBatch.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("summary [src](https://a.com/1)")
         every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(1L, 1L))
         every { db.markProcessed(any()) } just Runs
         every { db.deleteOlderThan(any()) } just Runs

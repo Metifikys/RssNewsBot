@@ -56,6 +56,11 @@ class DigestDeliverer(
         val articleByLink = resolvedArticles.associateBy { it.link }
         val allArticleLinks = resolvedArticles.map { it.link }.toSet()
 
+        // A topic is *valid* only if it carries at least one whitelisted (in-set) article URL.
+        // `hadValidTopic` distinguishes the two ways `topics` can end up empty: dropped as
+        // duplicates of a prior digest (valid, already delivered → PROCESSED) vs. no valid
+        // topic at all (nothing was ever delivered → UNPROCESSED for retry). See BUG-003.
+        var hadValidTopic = false
         val topics = TopicFormatter.splitTopics(summary)
             .map { TopicFormatter.replaceSourceLabel(it, articleByLink) }
             .map { TopicFormatter.applyStrictLayout(it) }
@@ -71,14 +76,29 @@ class DigestDeliverer(
                     }
                     return@filter false
                 }
-                topicUrls.isEmpty() || topicUrls.any { it !in previousUrls }
+                // BUG-003: a digest bullet with no source link is malformed — drop it rather
+                // than publish a linkless topic (the old code let these through).
+                if (topicUrls.isEmpty()) {
+                    logger.warn { "[Category:$categoryName] Dropping topic with no source URL (BUG-003)." }
+                    return@filter false
+                }
+                hadValidTopic = true
+                topicUrls.any { it !in previousUrls }
             }
 
         logger.debug { "[Category:$categoryName]$channelId $topics" }
 
         if (topics.isEmpty()) {
-            logger.warn { "Category '$categoryName': all topics filtered as duplicates from previous summaries." }
-            db.markProcessed(resolvedArticles.map { it.link })
+            if (hadValidTopic) {
+                logger.warn { "Category '$categoryName': all topics filtered as duplicates from previous summaries." }
+                db.markProcessed(resolvedArticles.map { it.link })
+            } else {
+                // BUG-003: every topic was invalid (no URL / prompt-injected) — nothing was
+                // delivered, so keep the articles UNPROCESSED for a clean retry next cycle
+                // instead of silently marking them PROCESSED.
+                logger.warn { "Category '$categoryName': no valid topics (all missing/foreign URLs) — reverting articles for retry." }
+                db.markUnprocessed(resolvedArticles.map { it.link })
+            }
             return
         }
 
