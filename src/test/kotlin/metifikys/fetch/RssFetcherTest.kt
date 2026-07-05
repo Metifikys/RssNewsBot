@@ -4,8 +4,10 @@ import com.sun.net.httpserver.HttpServer
 import metifikys.config.CategoryConfig
 import metifikys.config.FeedConfig
 import java.net.InetSocketAddress
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class RssFetcherTest {
@@ -257,6 +259,63 @@ class RssFetcherTest {
         }
     }
 
+    // ── BUG-006: transient-error retries ───────────────────────────────────────
+
+    @Test
+    fun `isRetryableStatus covers 408 429 and all 5xx but not other 4xx or 2xx`() {
+        assertTrue(RssFetcher.isRetryableStatus(408))
+        assertTrue(RssFetcher.isRetryableStatus(429))
+        assertTrue(RssFetcher.isRetryableStatus(500))
+        assertTrue(RssFetcher.isRetryableStatus(502))
+        assertTrue(RssFetcher.isRetryableStatus(503))
+        assertTrue(RssFetcher.isRetryableStatus(599))
+        assertFalse(RssFetcher.isRetryableStatus(200))
+        assertFalse(RssFetcher.isRetryableStatus(400))
+        assertFalse(RssFetcher.isRetryableStatus(404))
+    }
+
+    @Test
+    fun `parseRetryAfterMs parses delta-seconds, clamps, and ignores non-numeric`() {
+        assertEquals(5_000L, RssFetcher.parseRetryAfterMs("5"))
+        assertEquals(0L, RssFetcher.parseRetryAfterMs("0"))
+        assertEquals(300_000L, RssFetcher.parseRetryAfterMs("100000")) // clamped to MAX_RETRY_AFTER_MS
+        assertEquals(null, RssFetcher.parseRetryAfterMs(null))
+        assertEquals(null, RssFetcher.parseRetryAfterMs("  "))
+        assertEquals(null, RssFetcher.parseRetryAfterMs("Wed, 21 Oct 2025 07:28:00 GMT")) // HTTP-date form
+    }
+
+    @Test
+    fun `fetchFeed retries on 503 then parses the feed`() {
+        val rss = rssWithItems("https://example.com/1")
+        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxRetries = 3, retryDelayMs = 0)
+        withFlakyFeed(rss, failStatus = 503, failTimes = 2) { url ->
+            val result = retryFetcher.fetchFeed(FeedConfig(url), "tech")
+            assertEquals(1, result.size)
+            assertEquals("https://example.com/1", result[0].link)
+        }
+    }
+
+    @Test
+    fun `fetchFeed retries on 429 honoring Retry-After then parses the feed`() {
+        val rss = rssWithItems("https://example.com/1")
+        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxRetries = 3, retryDelayMs = 0)
+        // Retry-After: 0 keeps the test instant while still exercising the header-parse path.
+        withFlakyFeed(rss, failStatus = 429, failTimes = 1, retryAfter = "0") { url ->
+            val result = retryFetcher.fetchFeed(FeedConfig(url), "tech")
+            assertEquals(1, result.size)
+        }
+    }
+
+    @Test
+    fun `fetchFeed gives up after maxRetries of 503 and returns emptyList`() {
+        val rss = rssWithItems("https://example.com/1")
+        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxRetries = 2, retryDelayMs = 0)
+        withFlakyFeed(rss, failStatus = 503, failTimes = 99) { url ->
+            val result = retryFetcher.fetchFeed(FeedConfig(url), "tech")
+            assertTrue(result.isEmpty())
+        }
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private fun rssWithItems(vararg links: String): ByteArray {
@@ -281,6 +340,39 @@ class RssFetcherTest {
         server.createContext("/rss") { exchange ->
             exchange.sendResponseHeaders(200, body.size.toLong())
             exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            block("http://localhost:$port/rss")
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    /**
+     * Serves [failStatus] (optionally with a `Retry-After` header) for the first [failTimes]
+     * requests, then serves [body] with 200. Lets a test assert the fetcher retries transient
+     * failures instead of giving up on the first one.
+     */
+    private fun withFlakyFeed(
+        body: ByteArray,
+        failStatus: Int,
+        failTimes: Int,
+        retryAfter: String? = null,
+        block: (url: String) -> Unit
+    ) {
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        val port = server.address.port
+        val calls = AtomicInteger(0)
+        server.createContext("/rss") { exchange ->
+            if (calls.getAndIncrement() < failTimes) {
+                if (retryAfter != null) exchange.responseHeaders.add("Retry-After", retryAfter)
+                exchange.sendResponseHeaders(failStatus, -1)
+                exchange.close()
+            } else {
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
         }
         server.start()
         try {

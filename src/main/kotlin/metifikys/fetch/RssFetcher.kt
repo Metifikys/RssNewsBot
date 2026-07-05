@@ -38,6 +38,23 @@ class RssFetcher(
         /** Allowed URL schemes for RSS feeds. */
         private val ALLOWED_SCHEMES = setOf("http", "https")
 
+        /** Upper bound on a server-supplied `Retry-After` wait, so a broken/hostile header can't stall a cycle. */
+        private const val MAX_RETRY_AFTER_MS = 300_000L
+
+        /** HTTP statuses worth retrying: request timeout (408), rate-limit (429), and any server-side 5xx. */
+        internal fun isRetryableStatus(code: Int): Boolean =
+            code == 408 || code == 429 || code in 500..599
+
+        /**
+         * Parses a `Retry-After` header (delta-seconds form) into milliseconds, clamped to
+         * [MAX_RETRY_AFTER_MS]. Returns null when the header is absent or in HTTP-date form
+         * (rare for feeds) so the caller falls back to its fixed retry delay.
+         */
+        internal fun parseRetryAfterMs(header: String?): Long? {
+            val seconds = header?.trim()?.takeUnless { it.isEmpty() }?.toLongOrNull() ?: return null
+            return (seconds.coerceAtLeast(0) * 1000).coerceAtMost(MAX_RETRY_AFTER_MS)
+        }
+
         /**
          * Regex matching loopback, link-local, and RFC-1918 private IP ranges.
          * Blocks SSRF attempts pointing at internal services.
@@ -87,36 +104,38 @@ class RssFetcher(
             var result: com.rometools.rome.feed.synd.SyndFeed? = null
 
             for (attempt in 1..maxRetries) {
+                var connection: HttpURLConnection? = null
                 try {
-                    val connection = URL(url).openConnection() as HttpURLConnection
-                    connection.connectTimeout = 15_000
-                    connection.readTimeout = 15_000
-                    connection.setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; RssNewsBot/1.0)")
+                    connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 15_000
+                        readTimeout = 15_000
+                        setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; RssNewsBot/1.0)")
+                    }
 
+                    val responseCode = connection.responseCode
+                    // BUG-006: retry the whole transient-error family (408 timeout, 429 rate-limit,
+                    // every 5xx), not just 502. Honor a Retry-After header when the server sends one.
+                    if (isRetryableStatus(responseCode)) {
+                        val waitMs = parseRetryAfterMs(connection.getHeaderField("Retry-After")) ?: retryDelayMs
+                        logger.warn { "Got HTTP $responseCode from $url (attempt $attempt/$maxRetries), retrying in ${waitMs / 1000}s..." }
+                        if (attempt < maxRetries) Thread.sleep(waitMs)
+                        continue
+                    }
+
+                    val contentType = connection.contentType
+                    // BUG-006: open the input stream OUTSIDE the parse try — an IOException while
+                    // opening the stream is a transient transport error and must reach the retry
+                    // path below, not be swallowed as an unrecoverable parse failure.
+                    val stream = connection.inputStream
+                    val input = SyndFeedInput().apply { isAllowDoctypes = false }
                     try {
-                        val responseCode = connection.responseCode
-
-                        if (responseCode == HttpURLConnection.HTTP_BAD_GATEWAY) {
-                            logger.warn { "Got 502 from $url (attempt $attempt/$maxRetries), retrying in ${retryDelayMs / 1000}s..." }
-                            if (attempt < maxRetries) {
-                                Thread.sleep(retryDelayMs)
-                            }
-                            continue
-                        }
-
-                        val contentType = connection.contentType
-                        val input = SyndFeedInput().apply { isAllowDoctypes = false }
-                        try {
-                            result = input.build(XmlReader(connection.inputStream, contentType, true))
-                        } catch (parseEx: Exception) {
-                            // Parser-side failures (malformed XML, Rome bugs like NPE in MediaModuleParser
-                            // when a <media:thumbnail> lacks a `url` attribute) won't recover on retry.
-                            // Log and skip this feed for this cycle.
-                            logger.warn(parseEx) { "Failed to parse RSS from $url — skipping this cycle" }
-                            return emptyList()
-                        }
-                    } finally {
-                        connection.disconnect()
+                        result = input.build(XmlReader(stream, contentType, true))
+                    } catch (parseEx: Exception) {
+                        // Parser-side failures (malformed XML, Rome bugs like NPE in MediaModuleParser
+                        // when a <media:thumbnail> lacks a `url` attribute) won't recover on retry.
+                        // Log and skip this feed for this cycle.
+                        logger.warn(parseEx) { "Failed to parse RSS from $url — skipping this cycle" }
+                        return emptyList()
                     }
                     break
                 } catch (e: Exception) {
@@ -125,6 +144,8 @@ class RssFetcher(
                     if (attempt < maxRetries) {
                         Thread.sleep(retryDelayMs)
                     }
+                } finally {
+                    connection?.disconnect()
                 }
             }
 
