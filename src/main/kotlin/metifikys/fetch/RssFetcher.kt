@@ -170,7 +170,9 @@ class RssFetcher(
                     Article(
                         category = category,
                         title = entry.title ?: "",
-                        link = entry.link,
+                        // BUG-020: canonicalize the link at ingestion so utm/fbclid/trailing-slash
+                        // variants of the same story dedup to one row.
+                        link = LinkNormalizer.normalize(entry.link),
                         description = description,
                         pubDate = pubDate,
                         imageUrl = extractImageUrl(entry, description),
