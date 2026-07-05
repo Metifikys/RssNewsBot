@@ -55,7 +55,10 @@ class OpenAI(
     private data class ChatCompletionRequest(
         val model: String,
         val messages: List<Message>,
-        val stream: Boolean = true
+        // BUG-001: the response is parsed as a single non-streaming JSON document, so the request
+        // must not ask for SSE. (The API happens to ignore stream=true here today, but a future
+        // change honoring it would return SSE and break the parser — keep the shapes consistent.)
+        val stream: Boolean = false
     )
 
     @Serializable
@@ -68,26 +71,6 @@ class OpenAI(
         val response_format: ResponseFormat,
         val stream: Boolean = false
     )
-
-    @Serializable
-    private data class Delta(val content: String? = null)
-
-    @Serializable
-    private data class StreamChoice(
-        val delta: Delta,
-        val index: Int,
-        val finish_reason: String? = null
-    )
-
-    @Serializable
-    private data class ChatCompletionChunk(
-        val id: String,
-        val `object`: String,
-        val created: Long,
-        val model: String,
-        val choices: List<StreamChoice>
-    )
-
 
     @Serializable
     private data class NonStreamChoice(
@@ -203,7 +186,7 @@ class OpenAI(
                 Message(role = "system", content = systemPrompt),
                 Message(role = "user", content = prompt)
             ),
-            stream = true
+            stream = false
         )
 
         val body = json.encodeToString(requestBody)
