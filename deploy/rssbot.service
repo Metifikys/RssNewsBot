@@ -1,0 +1,29 @@
+[Unit]
+Description=RssNewsBot — RSS -> LLM -> Telegram digest bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rssbot
+WorkingDirectory=/opt/rssbot
+
+# Secrets stay out of the unit file. Put TELEGRAM_BOT_TOKEN / OPENAI_API_KEY / etc.
+# in this env file (chmod 600). See rssbot.env.example.
+EnvironmentFile=/opt/rssbot/rssbot.env
+
+# -Xmx512m fits a Raspberry Pi; +ExitOnOutOfMemoryError makes the JVM exit on OOM
+# instead of thrashing, and Restart=always brings it straight back up.
+ExecStart=/usr/bin/java -Xmx512m -XX:+ExitOnOutOfMemoryError -jar /opt/rssbot/RssNewsBot.jar /opt/rssbot/config.yaml
+Restart=always
+RestartSec=10
+
+# journald captures stdout/stderr (bounded by journald's own rotation); the app also
+# writes size+time-rotated files under ./logs via logback. This replaces the old
+# nohup > rssbot.out redirect that grew unbounded.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rssbot
+
+[Install]
+WantedBy=multi-user.target
