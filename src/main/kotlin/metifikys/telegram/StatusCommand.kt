@@ -1,5 +1,6 @@
 package metifikys.telegram
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.AppConfig
 import metifikys.db.CategoryArticleCounts
 import metifikys.db.CategoryReactionSummary
@@ -11,6 +12,8 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+private val logger = KotlinLogging.logger {}
 
 /**
  * Builds a one-shot snapshot for the `/status` Telegram command:
@@ -127,6 +130,7 @@ class StatusCommand(
     private fun safeFetchReactions(sinceHours: Long): Map<String, CategoryReactionSummary> = try {
         db.fetchReactionSummary(sinceHours)
     } catch (e: Exception) {
+        logger.warn(e) { "[/status] fetchReactionSummary failed — omitting the reactions section" }
         emptyMap()
     }
 
@@ -143,18 +147,21 @@ class StatusCommand(
     private fun safeFetchLatency(sinceHours: Long): List<ProviderLatency> = try {
         db.fetchProviderLatency(sinceHours)
     } catch (e: Exception) {
+        logger.warn(e) { "[/status] fetchProviderLatency failed — omitting the latency section" }
         emptyList()
     }
 
     private fun safeFetchArticleCounts(sinceHours: Long): Map<String, CategoryArticleCounts> = try {
         db.fetchArticleStatusCounts(sinceHours)
     } catch (e: Exception) {
+        logger.warn(e) { "[/status] fetchArticleStatusCounts failed — article counts will show 0" }
         emptyMap()
     }
 
     private fun safeFetchPublishedCounts(sinceHours: Long): Map<String, Long> = try {
         db.fetchPublishedTopicCounts(sinceHours)
     } catch (e: Exception) {
+        logger.warn(e) { "[/status] fetchPublishedTopicCounts failed — published counts will show 0" }
         emptyMap()
     }
 
