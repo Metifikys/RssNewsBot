@@ -81,13 +81,17 @@ class DigestCycle(
 
             categoryProcessor.process(byCategory)
 
-            db.deleteOlderThan(1500)
+            db.deleteOlderThan(config.processing.articleRetentionDays)
             db.deleteOldSummaries(config.summaryHistory.retentionDays)
             db.pruneOldCoveredEvents(config.summaryHistory.retentionDays)
             db.pruneOldEventEmbeddings(config.summaryHistory.retentionDays)
             db.deleteOldRejectedEvents()
             db.deleteOldDigestMessages()
             db.deleteOldReactionCounts()
+            // These two were the dominant DB-growth source (news.db reached 700+ MB): the
+            // llm_calls ledger and the article-embedding table were only pruned from tests.
+            db.deleteOldLlmCalls(config.processing.llmCallRetentionDays)
+            db.pruneOldEmbeddings(config.processing.embeddingRetentionDays)
         } catch (e: Exception) {
             errorLog.recordError(null, "[Cycle]", e)
             logger.error(e) { "Digest cycle error" }

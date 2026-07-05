@@ -53,7 +53,25 @@ data class ProcessingConfig(
      * stuck category (e.g. a hanging sync LLM call) never blocks the others. Lower it to throttle
      * how many simultaneous LLM/provider requests a cycle may fan out. Must be >= 1.
      */
-    val maxConcurrentCategories: Int = 12
+    val maxConcurrentCategories: Int = 12,
+    /**
+     * How many days of article rows to keep. Each cycle deletes articles whose `pubDate` is older
+     * than this. Replaces the old hard-coded `deleteOlderThan(1500)`. Validated at load time to be
+     * >= max(weekly.lookbackDays, every category's semanticDedup.windowDays) so the retention
+     * window never truncates data the weekly roundup or the dedup detector still needs.
+     */
+    val articleRetentionDays: Long = 1500,
+    /**
+     * How many days of `llm_calls` rows to keep (the `/status` cost/token ledger). Pruned each
+     * cycle. These accumulate one row per LLM request and are the dominant DB-growth source, so
+     * the default is deliberately short. Must be >= 1.
+     */
+    val llmCallRetentionDays: Long = 30,
+    /**
+     * How many days of article-embedding rows to keep. Pruned each cycle. Must be >= every
+     * category's semanticDedup.windowDays (validated at load) — the detector scans back that far.
+     */
+    val embeddingRetentionDays: Long = 30
 )
 
 data class AdminConfig(
@@ -603,6 +621,25 @@ object ConfigLoader {
         }
         require(config.processing.maxConcurrentCategories >= 1) {
             "processing.maxConcurrentCategories must be >= 1 (got ${config.processing.maxConcurrentCategories})"
+        }
+        require(config.processing.llmCallRetentionDays >= 1) {
+            "processing.llmCallRetentionDays must be >= 1 (got ${config.processing.llmCallRetentionDays})"
+        }
+        // Retention windows must not truncate data the weekly roundup or the dedup detector needs.
+        run {
+            val maxDedupWindow = config.categories.values
+                .mapNotNull { it.semanticDedup?.takeIf { sd -> sd.enabled || sd.eventEnabled }?.windowDays }
+                .maxOrNull() ?: 0L
+            val weeklyLookback = config.weekly?.takeIf { it.enabled }?.lookbackDays ?: 0L
+            val minArticleRetention = maxOf(weeklyLookback, maxDedupWindow)
+            require(config.processing.articleRetentionDays >= minArticleRetention) {
+                "processing.articleRetentionDays (${config.processing.articleRetentionDays}) must be >= " +
+                    "max(weekly.lookbackDays=$weeklyLookback, max semanticDedup.windowDays=$maxDedupWindow) = $minArticleRetention"
+            }
+            require(config.processing.embeddingRetentionDays >= maxDedupWindow) {
+                "processing.embeddingRetentionDays (${config.processing.embeddingRetentionDays}) must be >= " +
+                    "max semanticDedup.windowDays ($maxDedupWindow) — the detector scans back that far"
+            }
         }
 
         for (entry in config.pricing) {
