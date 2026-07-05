@@ -1,14 +1,11 @@
 ### Gradle ###
 .gradle
 build/
-!gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
 
-### Gradle wrapper (not committed — generate locally with `gradle wrapper`) ###
-gradlew
-gradlew.bat
-gradle/
+### Gradle wrapper — committed so CI and fresh clones can build without a local Gradle.
+### Only the wrapper lives under gradle/; nothing else Gradle-generated is tracked.
 
 ### IntelliJ IDEA ###
 .idea/

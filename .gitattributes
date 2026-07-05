@@ -1,0 +1,12 @@
+# Normalize line endings. Shell scripts, the gradle wrapper, and unit files MUST be
+# LF or they break on the Linux server (`/usr/bin/env bash^M: bad interpreter`).
+* text=auto eol=lf
+
+*.sh        text eol=lf
+*.service   text eol=lf
+gradlew     text eol=lf
+*.bat       text eol=crlf
+gradlew.bat text eol=crlf
+
+# Treat the wrapper jar as binary.
+*.jar binary
