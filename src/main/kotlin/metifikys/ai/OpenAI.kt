@@ -119,6 +119,8 @@ class OpenAI(
     private class OpenAIResponseException(
         message: String,
         val retryable: Boolean,
+        /** Seconds from the response's `Retry-After` header, when present (BUG-023). */
+        val retryAfterSeconds: Long? = null,
         cause: Throwable? = null
     ) : IOException(message, cause)
 
@@ -218,7 +220,9 @@ class OpenAI(
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         val responseBody = response.body?.string()
-                        throwOpenAIErrorIfPresent(responseBody, response.code)
+                        throwOpenAIErrorIfPresent(
+                            responseBody, response.code, parseRetryAfterHeader(response.header("Retry-After"))
+                        )
                         throw IOException("Unexpected code $response\nBody: $responseBody")
                     }
 
@@ -242,7 +246,8 @@ class OpenAI(
                 attempt++
                 if (attempt > maxRetries) throw e
                 logger.error(e) { "OpenAI attempt $attempt failed" }
-                val waitSeconds = extractWaitTime(e.message)
+                // BUG-023: prefer the Retry-After header; fall back to the regex-scraped wait.
+                val waitSeconds = (e as? OpenAIResponseException)?.retryAfterSeconds ?: extractWaitTime(e.message)
                 // NOTE: Thread.sleep here blocks the calling thread.
                 // This method is only used in the fallback sync path (outside the scheduler thread).
                 if (waitSeconds != null) {
@@ -270,6 +275,13 @@ class OpenAI(
         return regex.find(message ?: "")?.groups?.get(1)?.value?.toDoubleOrNull()?.toLong()
     }
 
+    /**
+     * BUG-023: parse a `Retry-After` header (delta-seconds form) into seconds. Returns null when
+     * absent or an HTTP-date, so the caller falls back to the regex-scraped [extractWaitTime].
+     */
+    private fun parseRetryAfterHeader(header: String?): Long? =
+        header?.trim()?.takeUnless { it.isEmpty() }?.toLongOrNull()?.coerceAtLeast(0)
+
     private fun decodeChatCompletionResponse(responseBody: String): ChatCompletionResponse {
         throwOpenAIErrorIfPresent(responseBody, statusCode = null)
         return try {
@@ -283,7 +295,7 @@ class OpenAI(
         }
     }
 
-    private fun throwOpenAIErrorIfPresent(responseBody: String?, statusCode: Int?) {
+    private fun throwOpenAIErrorIfPresent(responseBody: String?, statusCode: Int?, retryAfterSeconds: Long? = null) {
         if (responseBody == null) return
         if (isBillingError(responseBody)) {
             throw BillingException("OpenAI billing/quota limit reached: $responseBody")
@@ -297,7 +309,8 @@ class OpenAI(
 
         throw OpenAIResponseException(
             message = formatOpenAIError(apiError, responseBody, statusCode),
-            retryable = isRetryableOpenAIError(apiError, statusCode)
+            retryable = isRetryableOpenAIError(apiError, statusCode),
+            retryAfterSeconds = retryAfterSeconds
         )
     }
 
@@ -364,7 +377,9 @@ class OpenAI(
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         val responseBody = response.body?.string()
-                        throwOpenAIErrorIfPresent(responseBody, response.code)
+                        throwOpenAIErrorIfPresent(
+                            responseBody, response.code, parseRetryAfterHeader(response.header("Retry-After"))
+                        )
                         throw IOException("Unexpected code $response\nBody: $responseBody")
                     }
                     val responseBody = response.body?.string()
