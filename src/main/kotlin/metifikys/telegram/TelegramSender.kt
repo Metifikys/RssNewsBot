@@ -90,6 +90,9 @@ class TelegramSender(private val botToken: String) {
         /** Telegram's hard limit for sendPhoto caption length. */
         const val MAX_CAPTION_LEN = 1024
 
+        /** A Markdown `[label](url)` link — used to avoid truncating a caption mid-link (BUG-010). */
+        val MARKDOWN_LINK = Regex("""\[[^\[\]]*]\([^()]*\)""")
+
         /** Fallback wait when Telegram returns 429 without a `parameters.retry_after`. */
         const val DEFAULT_RETRY_AFTER_SEC = 3L
 
@@ -145,9 +148,18 @@ class TelegramSender(private val botToken: String) {
         return post("sendPhoto", payload, chatId)
     }
 
-    private fun truncateForCaption(text: String): String =
-        if (text.length <= MAX_CAPTION_LEN) text
-        else text.substring(0, MAX_CAPTION_LEN - 1).trimEnd() + "…"
+    internal fun truncateForCaption(text: String): String {
+        if (text.length <= MAX_CAPTION_LEN) return text
+        var end = MAX_CAPTION_LEN - 1  // leave room for the ellipsis
+        // BUG-010: if the cut lands inside a [label](url) link, back up to the link's start so we
+        // never emit half a link (toHtml can't render it and it reads as gibberish in plain text).
+        for (m in MARKDOWN_LINK.findAll(text)) {
+            if (m.range.first < end && end <= m.range.last) { end = m.range.first; break }
+        }
+        // BUG-009: never split an astral-plane emoji's UTF-16 surrogate pair.
+        if (end > 0 && text[end - 1].isHighSurrogate()) end--
+        return text.substring(0, end).trimEnd() + "…"
+    }
 
     private fun sendMessage(chatId: String, text: String, parseMode: String?, disablePreview: Boolean = false): SendResult {
         val payload = json.encodeToString(

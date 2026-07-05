@@ -55,6 +55,47 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `truncateForCaption leaves text under the limit unchanged`() {
+        val text = "a short caption"
+        assertEquals(text, sender.truncateForCaption(text))
+    }
+
+    @Test
+    fun `truncateForCaption does not split an emoji surrogate pair (BUG-009)`() {
+        // Place 🔥 (a surrogate pair) straddling the 1023 cut boundary.
+        val text = "a".repeat(1022) + "🔥" + "b".repeat(50)
+        val out = sender.truncateForCaption(text)
+        val body = out.removeSuffix("…")
+        assertTrue(
+            body.isEmpty() || !body.last().isHighSurrogate(),
+            "truncation left an unpaired high surrogate: invalid UTF-16"
+        )
+        assertTrue(out.length <= 1024)
+    }
+
+    @Test
+    fun `truncateForCaption does not cut inside a markdown link (BUG-010)`() {
+        val head = "x".repeat(1000)
+        val link = "[Some very long article title](https://example.com/some/really/long/path?a=b)"
+        val text = "$head $link tail"
+        val out = sender.truncateForCaption(text)
+        val body = out.removeSuffix("…")
+        val open = body.lastIndexOf('[')
+        if (open >= 0) {
+            assertTrue(body.indexOf(')', open) > open, "left a half-open markdown link: $body")
+        }
+        assertTrue(out.length <= 1024)
+    }
+
+    @Test
+    fun `truncateForCaption keeps a 1200-char topic within the caption limit`() {
+        val text = "т".repeat(1150) + " [дж](https://ex.com/a)"
+        val out = sender.truncateForCaption(text)
+        assertTrue(out.length <= 1024)
+        assertTrue(out.endsWith("…"))
+    }
+
+    @Test
     fun `sendToChannel returns no refs when send fails`() {
         // Sender with a bogus token will get network/connection errors → no delivered refs
         val unreachableSender = TelegramSender("invalid-token")
