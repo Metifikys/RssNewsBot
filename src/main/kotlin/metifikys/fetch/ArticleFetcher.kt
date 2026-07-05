@@ -6,7 +6,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.math.min
 
 private val logger = KotlinLogging.logger {}
 
@@ -53,6 +56,14 @@ class ArticleFetcher(
 
         /** Minimum text length for a selector match to be considered valid content. */
         private const val MIN_SELECTOR_TEXT_LENGTH = 100
+
+        /** BUG-021: max concurrent page fetches during enrichment. */
+        private const val FETCH_PARALLELISM = 8
+
+        /** BUG-021: hard cap on total enrichment wall-clock per call, so the scheduler thread
+         * is never blocked for the worst-case N × 20s. Articles not fetched in time are returned
+         * unchanged (enrichment is best-effort by contract). */
+        private const val FETCH_BUDGET_MILLIS = 90_000L
     }
 
     private val client = OkHttpClient.Builder()
@@ -82,13 +93,35 @@ class ArticleFetcher(
      *
      * @return New list with enriched descriptions where applicable; original articles otherwise.
      */
-    fun enrich(articles: List<Article>): List<Article> {
-        return articles.map { article ->
-            if (article.fetchFullContent) {
-                tryFetchContent(article)
-            } else {
-                article
+    fun enrich(articles: List<Article>): List<Article> =
+        mapBounded(articles) { article ->
+            if (article.fetchFullContent) tryFetchContent(article) else article
+        }
+
+    /**
+     * BUG-021: applies [transform] to each article across a bounded thread pool with a total
+     * wall-clock budget, instead of running the network fetches serially on the scheduler thread
+     * (worst case N × 20s). Order is preserved. Any article whose transform errors or does not
+     * finish within the remaining budget is returned unchanged — enrichment is best-effort.
+     */
+    private fun mapBounded(articles: List<Article>, transform: (Article) -> Article): List<Article> {
+        if (articles.size <= 1) return articles.map(transform)
+        val pool = Executors.newFixedThreadPool(min(articles.size, FETCH_PARALLELISM))
+        try {
+            val futures = articles.map { a -> CompletableFuture.supplyAsync({ transform(a) }, pool) }
+            val deadline = System.nanoTime() + FETCH_BUDGET_MILLIS * 1_000_000
+            return futures.mapIndexed { i, f ->
+                try {
+                    val remainingNs = deadline - System.nanoTime()
+                    if (remainingNs > 0) f.get(remainingNs, TimeUnit.NANOSECONDS) else articles[i]
+                } catch (e: Exception) {
+                    if (e is InterruptedException) Thread.currentThread().interrupt()
+                    logger.debug(e) { "[ArticleFetcher] enrichment fell back to original for ${articles[i].link}" }
+                    articles[i]
+                }
             }
+        } finally {
+            pool.shutdownNow()
         }
     }
 
@@ -104,15 +137,10 @@ class ArticleFetcher(
      * @return New list with [Article.imageUrl] populated where a preview image was found;
      *   original articles otherwise.
      */
-    fun fillPreviewImages(articles: List<Article>): List<Article> {
-        return articles.map { article ->
-            if (article.imageUrl == null) {
-                tryFetchPreviewImage(article)
-            } else {
-                article
-            }
+    fun fillPreviewImages(articles: List<Article>): List<Article> =
+        mapBounded(articles) { article ->
+            if (article.imageUrl == null) tryFetchPreviewImage(article) else article
         }
-    }
 
     private fun tryFetchPreviewImage(article: Article): Article {
         if (article.link.isBlank()) return article
