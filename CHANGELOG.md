@@ -8,6 +8,22 @@ single **Unreleased** section.
 ## [Unreleased]
 
 ### Added
+- **Event-level dedup hard filter (`semanticDedup.eventHardThreshold`)** — graduates the
+  log-only `EventSemanticAnalyzer` (Layer 3.5) to an optional hard filter. When set, a shortlist
+  event with `status == "new"` whose top covered-event cosine ≥ the threshold is dropped before
+  Step 2 renders (logged `[EventSemanticDedup][REJECT]`) and never reaches the digest. Cosine-only
+  (no subject gate), tuned per category via the existing `semanticDedup` block; `meaningful_update`
+  follow-ups are never dropped, rejected events are not persisted, and any embed/billing/scan error
+  fails open (returns the shortlist unchanged) so a transient failure can never empty a digest.
+  Validated `eventHardThreshold >= eventThreshold` at config load. No schema change.
+- **Telegram reaction tracking** (opt-in `telegram.updatesPolling`, default off) — a daemon
+  `getUpdates` long-poll collects anonymous channel-post `message_reaction_count` updates
+  (`allowed_updates` restricted to that single type, carrying no user identity). Each delivered
+  digest message is persisted (`digest_messages`, mapping topic URL → Step 1 `event_key`); counts
+  are replace-all upserted into `reaction_counts` with the poll offset in `bot_state`, and `/status`
+  gains a "Reactions (7d)" panel (totals, posts, top emoji per category). Loud 409 handling for
+  Telegram's one-getUpdates-consumer-per-token limit; rows pruned after 90 days. New
+  `digest_messages` / `reaction_counts` / `bot_state` tables.
 - **Weekly "top story of the week" roundup** — an optional `weekly:` config block enables a
   dedicated scheduler that fires once per week at a configurable `dayOfWeek` + `time` (the bot's
   local zone). For each participating category (the explicit `weekly.categories` list, else every
@@ -80,6 +96,21 @@ single **Unreleased** section.
   lowered 5→2.
 
 ### Changed
+- **`/status` metrics overhauled** — the non-actionable token in/out estimates and (inaccurate)
+  USD cost figure are replaced with operational signals: per-provider average + nearest-rank p95
+  LLM latency over 24h/7d (captured in `MeteredLlmClient` for synchronous calls; batch jobs leave
+  `duration_ms` null since their wall-clock is poll-wait, not model latency), and per-category
+  ✅ published (`SUM(summaries.articleCount)` ≈ channel posts) / 📰 articles (PROCESSED by pubDate) /
+  ⛔ blocked (DUPLICATE dedup hard-rejects) counts with a block %. New nullable `duration_ms` column
+  (auto-migrates) plus `fetchProviderLatency` / `fetchArticleStatusCounts` /
+  `fetchPublishedTopicCounts` queries; token/cost columns are still recorded, only the rendering
+  drops them.
+- **SQLite now opens in WAL mode** (`journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout`
+  raised 5s → 15s) so the concurrent writers (category workers, reaction poller, batch callbacks,
+  weekly digest) no longer hit "database is locked" under the default rollback journal, where a
+  reader blocks the writer and a deferred tx that upgrades to a write can hit `SQLITE_BUSY` before
+  `busy_timeout` helps. The effective `journal_mode` is logged at startup so a silent WAL fallback
+  (e.g. on a network share) is visible.
 - **Categories within a digest cycle are now processed concurrently (one worker per category)
   instead of sequentially on the scheduler thread.** Previously, in fully-sync mode (batching
   off via `primaryMaxPending: 0` or per-category `skipBatch`), each category's blocking
