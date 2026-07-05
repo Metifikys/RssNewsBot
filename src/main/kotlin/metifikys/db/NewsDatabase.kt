@@ -452,13 +452,24 @@ class NewsDatabase(dbPath: String) {
                     )
                 }
 
-                statement.executeUpdate(
+                // BUG-025: only touch rows that actually carry a stray timestamp, so the returned
+                // count means "rows that violated the invariant" rather than "all non-PROCESSING
+                // rows". A non-zero count signals a state-transition that failed to clear it at the
+                // source (markProcessed/markUnprocessed both null it now) — worth surfacing.
+                val fixed = statement.executeUpdate(
                     """
                     UPDATE articles
                     SET processing_started_at = NULL
                     WHERE status != '${ArticleStatus.PROCESSING.name}'
+                      AND processing_started_at IS NOT NULL
                     """.trimIndent()
                 )
+                if (fixed > 0) {
+                    logger.warn {
+                        "[Migrate] Cleared a stray processing_started_at on $fixed non-PROCESSING row(s) — " +
+                            "a state transition left the invariant broken (safety net caught it)."
+                    }
+                }
 
                 statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status)")
                 statement.executeUpdate(
