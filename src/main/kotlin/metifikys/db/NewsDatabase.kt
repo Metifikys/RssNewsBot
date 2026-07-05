@@ -619,9 +619,14 @@ class NewsDatabase(dbPath: String) {
     fun markProcessing(links: List<String>) {
         if (links.isEmpty()) return
         transaction {
+            // BUG-016: claim only genuinely-ready (UNPROCESSED) rows. The old predicate
+            // (status != PROCESSED) also matched already-PROCESSING rows and reset their
+            // processingStartedAt to now() — bumping a nearly-stale article back to fresh and
+            // deferring its stale-timeout recovery by another full window. A PROCESSING → PROCESSING
+            // transition is now a no-op; stale rows are reclaimed via fetchReadyForDigestByCategory.
             ArticlesTable.update({
                 (ArticlesTable.link inList links) and
-                    (ArticlesTable.status neq ArticleStatus.PROCESSED.name)
+                    (ArticlesTable.status eq ArticleStatus.UNPROCESSED.name)
             }) {
                 it[status] = ArticleStatus.PROCESSING.name
                 it[processingStartedAt] = LocalDateTime.now()
