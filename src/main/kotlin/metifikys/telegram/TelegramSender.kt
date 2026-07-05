@@ -55,7 +55,16 @@ class TelegramSender(private val botToken: String) {
     )
 
     @Serializable
-    private data class SendMessageResponse(val ok: Boolean = false, val result: SentMessage? = null)
+    private data class SendMessageResponse(
+        val ok: Boolean = false,
+        val result: SentMessage? = null,
+        val error_code: Int? = null,
+        val description: String? = null,
+        val parameters: ResponseParameters? = null
+    )
+
+    @Serializable
+    private data class ResponseParameters(val retry_after: Long? = null)
 
     @Serializable
     private data class SentMessage(val message_id: Long, val chat: ChatRef? = null)
@@ -63,11 +72,29 @@ class TelegramSender(private val botToken: String) {
     @Serializable
     private data class ChatRef(val id: Long)
 
+    /**
+     * Outcome of a single Bot API POST. Distinguishes the failure classes so callers can decide
+     * whether a plain-text retry is warranted (BUG-007): only [BadRequest] (HTTP 400, a markup/parse
+     * error) is — on [Transient] (429 after its own retry, 5xx, network) the HTML was fine and a
+     * plain-text resend would risk a duplicate and hammer a rate limit.
+     */
+    private sealed interface SendResult {
+        data class Ok(val ref: SentRef) : SendResult
+        object BadRequest : SendResult
+        object Transient : SendResult
+    }
+
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
     private companion object {
         /** Telegram's hard limit for sendPhoto caption length. */
         const val MAX_CAPTION_LEN = 1024
+
+        /** Fallback wait when Telegram returns 429 without a `parameters.retry_after`. */
+        const val DEFAULT_RETRY_AFTER_SEC = 3L
+
+        /** Upper bound on the honored `retry_after`, so an extreme value can't stall the caller. */
+        const val MAX_RETRY_AFTER_SEC = 60L
 
         /** Matches the `<a href="url">label</a>` anchors emitted by [TopicFormatter.toHtml]. */
         val HTML_ANCHOR = Regex("""<a href="([^"]*)">(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
@@ -84,8 +111,13 @@ class TelegramSender(private val botToken: String) {
         val refs = ArrayList<SentRef>(chunks.size)
         for (chunk in chunks) {
             val html = TopicFormatter.toHtml(chunk)
-            val ref = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview)
-                ?: sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview)
+            val ref = when (val res = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview)) {
+                is SendResult.Ok -> res.ref
+                // BUG-007: fall back to plain text only on a 400 markup error.
+                is SendResult.BadRequest ->
+                    (sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview) as? SendResult.Ok)?.ref
+                is SendResult.Transient -> null
+            }
             if (ref != null) refs += ref
         }
         return refs
@@ -99,33 +131,42 @@ class TelegramSender(private val botToken: String) {
     fun sendPhotoToChannel(channelId: String, photoUrl: String, caption: String? = null): SentRef? {
         // Truncate the Markdown caption first (so we never cut inside an <a> tag), then render HTML.
         val htmlCaption = caption?.let { TopicFormatter.toHtml(truncateForCaption(it)) }
-        return sendPhoto(channelId, photoUrl, htmlCaption, parseMode = "HTML")
-            ?: sendPhoto(channelId, photoUrl, htmlCaption?.htmlToPlainText(), parseMode = null)
+        return when (val res = sendPhoto(channelId, photoUrl, htmlCaption, parseMode = "HTML")) {
+            is SendResult.Ok -> res.ref
+            // BUG-007: fall back to plain text only on a 400 markup error.
+            is SendResult.BadRequest ->
+                (sendPhoto(channelId, photoUrl, htmlCaption?.htmlToPlainText(), parseMode = null) as? SendResult.Ok)?.ref
+            is SendResult.Transient -> null
+        }
     }
 
-    private fun sendPhoto(chatId: String, photoUrl: String, caption: String?, parseMode: String?): SentRef? {
+    private fun sendPhoto(chatId: String, photoUrl: String, caption: String?, parseMode: String?): SendResult {
         val payload = json.encodeToString(SendPhotoRequest(chatId, photoUrl, caption, parseMode))
-        return postForRef("sendPhoto", payload, chatId)
+        return post("sendPhoto", payload, chatId)
     }
 
     private fun truncateForCaption(text: String): String =
         if (text.length <= MAX_CAPTION_LEN) text
         else text.substring(0, MAX_CAPTION_LEN - 1).trimEnd() + "…"
 
-    private fun sendMessage(chatId: String, text: String, parseMode: String?, disablePreview: Boolean = false): SentRef? {
+    private fun sendMessage(chatId: String, text: String, parseMode: String?, disablePreview: Boolean = false): SendResult {
         val payload = json.encodeToString(
             SendMessageRequest(chatId, text, parseMode, if (disablePreview) true else null)
         )
-        return postForRef("sendMessage", payload, chatId)
+        return post("sendMessage", payload, chatId)
     }
 
     /**
-     * POSTs [payload] to the given Bot API [endpoint] and parses the sent message's ids.
-     * Returns null on any transport/parse failure or a non-`ok` response. The numeric chat id
-     * comes from the response `chat.id`; if absent it falls back to [chatId] when that is already
-     * numeric (a `@username` target cannot be resolved to a number here and yields 0).
+     * POSTs [payload] to the given Bot API [endpoint] and classifies the outcome as a [SendResult].
+     * The numeric chat id comes from the response `chat.id`; if absent it falls back to [chatId]
+     * when that is already numeric (a `@username` target yields 0).
+     *
+     * BUG-007: on HTTP 429 the `parameters.retry_after` seconds are honored and the SAME request is
+     * retried exactly once ([retryOn429] guards against a second retry). A 400 maps to [SendResult.BadRequest]
+     * (caller may retry as plain text); everything else (429-after-retry, 5xx, network) maps to
+     * [SendResult.Transient] (no plain-text fallback — the markup was valid).
      */
-    private fun postForRef(endpoint: String, payload: String, chatId: String): SentRef? {
+    private fun post(endpoint: String, payload: String, chatId: String, retryOn429: Boolean = true): SendResult {
         val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
         val request = Request.Builder()
             .url("https://api.telegram.org/bot$botToken/$endpoint")
@@ -133,20 +174,40 @@ class TelegramSender(private val botToken: String) {
             .build()
         return try {
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    logger.warn { "Telegram $endpoint HTTP ${response.code} for $chatId" }
-                    return null
-                }
                 val responseBody = response.body?.string().orEmpty()
-                val parsed = json.decodeFromString(SendMessageResponse.serializer(), responseBody)
-                val result = if (parsed.ok) parsed.result else null
-                if (result == null) return null
-                val resolvedChatId = result.chat?.id ?: chatId.toLongOrNull() ?: 0L
-                SentRef(resolvedChatId, result.message_id)
+                if (response.isSuccessful) {
+                    val parsed = json.decodeFromString(SendMessageResponse.serializer(), responseBody)
+                    val result = parsed.result?.takeIf { parsed.ok }
+                    return@use if (result != null) {
+                        val resolvedChatId = result.chat?.id ?: chatId.toLongOrNull() ?: 0L
+                        SendResult.Ok(SentRef(resolvedChatId, result.message_id))
+                    } else {
+                        SendResult.Transient
+                    }
+                }
+                val err = runCatching { json.decodeFromString(SendMessageResponse.serializer(), responseBody) }.getOrNull()
+                val code = err?.error_code ?: response.code
+                when {
+                    code == 429 && retryOn429 -> {
+                        val retryAfter = (err?.parameters?.retry_after ?: DEFAULT_RETRY_AFTER_SEC)
+                            .coerceIn(1, MAX_RETRY_AFTER_SEC)
+                        logger.warn { "Telegram $endpoint 429 for $chatId — retrying once after ${retryAfter}s" }
+                        Thread.sleep(retryAfter * 1000)
+                        post(endpoint, payload, chatId, retryOn429 = false)
+                    }
+                    code == 400 -> {
+                        logger.warn { "Telegram $endpoint HTTP 400 for $chatId — ${err?.description ?: "bad request"}" }
+                        SendResult.BadRequest
+                    }
+                    else -> {
+                        logger.warn { "Telegram $endpoint HTTP $code for $chatId" }
+                        SendResult.Transient
+                    }
+                }
             }
         } catch (e: Exception) {
             logger.error(e) { "Telegram $endpoint failed for $chatId" }
-            null
+            SendResult.Transient
         }
     }
 
@@ -159,30 +220,19 @@ class TelegramSender(private val botToken: String) {
      * unlike the digest channel path which renders HTML. See [sendToChannel].
      */
     fun sendMessageReturningId(chatId: String, text: String): Long? {
-        return sendMessageInternal(chatId, text, parseMode = "Markdown")
-            ?: sendMessageInternal(chatId, text.stripMarkdown(), parseMode = null)
-    }
-
-    private fun sendMessageInternal(chatId: String, text: String, parseMode: String?): Long? {
-        val payload = json.encodeToString(SendMessageRequest(chatId, text, parseMode, disable_web_page_preview = true))
-        val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val request = Request.Builder()
-            .url("https://api.telegram.org/bot$botToken/sendMessage")
-            .post(body)
-            .build()
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    logger.warn { "sendMessageReturningId HTTP ${response.code} for $chatId" }
-                    return null
-                }
-                val responseBody = response.body?.string().orEmpty()
-                val parsed = json.decodeFromString(SendMessageResponse.serializer(), responseBody)
-                if (parsed.ok) parsed.result?.message_id else null
+        val markdownPayload = json.encodeToString(
+            SendMessageRequest(chatId, text, parse_mode = "Markdown", disable_web_page_preview = true)
+        )
+        return when (val res = post("sendMessage", markdownPayload, chatId)) {
+            is SendResult.Ok -> res.ref.messageId
+            // Same policy as the channel path: only retry as plain text on a 400 markup error.
+            is SendResult.BadRequest -> {
+                val plainPayload = json.encodeToString(
+                    SendMessageRequest(chatId, text.stripMarkdown(), parse_mode = null, disable_web_page_preview = true)
+                )
+                (post("sendMessage", plainPayload, chatId) as? SendResult.Ok)?.ref?.messageId
             }
-        } catch (e: Exception) {
-            logger.error(e) { "sendMessageReturningId failed for $chatId" }
-            null
+            is SendResult.Transient -> null
         }
     }
 
