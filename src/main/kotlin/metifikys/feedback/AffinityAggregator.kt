@@ -30,6 +30,8 @@ class AffinityAggregator(
 
     companion object {
         const val STATE_KEY = "affinity_last_recompute"
+        /** How many top and bottom keys per category × dimension the INFO score dump shows. */
+        const val LOG_TOP_N = 5
     }
 
     /** Recomputes if enabled and stale. Never throws — feedback must not break a cycle. */
@@ -85,5 +87,36 @@ class AffinityAggregator(
             "[Affinity] recomputed from ${signals.size} message(s) → ${rows.size} dimension row(s) " +
                 "(${byCat.joinToString(", ")})"
         }
+        logScores(rows)
     }
+
+    /**
+     * Ranked score dump so the operator can see WHAT the audience likes, not just that
+     * something was computed. INFO: per category × dimension, the top/bottom [LOG_TOP_N]
+     * keys by score. DEBUG: every row. Grep for `[Affinity][scores]`.
+     */
+    private fun logScores(rows: List<metifikys.db.AudienceAffinityRow>) {
+        for ((category, catRows) in rows.groupBy { it.category }.toSortedMap()) {
+            for ((dimension, dimRows) in catRows.groupBy { it.dimension }.toSortedMap()) {
+                val ranked = dimRows.sortedByDescending { it.score }
+                logger.info {
+                    val top = ranked.take(LOG_TOP_N)
+                    val bottom = ranked.takeLast(LOG_TOP_N).filter { it !in top }
+                    val tail = if (bottom.isEmpty()) "" else " … ↓ ${bottom.joinToString(", ") { cell(it) }}"
+                    "[Affinity][scores] $category/$dimension (${ranked.size}): " +
+                        "↑ ${top.joinToString(", ") { cell(it) }}$tail"
+                }
+                logger.debug {
+                    "[Affinity][scores][full] $category/$dimension: " +
+                        ranked.joinToString("; ") { cell(it) }
+                }
+            }
+        }
+    }
+
+    /** `key=+0.42 (sent=+0.80 z=+1.2 n=3.5)` — score first, then the raw parts behind it. */
+    private fun cell(r: metifikys.db.AudienceAffinityRow): String =
+        "'${r.key}'=${fmt(r.score)} (sent=${fmt(r.sentiment)} z=${fmt(r.engagementZ)} n=${"%.1f".format(java.util.Locale.ROOT, r.n)})"
+
+    private fun fmt(v: Double): String = "%+.2f".format(java.util.Locale.ROOT, v)
 }
