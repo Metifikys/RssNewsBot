@@ -161,6 +161,7 @@ data class AppConfig(
     val processing: ProcessingConfig = ProcessingConfig(),
     val admin: AdminConfig = AdminConfig(),
     val weekly: WeeklyConfig? = null,
+    val feedback: FeedbackConfig = FeedbackConfig(),
     /**
      * Per-(provider, model) prices used by `/status` cost stats. Costs are in USD per
      * 1,000,000 tokens (matches how OpenAI / Anthropic publish their pricing pages).
@@ -170,6 +171,45 @@ data class AppConfig(
      * [metifikys.ai.LlmPricing].
      */
     val pricing: List<LlmPriceEntry> = emptyList()
+)
+
+/**
+ * Reaction-feedback loop (see `.claude/plans/reaction-feedback-design.md`). Phase 1 only
+ * *aggregates* the reactions the updates poller already collects into per-dimension
+ * audience-affinity scores (franchise / eventType / subject / source) — it changes nothing
+ * about selection or rendering. Later phases read those scores from the ranker, the
+ * Step-1 prompt, and the render-depth gate.
+ *
+ * Aggregation is a cheap in-process pass over `digest_messages` × `reaction_counts` ×
+ * `covered_events`; it reruns at the start of a digest cycle whenever the previous run is
+ * older than [recomputeHours] (state in `bot_state`).
+ */
+data class FeedbackConfig(
+    /** Master switch for the whole feedback module. When false nothing is computed or stored. */
+    val enabled: Boolean = false,
+    /**
+     * Posts younger than this never enter the aggregation — reactions accumulate for a day
+     * or two, so learning from a fresh post would bake in an immature signal.
+     */
+    val attributionHours: Long = 36,
+    /** Lookback window (days) over which posts are aggregated at all. */
+    val lookbackDays: Long = 90,
+    /** Exponential time-decay half-life (days) applied to each post's contribution. */
+    val halflifeDays: Long = 45,
+    /** Dimension keys with fewer (decay-weighted) samples than this get no stored row. */
+    val minSamples: Double = 3.0,
+    /** Empirical-Bayes pseudo-count `k`: scores shrink toward the category prior by `k/(n+k)`. */
+    val shrinkageK: Double = 5.0,
+    /** A message's tone only counts once it carries at least this many total reactions. */
+    val minVolume: Int = 3,
+    /** Recompute when the last run is older than this many hours. */
+    val recomputeHours: Long = 12,
+    /**
+     * Per-emoji valence overrides merged over the built-in defaults
+     * (see `metifikys.feedback.ReactionValence`). Keys are the stored emoji strings
+     * (`custom:<id>` and `paid` included); values must lie in [-1.0, 1.0].
+     */
+    val valence: Map<String, Double> = emptyMap()
 )
 
 /**
@@ -639,6 +679,23 @@ object ConfigLoader {
             require(config.processing.embeddingRetentionDays >= maxDedupWindow) {
                 "processing.embeddingRetentionDays (${config.processing.embeddingRetentionDays}) must be >= " +
                     "max semanticDedup.windowDays ($maxDedupWindow) — the detector scans back that far"
+            }
+        }
+
+        config.feedback.let { fb ->
+            require(fb.attributionHours >= 0) { "feedback.attributionHours must be >= 0 (got ${fb.attributionHours})" }
+            require(fb.lookbackDays > 0) { "feedback.lookbackDays must be > 0 (got ${fb.lookbackDays})" }
+            require(fb.halflifeDays > 0) { "feedback.halflifeDays must be > 0 (got ${fb.halflifeDays})" }
+            require(fb.minSamples > 0.0) { "feedback.minSamples must be > 0 (got ${fb.minSamples})" }
+            require(fb.shrinkageK > 0.0) { "feedback.shrinkageK must be > 0 (got ${fb.shrinkageK})" }
+            require(fb.minVolume >= 1) { "feedback.minVolume must be >= 1 (got ${fb.minVolume})" }
+            require(fb.recomputeHours >= 1) { "feedback.recomputeHours must be >= 1 (got ${fb.recomputeHours})" }
+            require(fb.lookbackDays * 24 > fb.attributionHours) {
+                "feedback.lookbackDays (${fb.lookbackDays}) must reach further back than attributionHours (${fb.attributionHours}) — otherwise the aggregation window is empty"
+            }
+            for ((emoji, v) in fb.valence) {
+                require(emoji.isNotBlank()) { "feedback.valence: emoji key must not be blank" }
+                require(v in -1.0..1.0) { "feedback.valence['$emoji'] must be in [-1.0, 1.0] (got $v)" }
             }
         }
 

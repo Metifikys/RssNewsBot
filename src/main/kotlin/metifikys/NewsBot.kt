@@ -19,6 +19,7 @@ import metifikys.digest.EventSemanticAnalyzer
 import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.WeeklyDigest
 import metifikys.digest.WeeklyScheduler
+import metifikys.feedback.AffinityAggregator
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.RssFetcher
@@ -67,7 +68,14 @@ class NewsBot(
     eventSemanticAnalyzer: EventSemanticAnalyzer? =
         if (config.categories.values.any { it.semanticDedup?.eventEnabled == true }) {
             EventSemanticAnalyzer(config, db, Embedder(LlmEndpoint.forOpenAI(config), llmCallRecorder))
-        } else null
+        } else null,
+    /**
+     * Optional reaction-feedback aggregator (phase 1 of the feedback loop). Constructed
+     * only when `feedback.enabled=true`; aggregation-only, so it is safe to run even
+     * while nothing consumes the scores.
+     */
+    affinityAggregator: AffinityAggregator? =
+        if (config.feedback.enabled) AffinityAggregator(config.feedback, db) else null
 ) {
 
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
@@ -110,7 +118,8 @@ class NewsBot(
         promptLoader = promptLoader,
         statusPoster = statusPoster,
         errorLog = errorLog,
-        semanticDedupDetector = semanticDedupDetector
+        semanticDedupDetector = semanticDedupDetector,
+        affinityAggregator = affinityAggregator
     )
 
     /**
@@ -177,6 +186,14 @@ class NewsBot(
             val withHardFilter = config.categories.values.count { it.semanticDedup?.eventHardThreshold != null }
             val mode = if (withHardFilter > 0) "log + hard-filter ($withHardFilter)" else "log-only"
             logger.info { "[EventSemanticDedup] $mode analyzer enabled for ${eventSdCats.size} category(ies): $eventSdCats" }
+        }
+        if (config.feedback.enabled) {
+            val fb = config.feedback
+            logger.info {
+                "[Affinity] reaction-feedback aggregation enabled: attribution=${fb.attributionHours}h " +
+                    "lookback=${fb.lookbackDays}d halflife=${fb.halflifeDays}d k=${fb.shrinkageK} " +
+                    "minSamples=${fb.minSamples} recompute every ${fb.recomputeHours}h (phase 1: aggregation only)"
+            }
         }
         val overrides = config.categories.flatMap { (n, c) ->
             val ovr = c.llm ?: return@flatMap emptyList()

@@ -67,6 +67,7 @@ class StatusCommand(
 
         appendLatencySection(sb)
         appendReactionsSection(sb)
+        appendAffinitySection(sb)
 
         val errorCommitToken = if (errors.isEmpty()) {
             -1L
@@ -132,6 +133,39 @@ class StatusCommand(
     } catch (e: Exception) {
         logger.warn(e) { "[/status] fetchReactionSummary failed — omitting the reactions section" }
         emptyMap()
+    }
+
+    /**
+     * Materialized audience-affinity check, one line per category with any rows: the top and
+     * bottom franchise/eventType keys by score with their (decay-weighted) sample sizes.
+     * Silently omitted when `feedback.enabled=false` or nothing has been aggregated yet.
+     * Phase-1 observability — lets the operator sanity-check the scores while nothing
+     * consumes them.
+     */
+    private fun appendAffinitySection(sb: StringBuilder) {
+        if (!config.feedback.enabled) return
+        val rows = safeFetchAffinity()
+            .filter { it.dimension == "franchise" || it.dimension == "event_type" }
+        if (rows.isEmpty()) return
+        sb.append('\n').append("🎯 *Audience affinity* (top/bottom by score)\n")
+        for ((name, _) in config.categories) {
+            val catRows = rows.filter { it.category == name }.sortedByDescending { it.score }
+            if (catRows.isEmpty()) continue
+            val top = catRows.take(2)
+            val bottom = catRows.takeLast(2).filter { it !in top }
+            fun cell(r: metifikys.db.AudienceAffinityRow) =
+                "${escapeMarkdown(r.key)} ${"%+.2f".format(Locale.ROOT, r.score)} (n=${"%.1f".format(Locale.ROOT, r.n)})"
+            sb.append("  ${escapeMarkdown(name)}: ↑ ${top.joinToString(", ") { cell(it) }}")
+            if (bottom.isNotEmpty()) sb.append(" · ↓ ${bottom.joinToString(", ") { cell(it) }}")
+            sb.append('\n')
+        }
+    }
+
+    private fun safeFetchAffinity(): List<metifikys.db.AudienceAffinityRow> = try {
+        db.fetchAudienceAffinity()
+    } catch (e: Exception) {
+        logger.warn(e) { "[/status] fetchAudienceAffinity failed — omitting the affinity section" }
+        emptyList()
     }
 
     /** `✅ P (x%) · 📰 A · ⛔ B (y%)` — percentages over (articles+blocked), omitted when that's 0. */

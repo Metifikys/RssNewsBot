@@ -147,6 +147,27 @@ weekly:
   #   system: "..."
   #   user: "..."
 
+# Optional: reaction-feedback loop (phase 1 — aggregation only). When enabled, the reactions
+# collected by telegram.updatesPolling are periodically rolled up into per-dimension audience
+# affinity scores (franchise / event type / subject / source domain) in the audience_affinity
+# table, surfaced in the /status snapshot. Nothing reads the scores for selection yet — later
+# phases plug them into the shortlist ranker and prompts. Requires telegram.updatesPolling: true
+# to actually accumulate reactions. NOTE: the effective learning window is capped by
+# summaryHistory.retentionDays (covered_events supplies the dimensions and is pruned with it).
+feedback:
+  enabled: false
+  attributionHours: 36     # posts younger than this are too fresh to learn from
+  lookbackDays: 90         # how far back the aggregation looks (see retention note above)
+  halflifeDays: 45         # exponential time-decay half-life for a post's contribution
+  minSamples: 3.0          # dimension keys with fewer (decayed) posts than this get no score
+  shrinkageK: 5.0          # empirical-Bayes pseudo-count: scores shrink to the category mean
+  minVolume: 3             # a post's tone counts only once it has at least this many reactions
+  recomputeHours: 12       # rebuild cadence (checked at the start of each digest cycle)
+  # Per-emoji valence overrides (-1.0..1.0), merged over the built-in defaults:
+  # valence:
+  #   "🤡": 1.0            # e.g. an audience that uses 🤡 approvingly
+  #   "custom:5368742036018122275": 0.75
+
 categories:
   tech:
     emoji: "💻"

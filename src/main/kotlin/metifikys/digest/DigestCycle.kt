@@ -43,7 +43,14 @@ class DigestCycle(
      * candidates. Never mutates article state. Null in tests / when no category
      * has opted in.
      */
-    private val semanticDedupDetector: SemanticDedupDetector? = null
+    private val semanticDedupDetector: SemanticDedupDetector? = null,
+    /**
+     * Optional reaction-feedback aggregator (phase 1: aggregation only). When non-null,
+     * each cycle start gives it a chance to rebuild `audience_affinity`; it internally
+     * no-ops unless the previous rebuild is older than `feedback.recomputeHours`.
+     * Null in tests / when `feedback.enabled=false`.
+     */
+    private val affinityAggregator: metifikys.feedback.AffinityAggregator? = null
 ) {
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -56,6 +63,10 @@ class DigestCycle(
             // summaries/articles that a mid-cycle cleanup would delete, collapsing the previousUrls
             // dedup snapshot and letting duplicate posts through.
             runCleanup()
+
+            // Reaction-feedback aggregation (phase 1: nothing reads the scores yet except
+            // /status). Internally throttled and exception-safe — cannot break the cycle.
+            affinityAggregator?.recomputeIfStale()
 
             val rawArticles = fetcher.fetchAll(config.categories)
             logger.info { "Fetched ${rawArticles.size} articles total." }
