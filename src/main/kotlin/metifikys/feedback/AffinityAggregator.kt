@@ -46,15 +46,30 @@ class AffinityAggregator(
         }
     }
 
+    /**
+     * Stale when the last run is older than `recomputeHours` OR was produced with different
+     * feedback parameters — an operator tuning `minVolume`/`valence` on a restart must see the
+     * effect immediately, not after the next 12h window. State format: `<ISO timestamp>|<hash>`;
+     * legacy values without a hash (or unparseable) count as stale.
+     */
     private fun isStale(now: LocalDateTime): Boolean {
         val last = db.getState(STATE_KEY) ?: return true
+        val parts = last.split('|', limit = 2)
+        if (parts.size != 2) return true
+        if (parts[1] != configHash()) {
+            logger.info { "[Affinity] feedback config changed since the last run — recomputing now" }
+            return true
+        }
         return try {
-            Duration.between(LocalDateTime.parse(last), now) >= Duration.ofHours(feedback.recomputeHours)
+            Duration.between(LocalDateTime.parse(parts[0]), now) >= Duration.ofHours(feedback.recomputeHours)
         } catch (e: DateTimeParseException) {
             logger.warn { "[Affinity] unparseable $STATE_KEY='$last' — recomputing" }
             true
         }
     }
+
+    /** Fingerprint of every parameter that changes the scores (recomputeHours deliberately not). */
+    private fun configHash(): String = feedback.copy(recomputeHours = 0).hashCode().toString()
 
     private fun recompute(now: LocalDateTime) {
         val inputs = db.fetchAffinityInputs(feedback.attributionHours, feedback.lookbackDays)
@@ -81,7 +96,7 @@ class AffinityAggregator(
             )
         )
         db.replaceAudienceAffinity(rows)
-        db.setState(STATE_KEY, now.toString())
+        db.setState(STATE_KEY, "$now|${configHash()}")
         val byCat = rows.groupBy { it.category }.map { (c, r) -> "$c=${r.size}" }
         logger.info {
             "[Affinity] recomputed from ${signals.size} message(s) → ${rows.size} dimension row(s) " +

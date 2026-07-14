@@ -200,8 +200,14 @@ data class FeedbackConfig(
     val minSamples: Double = 3.0,
     /** Empirical-Bayes pseudo-count `k`: scores shrink toward the category prior by `k/(n+k)`. */
     val shrinkageK: Double = 5.0,
-    /** A message's tone only counts once it carries at least this many total reactions. */
-    val minVolume: Int = 3,
+    /**
+     * A message's tone only counts once it carries at least this many total reactions.
+     * Default 1: these channels have a single reader-operator whose lone 👍/👎 IS the
+     * signal — production data showed 94% of reacted posts carry exactly one reaction,
+     * so a higher floor silently zeroes every sentiment. Raise it for channels with a
+     * real audience, where one stray reaction shouldn't set the tone.
+     */
+    val minVolume: Int = 1,
     /** Recompute when the last run is older than this many hours. */
     val recomputeHours: Long = 12,
     /**

@@ -192,7 +192,8 @@ class NewsBot(
             logger.info {
                 "[Affinity] reaction-feedback aggregation enabled: attribution=${fb.attributionHours}h " +
                     "lookback=${fb.lookbackDays}d halflife=${fb.halflifeDays}d k=${fb.shrinkageK} " +
-                    "minSamples=${fb.minSamples} recompute every ${fb.recomputeHours}h (phase 1: aggregation only)"
+                    "minSamples=${fb.minSamples} minVolume=${fb.minVolume} " +
+                    "recompute every ${fb.recomputeHours}h (phase 1: aggregation only)"
             }
         }
         val overrides = config.categories.flatMap { (n, c) ->

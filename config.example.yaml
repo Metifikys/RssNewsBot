@@ -161,7 +161,9 @@ feedback:
   halflifeDays: 45         # exponential time-decay half-life for a post's contribution
   minSamples: 3.0          # dimension keys with fewer (decayed) posts than this get no score
   shrinkageK: 5.0          # empirical-Bayes pseudo-count: scores shrink to the category mean
-  minVolume: 3             # a post's tone counts only once it has at least this many reactions
+  minVolume: 1             # a post's tone counts only once it has at least this many reactions;
+                           # 1 suits a single-reader channel (your own 👍/👎 is the signal),
+                           # raise for channels with a real audience
   recomputeHours: 12       # rebuild cadence (checked at the start of each digest cycle)
   # Per-emoji valence overrides (-1.0..1.0), merged over the built-in defaults:
   # valence:

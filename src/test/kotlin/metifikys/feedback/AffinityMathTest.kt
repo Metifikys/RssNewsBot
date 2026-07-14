@@ -58,20 +58,20 @@ class AffinityMathTest {
     }
 
     @Test
-    fun `shrinkage pulls a single observation toward the neutral prior`() {
-        // One glowing post for "rare" vs five for "common": same tone, but rare's n=1 must
-        // shrink much harder toward the prior than common's n=5.
+    fun `shrinkage pulls a single observation toward the prior`() {
+        // One glowing post for "rare" vs five for "common", plus negative "downer" posts that
+        // drag the category prior below the glowing tone. Scores are centered on the prior,
+        // so both stay positive — but rare's n=1 must sit much closer to zero than common's n=5.
         val messages =
             List(5) { msg("common", volume = 20, valenceSum = 20.0) } +
             List(1) { msg("rare", volume = 20, valenceSum = 20.0) } +
-            List(6) { msg("baseline", volume = 4, valenceSum = 0.0) }
+            List(6) { msg("downer", volume = 20, valenceSum = -20.0) }
         // minSamples below one decayed message (0.5^(5/45) ≈ 0.93) so "rare" survives the gate
         val rows = AffinityMath.aggregate(messages, params(minSamples = 0.5))
 
         val common = rowsFor(rows, AffinityMath.DIM_FRANCHISE, "common")
         val rare = rowsFor(rows, AffinityMath.DIM_FRANCHISE, "rare")
-        // prior here is positive (common's posts dominate), so both stay positive —
-        // but rare must sit closer to the prior than common.
+        assertTrue(common.score > 0.0 && rare.score > 0.0, "both above the (negative-leaning) prior")
         assertTrue(common.score > rare.score, "n=5 (${common.score}) should beat n=1 (${rare.score})")
     }
 

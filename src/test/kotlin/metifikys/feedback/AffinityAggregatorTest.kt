@@ -51,12 +51,12 @@ class AffinityAggregatorTest {
         dbFile.delete()
     }
 
-    private fun feedback(enabled: Boolean = true) = FeedbackConfig(
+    private fun feedback(enabled: Boolean = true, minVolume: Int = 3) = FeedbackConfig(
         enabled = enabled,
         attributionHours = 36,
         lookbackDays = 90,
         minSamples = 0.5,
-        minVolume = 3,
+        minVolume = minVolume,
         recomputeHours = 12
     )
 
@@ -125,6 +125,35 @@ class AffinityAggregatorTest {
 
         assertEquals(stamp, db.getState(AffinityAggregator.STATE_KEY))
         assertTrue(db.fetchAudienceAffinity().none { it.key == "newgame" })
+    }
+
+    @Test
+    fun `changed feedback config forces an immediate recompute`() {
+        seedMessage(1L, "silksong", listOf(ReactionCount("🔥", 10)))
+        AffinityAggregator(feedback(), db).recomputeIfStale()
+
+        // Same data, new parameters (different minVolume) → the 12h gate must NOT hold.
+        seedMessage(2L, "newgame", listOf(ReactionCount("🔥", 10)))
+        AffinityAggregator(feedback(minVolume = 1), db).recomputeIfStale()
+
+        assertTrue(db.fetchAudienceAffinity().any { it.key == "newgame" })
+    }
+
+    @Test
+    fun `single-reader channel - lone dislikes turn a franchise negative at minVolume 1`() {
+        // The production shape: every post carries exactly one reaction from the operator.
+        repeat(5) { i -> seedMessage(10L + i, "fifa", listOf(ReactionCount("👎", 1))) }
+        repeat(5) { i -> seedMessage(20L + i, "silksong", listOf(ReactionCount("👍", 1))) }
+        repeat(5) { i -> seedMessage(30L + i, "quiet", emptyList()) }
+
+        AffinityAggregator(feedback(minVolume = 1), db).recomputeIfStale()
+
+        val rows = db.fetchAudienceAffinity()
+        val fifa = rows.single { it.dimension == "franchise" && it.key == "fifa" }
+        val silksong = rows.single { it.dimension == "franchise" && it.key == "silksong" }
+        assertTrue(fifa.score < 0.0, "disliked franchise must go negative, got ${fifa.score}")
+        assertTrue(silksong.score > 0.0, "liked franchise must go positive, got ${silksong.score}")
+        assertTrue(fifa.sentiment < 0.0 && silksong.sentiment > 0.0)
     }
 
     @Test

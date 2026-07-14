@@ -23,6 +23,11 @@ import kotlin.math.sqrt
  *     CONFIDENCE (a lukewarm-volume positive counts half; high volume counts full; low
  *     volume never flips the sign) — shrunk toward the category prior by `k/(n+k)`
  *     (empirical Bayes), so a franchise seen once cannot swing selection.
+ *  5. The stored score is CENTERED on the category prior: `nTone·(combined − prior)/(nTone+k)`.
+ *     0 means "no signal / reacts like the category average", positive = liked MORE than
+ *     the average, negative = less. Without centering, a category whose operator likes
+ *     almost everything (prior ≈ +0.5) paints every no-data key strongly positive —
+ *     real production data made 26 tech keys with zero reactions read as +0.55.
  */
 object AffinityMath {
 
@@ -121,13 +126,15 @@ object AffinityMath {
                 if (n < p.minSamples) continue
                 val engagementZ = group.sumOf { it.weight * it.z } / n
 
-                // Direction × confidence, then empirical-Bayes shrinkage toward the prior.
+                // Direction × confidence, shrunk toward the prior, then centered on it:
+                // (nTone·combined + k·prior)/(nTone+k) − prior. Zero = no evidence this key
+                // differs from the category average.
                 val tonedGroup = group.filter { it.combined != null }
                 val nTone = tonedGroup.sumOf { it.weight }
                 val combined = if (nTone > 0.0) {
                     tonedGroup.sumOf { it.weight * it.combined!! } / nTone
                 } else 0.0
-                val score = (nTone * combined + p.shrinkageK * prior) / (nTone + p.shrinkageK)
+                val score = nTone * (combined - prior) / (nTone + p.shrinkageK)
 
                 out += AudienceAffinityRow(
                     category = category,
