@@ -11,6 +11,8 @@ import metifikys.config.DigestConfig
 import metifikys.db.NewsDatabase
 import metifikys.db.CoveredEventRow
 import metifikys.db.RejectedEventRow
+import metifikys.feedback.AffinityImpact
+import metifikys.feedback.AffinityScores
 import metifikys.model.Article
 import metifikys.model.CoveredEvent
 import metifikys.model.ExtractionResult
@@ -131,11 +133,30 @@ class EventExtractor(
         val batchJson = json.encodeToString(promptArticles)
         val coveredJson = json.encodeToString(covered)
 
+        // Reaction-feedback lever A, prompt channel: resolves only when the template actually
+        // contains {{AUDIENCE_SIGNALS}} (opt-in per prompt file); "" otherwise / on any failure.
+        val audienceSignals = if (prompts.extractSystem.contains("{{AUDIENCE_SIGNALS}}") ||
+            prompts.extractUser.contains("{{AUDIENCE_SIGNALS}}")
+        ) {
+            try {
+                affinityScoresFor(category).buildAudienceSignals().also {
+                    if (it.isNotEmpty()) logger.info {
+                        "[Category:$category][Dedup] AUDIENCE_SIGNALS block injected into the Step 1 prompt " +
+                            "(${it.lines().size} line(s))"
+                    }
+                }
+            } catch (e: Exception) {
+                logger.warn(e) { "[Category:$category][Dedup] AUDIENCE_SIGNALS build failed — injecting empty block" }
+                ""
+            }
+        } else ""
+
         val vars = mapOf(
             "CURRENT_BATCH_JSON" to batchJson,
             "PREVIOUSLY_COVERED_EVENTS_JSON" to coveredJson,
             "CATEGORY" to category,
-            "EMOJI" to cat.emoji
+            "EMOJI" to cat.emoji,
+            "AUDIENCE_SIGNALS" to audienceSignals
         )
         val userPrompt = promptLoader.substitute(prompts.extractUser, vars)
         val systemPrompt = promptLoader.substitute(prompts.extractSystem, vars)
@@ -287,7 +308,7 @@ class EventExtractor(
                         "franchiseConcentration=${"%.2f".format(ranked.franchiseConcentration())}"
                 }
             }
-            ranked.kept
+            applyAffinity(category, cooldownFilteredShortlist, ranked, digestConfig)
         } else {
             cooldownFilteredShortlist
         }
@@ -300,6 +321,64 @@ class EventExtractor(
 
         return ExtractionResult(extractions = parsed.extractions, shortlist = finalShortlist)
     }
+
+    /**
+     * Reaction-feedback lever A (phase 2). When `ranker.reactionWeight > 0`, re-ranks the
+     * shortlist with the audience-affinity term and logs EXACTLY what the term changed:
+     *
+     *   [AffinityRank][LOG-ONLY] — would-be changes; the published digest keeps [baseline]
+     *   [AffinityRank][APPLIED]  — changes that ARE in the published digest
+     *   "no effect"              — the term ran but moved nothing this cycle
+     *
+     * Per-item contributions land in the same line so the operator can see WHY. Any failure
+     * (e.g. affinity fetch) logs a warning and returns the baseline — feedback must never
+     * break a digest.
+     */
+    private fun applyAffinity(
+        category: String,
+        shortlist: List<ShortlistItem>,
+        baseline: ShortlistRanker.Result,
+        digestConfig: DigestConfig
+    ): List<ShortlistItem> {
+        val ranker = digestConfig.ranker
+        if (ranker.reactionWeight <= 0.0) return baseline.kept
+        return try {
+            val scores = affinityScoresFor(category)
+            if (scores.isEmpty()) {
+                logger.info { "[Category:$category][AffinityRank] no affinity data yet — term inactive" }
+                return baseline.kept
+            }
+            val scorer: (ShortlistItem) -> Double = { scores.itemScore(it) }
+            val reRanked = ShortlistRanker.rank(shortlist, digestConfig, scorer)
+            val mode = if (ranker.reactionLogOnly) "LOG-ONLY" else "APPLIED"
+            val impact = AffinityImpact.describe(baseline.kept, reRanked.kept)
+            if (impact == null) {
+                logger.info {
+                    "[Category:$category][AffinityRank][$mode] no effect on selection this cycle " +
+                        "(weight=${ranker.reactionWeight}, kept=${baseline.kept.size})"
+                }
+            } else {
+                val verb = if (ranker.reactionLogOnly) "WOULD change selection" else "changed selection"
+                val contributions = reRanked.kept.union(baseline.kept)
+                    .map { it to ShortlistRanker.affinityContribution(it, digestConfig, scorer) }
+                    .filter { kotlin.math.abs(it.second) >= 0.05 }
+                    .sortedByDescending { it.second }
+                    .joinToString(", ") { (item, c) -> "'${item.eventKey}'=${"%+.2f".format(c)}pts" }
+                logger.info {
+                    "[Category:$category][AffinityRank][$mode] $verb: $impact " +
+                        "(weight=${ranker.reactionWeight}; contributions: $contributions)"
+                }
+            }
+            if (ranker.reactionLogOnly) baseline.kept else reRanked.kept
+        } catch (e: Exception) {
+            logger.warn(e) { "[Category:$category][AffinityRank] failed — using baseline ranking" }
+            baseline.kept
+        }
+    }
+
+    /** One category's affinity rows as a scorer; separate fun so tests can seed the table. */
+    private fun affinityScoresFor(category: String): AffinityScores =
+        AffinityScores.of(db.fetchAudienceAffinity().filter { it.category == category })
 
     private fun selectClient(): SelectedClient {
         val requestNumber = requestCounter.incrementAndGet()

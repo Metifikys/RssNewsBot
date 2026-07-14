@@ -193,7 +193,19 @@ class NewsBot(
                 "[Affinity] reaction-feedback aggregation enabled: attribution=${fb.attributionHours}h " +
                     "lookback=${fb.lookbackDays}d halflife=${fb.halflifeDays}d k=${fb.shrinkageK} " +
                     "minSamples=${fb.minSamples} minVolume=${fb.minVolume} " +
-                    "recompute every ${fb.recomputeHours}h (phase 1: aggregation only)"
+                    "recompute every ${fb.recomputeHours}h"
+            }
+            val rankCats = config.categories.mapNotNull { (n, c) ->
+                val r = c.dedup?.digest?.ranker ?: return@mapNotNull null
+                if (r.reactionWeight > 0.0) {
+                    val mode = if (r.reactionLogOnly) "LOG-ONLY" else "APPLIED"
+                    "$n[weight=${r.reactionWeight} boost=±${r.maxAffinityBoost} $mode]"
+                } else null
+            }
+            if (rankCats.isNotEmpty()) {
+                logger.info { "[AffinityRank] reaction term active for ${rankCats.size} category(ies): $rankCats" }
+            } else {
+                logger.info { "[AffinityRank] no category sets ranker.reactionWeight — selection unaffected (phase 1 aggregation only)" }
             }
         }
         val overrides = config.categories.flatMap { (n, c) ->

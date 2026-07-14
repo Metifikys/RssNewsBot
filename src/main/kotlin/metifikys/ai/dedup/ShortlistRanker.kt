@@ -41,7 +41,17 @@ object ShortlistRanker {
         }
     }
 
-    fun rank(shortlist: List<ShortlistItem>, config: DigestConfig): Result {
+    /**
+     * @param affinityScorer optional audience-affinity source (reaction feedback, phase 2):
+     *        returns an item's raw centered affinity (see `audience_affinity.score`). When
+     *        non-null and `ranker.reactionWeight > 0`, the composite gains a clamped term —
+     *        see [affinityContribution]. Null (default) keeps the pre-phase-2 behavior bit-for-bit.
+     */
+    fun rank(
+        shortlist: List<ShortlistItem>,
+        config: DigestConfig,
+        affinityScorer: ((ShortlistItem) -> Double)? = null
+    ): Result {
         val dropped = mutableListOf<Dropped>()
 
         // 1. Floor filter — drop weak digestFit unless newsworthiness saves it.
@@ -57,7 +67,7 @@ object ShortlistRanker {
         val weightNews = config.ranker.newsworthinessWeight.coerceIn(0.0, 1.0)
         val weightFit = 1.0 - weightNews
         val scored = survivedFloor
-            .map { it to composite(it, weightNews, weightFit) }
+            .map { it to composite(it, weightNews, weightFit) + affinityContribution(it, config, affinityScorer) }
             .sortedWith(
                 compareByDescending<Pair<ShortlistItem, Double>> { it.second }
                     .thenBy { eventTypeRank(it.first.eventType) }
@@ -98,6 +108,24 @@ object ShortlistRanker {
 
     private fun composite(item: ShortlistItem, weightNews: Double, weightFit: Double): Double =
         weightNews * effectiveNewsworthiness(item) + weightFit * effectiveDigestFit(item)
+
+    /**
+     * Audience-affinity term in composite points: raw centered affinity (±~0.5) scaled ×10
+     * onto the 0–10 composite scale, weighted by `ranker.reactionWeight`, clamped to
+     * ±`ranker.maxAffinityBoost`. 0 whenever the scorer is absent or the weight is 0.
+     * Public so the caller can log per-item contributions next to the ranking diff.
+     */
+    fun affinityContribution(
+        item: ShortlistItem,
+        config: DigestConfig,
+        affinityScorer: ((ShortlistItem) -> Double)?
+    ): Double {
+        if (affinityScorer == null) return 0.0
+        val weight = config.ranker.reactionWeight
+        if (weight <= 0.0) return 0.0
+        val boost = config.ranker.maxAffinityBoost
+        return (weight * 10.0 * affinityScorer(item)).coerceIn(-boost, boost)
+    }
 
     /** Falls back to legacy `importance` when the LLM didn't emit `newsworthiness`. */
     private fun effectiveNewsworthiness(item: ShortlistItem): Int =

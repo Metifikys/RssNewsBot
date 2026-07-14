@@ -254,6 +254,15 @@ categories:
         ranker:
           enabled: true
           newsworthinessWeight: 0.6     # digestFit weight is (1 - this)
+          # Reaction-feedback term (phase 2; requires feedback.enabled). An item's audience
+          # affinity (±~0.5, from audience_affinity) adds reactionWeight×10×score composite
+          # points, clamped to ±maxAffinityBoost. Roll out in two steps:
+          #   1. reactionWeight: 0.15 with reactionLogOnly: true — watch [AffinityRank][LOG-ONLY]
+          #      lines for a few cycles (they show exactly what WOULD change and why);
+          #   2. flip reactionLogOnly: false — the same lines switch to [APPLIED].
+          reactionWeight: 0.0           # 0 = term off (default)
+          reactionLogOnly: true         # true = compute + log, but publish the baseline ranking
+          maxAffinityBoost: 1.0         # max composite points affinity may move one item
         minStrongItems: 4               # skip publish if fewer strong items survive
         maxDigestItems: 6               # hard cap on final shortlist
         maxWaitHours: 4                 # if no digest for this long, relax minStrongItems

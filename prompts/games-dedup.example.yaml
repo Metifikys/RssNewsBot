@@ -2,8 +2,12 @@
 # Copy to prompts/games-dedup.yaml and point categories.games.dedup.promptFile at it.
 #
 # Supported placeholders:
-#   extract.user  — {{CURRENT_BATCH_JSON}}, {{PREVIOUSLY_COVERED_EVENTS_JSON}},
-#                   {{CATEGORY}}, {{EMOJI}}
+#   extract.user / extract.system —
+#     {{CURRENT_BATCH_JSON}}, {{PREVIOUSLY_COVERED_EVENTS_JSON}}, {{CATEGORY}}, {{EMOJI}},
+#     {{AUDIENCE_SIGNALS}} — optional reaction-feedback block (liked/disliked franchises and
+#     event types from channel reactions). Resolves to "" until enough reactions accumulate
+#     or when feedback is disabled, so it is always safe to include. Suggested placement:
+#     extract.user, right before CURRENT_BATCH.
 #   render.user   — {{SHORTLIST_JSON}}, {{CATEGORY}}, {{EMOJI}}
 
 extract:
@@ -108,6 +112,8 @@ extract:
 
     PREVIOUSLY_COVERED_EVENTS:
     {{PREVIOUSLY_COVERED_EVENTS_JSON}}
+
+    {{AUDIENCE_SIGNALS}}
 
     CURRENT_BATCH:
     {{CURRENT_BATCH_JSON}}

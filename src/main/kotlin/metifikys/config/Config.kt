@@ -526,7 +526,29 @@ data class RankerConfig(
     /** Master switch. When false, the ranker is skipped and Step 1's shortlist is used as-is. */
     val enabled: Boolean = false,
     /** Weight on `newsworthiness` in the composite score; `digestFit` weight is (1 - this). */
-    val newsworthinessWeight: Double = 0.6
+    val newsworthinessWeight: Double = 0.6,
+    /**
+     * Weight of the audience-affinity term (reaction feedback, phase 2). An item's raw
+     * affinity (roughly ±0.5, see `audience_affinity.score`) is scaled by ×10 onto the
+     * 0–10 composite scale, multiplied by this weight, and clamped to ±[maxAffinityBoost].
+     * 0 (default) disables the term entirely — no lookups, no logs. Requires
+     * `feedback.enabled=true` to have data to read. Suggested live value: 0.1–0.15.
+     */
+    val reactionWeight: Double = 0.0,
+    /**
+     * When true (default), the affinity term is computed and its would-be effect on the
+     * shortlist is logged (`[AffinityRank][LOG-ONLY]`), but the published digest still uses
+     * the baseline ranking. Flip to false after a few observed cycles to actually apply it.
+     */
+    val reactionLogOnly: Boolean = true,
+    /**
+     * Hard cap (composite points, 0–10 scale) on how far affinity may push a single item
+     * up or down. Two items can therefore swing at most 2×this relative to each other
+     * (one clamped up, the other clamped down) — with the default 1.0, any composite gap
+     * above 2.0 points (≥ ~3.3 newsworthiness points at wNews=0.6) is untouchable by
+     * audience taste.
+     */
+    val maxAffinityBoost: Double = 1.0
 )
 
 /**
@@ -747,6 +769,18 @@ object ConfigLoader {
                     require(config.codexCli != null) {
                         "Category '$name' feed '${feed.url}' requested Codex CLI summarization but no codexCli: block is configured"
                     }
+                }
+            }
+            category.dedup?.digest?.ranker?.let { r ->
+                require(r.reactionWeight in 0.0..1.0) {
+                    "Category '$name' ranker.reactionWeight must be in [0.0, 1.0] (got ${r.reactionWeight})"
+                }
+                require(r.maxAffinityBoost >= 0.0) {
+                    "Category '$name' ranker.maxAffinityBoost must be >= 0 (got ${r.maxAffinityBoost})"
+                }
+                require(r.reactionWeight == 0.0 || config.feedback.enabled) {
+                    "Category '$name' sets ranker.reactionWeight=${r.reactionWeight} but feedback.enabled=false — " +
+                        "the affinity table is never populated, so the term would silently read zeros. Enable feedback: or drop the weight."
                 }
             }
             category.semanticDedup?.let { sd ->
