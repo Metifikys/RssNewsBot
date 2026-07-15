@@ -1,6 +1,7 @@
 package metifikys.digest
 
 import com.sun.net.httpserver.HttpServer
+import io.mockk.every
 import io.mockk.mockk
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
@@ -68,11 +69,12 @@ class DigestCycleTest {
         config: AppConfig,
         fetcher: RssFetcher,
         processor: CategoryProcessor,
-        errorLog: CycleErrorLog = CycleErrorLog()
+        errorLog: CycleErrorLog = CycleErrorLog(),
+        articleFetcher: ArticleFetcher = ArticleFetcher(RssFetcher(enforceUrlValidation = false))
     ) = DigestCycle(
         config = config,
         fetcher = fetcher,
-        articleFetcher = ArticleFetcher(RssFetcher(enforceUrlValidation = false)),
+        articleFetcher = articleFetcher,
         articleSummarizer = ArticleSummarizer(config, config.categories, mockk()),
         db = db,
         llmClientsFactory = mockk(),
@@ -165,6 +167,31 @@ class DigestCycleTest {
         } finally {
             serverA.stop(0)
             serverB.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `mid-pipeline interrupt keeps the insert but skips the digest`() {
+        val server = serverRss(rssWithItems("https://example.com/i1"))
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val config = cfg(mapOf("tech" to cat(urlOf(server))))
+            val processor = RecordingCategoryProcessor(config, db)
+            // Simulate the cycle barrier interrupting the worker during enrichment: the
+            // best-effort stages swallow the interrupt and only restore the flag.
+            val interruptingFetcher = mockk<ArticleFetcher>()
+            every { interruptingFetcher.enrich(any()) } answers {
+                Thread.currentThread().interrupt()
+                firstArg()
+            }
+            cycle(config, fetcher, processor, articleFetcher = interruptingFetcher).runCycle()
+
+            assertTrue(Thread.interrupted(), "interrupt flag must survive the pipeline")  // also clears it
+            assertTrue(processor.calls.isEmpty(), "digest must not run on a cancelled worker")
+            assertEquals(1, db.fetchReadyForDigest("tech").size, "fetched articles must still be inserted")
+        } finally {
+            server.stop(0)
             fetcher.shutdown()
         }
     }

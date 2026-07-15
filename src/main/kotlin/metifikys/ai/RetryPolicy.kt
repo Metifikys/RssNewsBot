@@ -9,6 +9,11 @@ package metifikys.ai
  * treated as a retryable failure. The old copies swallowed it, so a `shutdownNow()` on the executor
  * could not actually stop a client mid-retry — the loop just kept going. See BUG-008 / phase-2 notes.
  *
+ * The same applies to interrupts that libraries translate into other exceptions (okhttp/okio throw
+ * [java.io.InterruptedIOException] with the interrupt flag still set): any failure on an already-
+ * interrupted thread propagates without a retry. A plain [java.net.SocketTimeoutException] with a
+ * clear flag is a genuine timeout and remains retryable.
+ *
  * Per-site policy is passed in so each caller keeps its own semantics:
  *  - [isFatal] marks exceptions that must surface immediately without a retry (e.g. billing/quota,
  *    provider-specific non-retryable errors, an OpenAI error flagged non-retryable).
@@ -34,6 +39,11 @@ object RetryPolicy {
                 throw e
             } catch (e: Throwable) {
                 if (isFatal(e)) throw e
+                // An interrupt often surfaces as a translated exception with the flag still set
+                // (okhttp/okio throw InterruptedIOException, NIO throws ClosedByInterruptException).
+                // A cancelled worker must never retry. A plain SocketTimeoutException with a clear
+                // flag is a genuine timeout and still retries.
+                if (Thread.currentThread().isInterrupted()) throw e
                 attempt++
                 if (attempt > maxRetries) throw e
                 onRetry(attempt, e)

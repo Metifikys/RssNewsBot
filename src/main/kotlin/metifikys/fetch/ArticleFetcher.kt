@@ -165,7 +165,13 @@ class ArticleFetcher(
                 article.copy(imageUrl = image)
             }
         } catch (e: Exception) {
-            logger.error(e) { "[ArticleFetcher] Failed to fetch preview image for '${article.link}'" }
+            // Worker interrupted (cycle deadline / pool shutdownNow) — okhttp surfaces it as
+            // InterruptedIOException with the flag still set. Cancellation, not a fetch failure.
+            if (Thread.currentThread().isInterrupted()) {
+                logger.debug { "[ArticleFetcher] Preview image fetch cancelled for '${article.link}'" }
+            } else {
+                logger.error(e) { "[ArticleFetcher] Failed to fetch preview image for '${article.link}'" }
+            }
             article
         }
     }
@@ -202,7 +208,11 @@ class ArticleFetcher(
                 article.copy(description = extracted.take(maxContentLength))
             }
         } catch (e: Exception) {
-            logger.error(e) { "[ArticleFetcher] Failed to fetch '${article.link}'" }
+            if (Thread.currentThread().isInterrupted()) {
+                logger.debug { "[ArticleFetcher] Content fetch cancelled for '${article.link}'" }
+            } else {
+                logger.error(e) { "[ArticleFetcher] Failed to fetch '${article.link}'" }
+            }
             article
         }
     }
@@ -237,7 +247,11 @@ class ArticleFetcher(
                 body
             }
         } catch (e: Exception) {
-            logger.error(e) { "[ArticleFetcher] markdown.new failed for $url" }
+            if (Thread.currentThread().isInterrupted()) {
+                logger.debug { "[ArticleFetcher] markdown.new cancelled for $url" }
+            } else {
+                logger.error(e) { "[ArticleFetcher] markdown.new failed for $url" }
+            }
             null
         }
     }

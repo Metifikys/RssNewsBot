@@ -54,6 +54,9 @@ class SemanticDedupDetector(
             }
         } catch (e: BillingException) {
             logger.warn { "[SemanticDedup] billing limit reached — detector skipped: ${e.message}" }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn { "[SemanticDedup] cancelled (cycle deadline / shutdown) — detector skipped" }
         } catch (e: Exception) {
             logger.warn(e) { "[SemanticDedup] detector failed; cycle continues" }
         }
@@ -79,8 +82,18 @@ class SemanticDedupDetector(
         } catch (e: BillingException) {
             // Surface to the outer catch — billing is a global concern, no point retrying other categories
             throw e
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn { "[SemanticDedup] cat=$categoryName: cancelled (cycle deadline / shutdown) — skipping" }
+            return
         } catch (e: Exception) {
-            logger.warn(e) { "[SemanticDedup] cat=$categoryName: embed call failed; skipping category" }
+            // okhttp translates an interrupt into InterruptedIOException (flag stays set) —
+            // that's cancellation, not an embedding failure worth a stack trace.
+            if (Thread.currentThread().isInterrupted()) {
+                logger.warn { "[SemanticDedup] cat=$categoryName: cancelled (cycle deadline / shutdown) — skipping" }
+            } else {
+                logger.warn(e) { "[SemanticDedup] cat=$categoryName: embed call failed; skipping category" }
+            }
             return
         }
         if (vectors.size != resolved.size) {

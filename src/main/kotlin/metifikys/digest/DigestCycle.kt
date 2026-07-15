@@ -134,6 +134,14 @@ class DigestCycle(
             val rawArticles = fetcher.fetchCategory(name, catCfg.feeds, fetchDeadlineNanos)
             logger.info { "[Cycle:$name] Fetched ${rawArticles.size} article(s)." }
 
+            // The fetch stage swallows interrupts by design (returns what it got, flag restored).
+            // A cancelled worker stops here: nothing was inserted yet and the feed content is
+            // still in the RSS next cycle, so this costs a delay, never data.
+            if (Thread.currentThread().isInterrupted()) {
+                logger.warn { "[Cycle:$name] cancelled during fetch — deferring to the next cycle." }
+                return
+            }
+
             // Dedup BEFORE enrichment: skip articles whose links are already in DB
             val existingLinks = db.findExistingLinks(rawArticles.map { it.link })
             val newRawArticles = rawArticles.filter { it.link !in existingLinks }
@@ -149,6 +157,14 @@ class DigestCycle(
 
             val inserted = db.insertArticles(articles)
             logger.info { "[Cycle:$name] Inserted $inserted new article(s) into DB." }
+
+            // enrich/summarize/preview are best-effort and swallow interrupts (partial results,
+            // flag restored). Keep the cheap DB insert above, but skip the embed + digest stages
+            // on a cancelled worker — inserted articles wait for the next cycle.
+            if (Thread.currentThread().isInterrupted()) {
+                logger.warn { "[Cycle:$name] cancelled — skipping dedup/digest; inserted articles wait for the next cycle." }
+                return
+            }
 
             // Log-only embedding dedup detector. Mutates nothing; groups by category
             // internally, so a per-category subset is fine.

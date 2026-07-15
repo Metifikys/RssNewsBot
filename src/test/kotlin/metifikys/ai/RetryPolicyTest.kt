@@ -1,5 +1,8 @@
 package metifikys.ai
 
+import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
+import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -64,12 +67,53 @@ class RetryPolicyTest {
     }
 
     @Test
-    fun `InterruptedException during backoff sleep aborts the loop`() {
+    fun `interrupt translated into InterruptedIOException aborts instead of retrying`() {
         var calls = 0
-        Thread.currentThread().interrupt()   // makes the backoff Thread.sleep throw immediately
-        assertFailsWith<InterruptedException> {
+        Thread.currentThread().interrupt()   // okhttp/okio throw InterruptedIOException with the flag still set
+        assertFailsWith<InterruptedIOException> {
+            RetryPolicy.retry(maxRetries = 5, delayMillis = { _, _ -> 0 }) {
+                calls++
+                throw InterruptedIOException("interrupted")
+            }
+        }
+        assertEquals(1, calls)                // cancellation — no retry
+        assertTrue(Thread.interrupted(), "flag must stay set; clear it so it doesn't leak")
+    }
+
+    @Test
+    fun `plain socket timeout with a clear interrupt flag still retries`() {
+        var calls = 0
+        assertFailsWith<SocketTimeoutException> {
+            RetryPolicy.retry(maxRetries = 2, delayMillis = { _, _ -> 0 }) {
+                calls++
+                throw SocketTimeoutException("timeout")
+            }
+        }
+        assertEquals(3, calls)                // initial + 2 retries — genuine timeouts keep retrying
+    }
+
+    @Test
+    fun `failure on an already-interrupted thread propagates as-is without retry`() {
+        var calls = 0
+        Thread.currentThread().interrupt()
+        assertFailsWith<RuntimeException> {
             RetryPolicy.retry(maxRetries = 5, delayMillis = { _, _ -> 10 }) {
                 calls++; throw RuntimeException("boom")
+            }
+        }
+        assertEquals(1, calls)                // cancellation — no retry, no backoff sleep
+        assertTrue(Thread.interrupted())      // flag preserved; clear it so it doesn't leak
+    }
+
+    @Test
+    fun `interrupt arriving during the backoff sleep aborts the loop`() {
+        var calls = 0
+        val worker = Thread.currentThread()
+        assertFailsWith<InterruptedException> {
+            RetryPolicy.retry(maxRetries = 5, delayMillis = { _, _ -> 10_000 }) {
+                calls++
+                thread { Thread.sleep(250); worker.interrupt() }   // lands mid-backoff
+                throw RuntimeException("boom")
             }
         }
         assertEquals(1, calls)                // interrupted during the first backoff — no 2nd attempt
