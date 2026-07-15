@@ -35,7 +35,7 @@ private val logger = KotlinLogging.logger {}
  *
  * Both routes deliver via [DigestDeliverer] so the LLM input is identical regardless of API.
  */
-class CategoryProcessor(
+open class CategoryProcessor(
     private val config: AppConfig,
     private val db: NewsDatabase,
     private val llmClientsFactory: LlmClientsFactory,
@@ -110,6 +110,13 @@ class CategoryProcessor(
             pool.shutdown()
         }
     }
+
+    /**
+     * Single-category entry point for the per-category digest pipeline: runs the category
+     * inline on the CALLING thread (the pipeline worker), guard included — an unexpected
+     * throw is recorded, never propagated. `open` as the test seam for DigestCycleTest.
+     */
+    open fun processSingle(name: String, articles: List<Article>) = runCategorySafely(name, articles)
 
     /**
      * Runs one category's Step 1 + Step 2 with a guard so an unexpected throw is contained to this

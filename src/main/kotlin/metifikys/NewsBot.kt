@@ -38,7 +38,14 @@ private val logger = KotlinLogging.logger {}
  */
 class NewsBot(
     private val config: AppConfig,
-    fetcher: RssFetcher = RssFetcher(allowPrivateHosts = true),
+    private val fetcher: RssFetcher = RssFetcher(
+        allowPrivateHosts = true,
+        maxAttempts = config.fetcher.maxAttempts,
+        retryDelayMs = config.fetcher.retryDelaySeconds * 1000,
+        maxConcurrentFetches = config.fetcher.maxConcurrentFetches,
+        fetchDeadlineMs = config.fetcher.fetchDeadlineSeconds * 1000
+    ),
+    // Validation-only instance (validateFeedUrl); its lazy fetch pool never starts.
     articleFetcher: ArticleFetcher = ArticleFetcher(RssFetcher(allowPrivateHosts = true)),
     private val db: NewsDatabase = NewsDatabase(config.database.path),
     sender: TelegramSender = TelegramSender(config.telegram.botToken),
@@ -157,6 +164,11 @@ class NewsBot(
             "[LLM] sync provider: $syncProvider; step1 extractor: $extractorProvider; " +
                 "batch provider: openai(${config.openai.batchModel})"
         }
+        logger.info {
+            "[Fetch] queue model: maxConcurrent=${config.fetcher.maxConcurrentFetches}, " +
+                "attempts=${config.fetcher.maxAttempts}, retryDelay=${config.fetcher.retryDelaySeconds}s, " +
+                "deadline=${config.fetcher.fetchDeadlineSeconds}s"
+        }
         val summarizeFeeds = config.categories.flatMap { (cat, cfg) ->
             cfg.feeds.filter { !it.summarize.isNullOrBlank() }.map { "$cat:${it.url}=${it.summarize}" }
         }
@@ -235,6 +247,7 @@ class NewsBot(
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
             }
+            fetcher.shutdown()
             logger.info { "[Shutdown] Done." }
         }, "shutdown-hook"))
 

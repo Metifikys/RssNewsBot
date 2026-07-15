@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.fasterxml.jackson.databind.node.TextNode
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
 import java.time.DayOfWeek
 import java.time.LocalTime
@@ -156,6 +157,7 @@ data class AppConfig(
     val codexCli: CodexCliConfig? = null,
     val database: DatabaseConfig,
     val scheduler: SchedulerConfig,
+    val fetcher: FetcherConfig = FetcherConfig(),
     val categories: Map<String, CategoryConfig>,
     val summaryHistory: SummaryHistoryConfig = SummaryHistoryConfig(),
     val processing: ProcessingConfig = ProcessingConfig(),
@@ -320,6 +322,24 @@ data class DatabaseConfig(
 
 data class SchedulerConfig(
     val intervalMinutes: Long
+)
+
+/**
+ * RSS fetch-stage tuning. The fetcher runs feeds through a shared bounded pool: one HTTP
+ * attempt per pass, retryable failures re-enter the queue after a delay instead of
+ * sleeping in place, and the whole stage is capped by a wall-clock deadline. A feed that
+ * still fails when the deadline hits is skipped for this cycle — link-dedup picks its
+ * articles up next cycle, so the cost of a dead feed is delay, never data loss.
+ */
+data class FetcherConfig(
+    /** Max simultaneous HTTP requests across ALL categories (feeds usually share one RSSHub host). */
+    val maxConcurrentFetches: Int = 3,
+    /** Total attempts per feed per cycle (first try + requeued retries). */
+    val maxAttempts: Int = 3,
+    /** Fallback delay before a retryable feed re-enters the queue; a server Retry-After wins. */
+    val retryDelaySeconds: Long = 15,
+    /** Wall-clock budget for one cycle's whole fetch stage; stragglers are deferred to the next cycle. */
+    val fetchDeadlineSeconds: Long = 240
 )
 
 /**
@@ -614,6 +634,8 @@ data class SemanticDedupConfig(
     val hardThreshold: Double? = null
 )
 
+private val logger = KotlinLogging.logger {}
+
 object ConfigLoader {
     /** Max links in an `llm.<slot>.fallback` chain (primary + up to this many fallbacks). */
     private const val MAX_FALLBACK_DEPTH = 3
@@ -692,6 +714,26 @@ object ConfigLoader {
         }
         require(config.processing.llmCallRetentionDays >= 1) {
             "processing.llmCallRetentionDays must be >= 1 (got ${config.processing.llmCallRetentionDays})"
+        }
+
+        config.fetcher.let { f ->
+            require(f.maxConcurrentFetches >= 1) {
+                "fetcher.maxConcurrentFetches must be >= 1 (got ${f.maxConcurrentFetches})"
+            }
+            require(f.maxAttempts >= 1) { "fetcher.maxAttempts must be >= 1 (got ${f.maxAttempts})" }
+            require(f.retryDelaySeconds >= 0) {
+                "fetcher.retryDelaySeconds must be >= 0 (got ${f.retryDelaySeconds})"
+            }
+            require(f.fetchDeadlineSeconds >= 10) {
+                "fetcher.fetchDeadlineSeconds must be >= 10 (got ${f.fetchDeadlineSeconds})"
+            }
+            if (f.fetchDeadlineSeconds > config.scheduler.intervalMinutes * 60) {
+                logger.warn {
+                    "fetcher.fetchDeadlineSeconds (${f.fetchDeadlineSeconds}s) exceeds scheduler.intervalMinutes " +
+                        "(${config.scheduler.intervalMinutes}m) — cycles will run back-to-back (never overlapping, " +
+                        "the scheduler is single-threaded), but the effective interval stretches"
+                }
+            }
         }
         // Retention windows must not truncate data the weekly roundup or the dedup detector needs.
         run {

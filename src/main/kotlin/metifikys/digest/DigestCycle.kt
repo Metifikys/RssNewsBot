@@ -14,7 +14,10 @@ import metifikys.fetch.RssFetcher
 import metifikys.model.ShortlistItem
 import metifikys.telegram.StatusPoster
 import java.time.LocalDateTime
+import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
 
@@ -55,6 +58,17 @@ class DigestCycle(
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
+    private companion object {
+        /**
+         * Per-cycle ceiling for the category pipeline barrier, added on top of the fetch
+         * deadline. Mirrors CategoryProcessor's fan-out deadline: comfortably above the inner
+         * LLM timeouts (CLI 300s, Anthropic callTimeout 5min, OpenAI read windows). On expiry,
+         * unfinished pipeline workers are cancelled; their articles stay PROCESSING and are
+         * reclaimed next cycle via the stale-timeout.
+         */
+        const val CATEGORY_DEADLINE_MINUTES = 15L
+    }
+
     fun runCycle() {
         logger.info { "=== Digest cycle started at ${LocalDateTime.now()} ===" }
         try {
@@ -68,43 +82,100 @@ class DigestCycle(
             // /status). Internally throttled and exception-safe — cannot break the cycle.
             affinityAggregator?.recomputeIfStale()
 
-            val rawArticles = fetcher.fetchAll(config.categories)
-            logger.info { "Fetched ${rawArticles.size} articles total." }
+            // One shared wall-clock deadline for the whole cycle's fetch stage — every
+            // category's feeds go through the fetcher's bounded pool, so the budget is
+            // global by design (the pool caps pressure on the shared RSSHub host).
+            val fetchDeadlineNanos = fetcher.newFetchDeadline()
+            val categories = config.categories.entries.toList()
 
-            // Dedup BEFORE enrichment: skip articles whose links are already in DB
-            val existingLinks = db.findExistingLinks(rawArticles.map { it.link })
-            val newRawArticles = rawArticles.filter { it.link !in existingLinks }
-            logger.info { "After dedup: ${newRawArticles.size} new article(s) (${existingLinks.size} already in DB)." }
-
-            val enriched = articleFetcher.enrich(newRawArticles)
-            val summarized = articleSummarizer.summarize(enriched)
-
-            // Fill preview images (og:image) for image-enabled categories whose RSS entries
-            // carried no image, so the photo+caption delivery path has something to post.
-            val articles = fillPreviewImages(summarized)
-
-            val inserted = db.insertArticles(articles)
-            logger.info { "Inserted $inserted new articles into DB." }
-
-            // Log-only embedding dedup detector. Mutates nothing; safe to call
-            // unconditionally — the detector itself filters by per-category opt-in.
-            semanticDedupDetector?.detectAndLog(articles)
-
-            val byCategory = db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours)
-            if (byCategory.isEmpty()) {
-                logger.info { "No ready articles. Skipping digest." }
+            // Common case in tests / small setups: one category → run inline, skip the pool.
+            if (categories.size == 1) {
+                val (name, catCfg) = categories.first()
+                runCategoryPipeline(name, catCfg, fetchDeadlineNanos)
                 return
             }
 
-            categoryProcessor.process(byCategory)
+            // Fan out one fully independent pipeline per category: fetch → dedup → enrich →
+            // summarize → insert → digest. A dead feed or a stuck LLM call in one category
+            // costs that category only; the others fetch and post on their own clock.
+            val concurrency = minOf(categories.size, config.processing.maxConcurrentCategories).coerceAtLeast(1)
+            val pool = Executors.newFixedThreadPool(concurrency) { r ->
+                Thread(r, "digest-worker").also { it.isDaemon = true }
+            }
+            try {
+                val tasks = categories.map { (name, catCfg) ->
+                    Callable { runCategoryPipeline(name, catCfg, fetchDeadlineNanos) }
+                }
+                // Barrier deadline = fetch budget + the old category fan-out ceiling, so the
+                // single-thread scheduler can never be wedged by a pathological hang.
+                val barrierSeconds = config.fetcher.fetchDeadlineSeconds + CATEGORY_DEADLINE_MINUTES * 60
+                pool.invokeAll(tasks, barrierSeconds, TimeUnit.SECONDS)
+            } finally {
+                pool.shutdown()
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn { "Digest cycle interrupted — shutting down." }
         } catch (e: Exception) {
             errorLog.recordError(null, "[Cycle]", e)
             logger.error(e) { "Digest cycle error" }
         } finally {
             // One-way status: post current snapshot to admin chat, deleting the previous post.
-            // In `finally` so it runs on the early "no ready articles" return as well.
+            // In `finally` so it runs on the early single-category return as well.
             statusPoster?.post()
             logger.info { "=== Digest cycle finished ===" }
+        }
+    }
+
+    /**
+     * Full ingest → digest pipeline for ONE category: fetch its feeds → link-dedup → enrich →
+     * summarize → preview images → insert → semantic-dedup log → ready query → process.
+     * Exceptions are contained here, so a failing category never touches its siblings.
+     */
+    private fun runCategoryPipeline(
+        name: String,
+        catCfg: metifikys.config.CategoryConfig,
+        fetchDeadlineNanos: Long
+    ) {
+        try {
+            val rawArticles = fetcher.fetchCategory(name, catCfg.feeds, fetchDeadlineNanos)
+            logger.info { "[Cycle:$name] Fetched ${rawArticles.size} article(s)." }
+
+            // Dedup BEFORE enrichment: skip articles whose links are already in DB
+            val existingLinks = db.findExistingLinks(rawArticles.map { it.link })
+            val newRawArticles = rawArticles.filter { it.link !in existingLinks }
+            logger.info { "[Cycle:$name] After dedup: ${newRawArticles.size} new article(s) (${existingLinks.size} already in DB)." }
+
+            val enriched = articleFetcher.enrich(newRawArticles)
+            val summarized = articleSummarizer.summarize(enriched)
+
+            // Fill preview images (og:image) for image-enabled categories whose RSS entries
+            // carried no image. The helper filters by category internally, so handing it a
+            // single category's articles is safe.
+            val articles = fillPreviewImages(summarized)
+
+            val inserted = db.insertArticles(articles)
+            logger.info { "[Cycle:$name] Inserted $inserted new article(s) into DB." }
+
+            // Log-only embedding dedup detector. Mutates nothing; groups by category
+            // internally, so a per-category subset is fine.
+            semanticDedupDetector?.detectAndLog(articles)
+
+            val ready = db.fetchReadyForDigest(name, config.processing.staleTimeoutHours)
+            if (ready.isEmpty()) {
+                logger.info { "[Cycle:$name] No ready articles. Skipping digest." }
+                return
+            }
+
+            categoryProcessor.processSingle(name, ready)
+        } catch (e: InterruptedException) {
+            // Barrier cancellation or shutdown: keep the flag; articles left PROCESSING are
+            // reclaimed next cycle via the stale-timeout.
+            Thread.currentThread().interrupt()
+            logger.warn { "[Cycle:$name] pipeline interrupted." }
+        } catch (e: Exception) {
+            errorLog.recordError(name, "[Cycle:$name]", e)
+            logger.error(e) { "[Cycle:$name] pipeline failed — other categories unaffected." }
         }
     }
 

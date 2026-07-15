@@ -4,7 +4,12 @@ import com.sun.net.httpserver.HttpServer
 import metifikys.config.CategoryConfig
 import metifikys.config.FeedConfig
 import java.net.InetSocketAddress
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -14,7 +19,7 @@ class RssFetcherTest {
 
     // Validation OFF for tests that spin up a local HTTP server for fixture feeds.
     // Short retry delays to keep tests fast.
-    private val fetcher = RssFetcher(enforceUrlValidation = false, maxRetries = 1, retryDelayMs = 0)
+    private val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
 
     @Test
     fun `fetchFeed returns emptyList on unreachable URL`() {
@@ -287,7 +292,7 @@ class RssFetcherTest {
     @Test
     fun `fetchFeed retries on 503 then parses the feed`() {
         val rss = rssWithItems("https://example.com/1")
-        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxRetries = 3, retryDelayMs = 0)
+        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 3, retryDelayMs = 0)
         withFlakyFeed(rss, failStatus = 503, failTimes = 2) { url ->
             val result = retryFetcher.fetchFeed(FeedConfig(url), "tech")
             assertEquals(1, result.size)
@@ -298,7 +303,7 @@ class RssFetcherTest {
     @Test
     fun `fetchFeed retries on 429 honoring Retry-After then parses the feed`() {
         val rss = rssWithItems("https://example.com/1")
-        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxRetries = 3, retryDelayMs = 0)
+        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 3, retryDelayMs = 0)
         // Retry-After: 0 keeps the test instant while still exercising the header-parse path.
         withFlakyFeed(rss, failStatus = 429, failTimes = 1, retryAfter = "0") { url ->
             val result = retryFetcher.fetchFeed(FeedConfig(url), "tech")
@@ -307,13 +312,174 @@ class RssFetcherTest {
     }
 
     @Test
-    fun `fetchFeed gives up after maxRetries of 503 and returns emptyList`() {
+    fun `fetchFeed gives up after maxAttempts of 503 and returns emptyList`() {
         val rss = rssWithItems("https://example.com/1")
-        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxRetries = 2, retryDelayMs = 0)
+        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 2, retryDelayMs = 0)
         withFlakyFeed(rss, failStatus = 503, failTimes = 99) { url ->
             val result = retryFetcher.fetchFeed(FeedConfig(url), "tech")
             assertTrue(result.isEmpty())
         }
+    }
+
+    // ── queue model: non-blocking failures, deadline, concurrency cap ────────
+
+    @Test
+    fun `failing feed does not block other feeds in the queue`() {
+        val rss = rssWithItems("https://example.com/1")
+        val queueFetcher = RssFetcher(
+            enforceUrlValidation = false, maxAttempts = 3, retryDelayMs = 300,
+            maxConcurrentFetches = 1
+        )
+        val badAttemptTimes = mutableListOf<Long>()
+        val goodHitTime = AtomicLong(0)
+
+        val badServer = HttpServer.create(InetSocketAddress(0), 0)
+        badServer.createContext("/rss") { exchange ->
+            synchronized(badAttemptTimes) { badAttemptTimes.add(System.nanoTime()) }
+            exchange.sendResponseHeaders(503, -1)
+            exchange.close()
+        }
+        badServer.start()
+        val goodServer = HttpServer.create(InetSocketAddress(0), 0)
+        goodServer.createContext("/rss") { exchange ->
+            goodHitTime.compareAndSet(0, System.nanoTime())
+            exchange.sendResponseHeaders(200, rss.size.toLong())
+            exchange.responseBody.use { it.write(rss) }
+        }
+        goodServer.start()
+        try {
+            val categories = mapOf(
+                "tech" to CategoryConfig(
+                    emoji = "💻",
+                    feeds = listOf(
+                        FeedConfig("http://localhost:${badServer.address.port}/rss"),
+                        FeedConfig("http://localhost:${goodServer.address.port}/rss")
+                    ),
+                    channelId = "@tech"
+                )
+            )
+            val result = queueFetcher.fetchAll(categories)
+            // Bad feed keeps failing but the good one still comes through.
+            assertEquals(1, result.size)
+            // The good feed must be served BEFORE the bad feed's requeued second attempt —
+            // i.e. the failure freed the (single) pool slot instead of blocking it.
+            val secondBadAttempt = synchronized(badAttemptTimes) { badAttemptTimes.getOrNull(1) }
+            assertTrue(
+                secondBadAttempt == null || goodHitTime.get() < secondBadAttempt,
+                "good feed should be fetched before the bad feed's second attempt"
+            )
+        } finally {
+            badServer.stop(0)
+            goodServer.stop(0)
+            queueFetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `fetch deadline defers still-failing feeds instead of retrying past it`() {
+        val rss = rssWithItems("https://example.com/1")
+        val deadlineFetcher = RssFetcher(
+            enforceUrlValidation = false, maxAttempts = 99, retryDelayMs = 500, fetchDeadlineMs = 300
+        )
+        withFlakyFeed(rss, failStatus = 503, failTimes = 99) { url ->
+            val start = System.nanoTime()
+            val result = deadlineFetcher.fetchFeed(FeedConfig(url), "tech")
+            val elapsedMs = (System.nanoTime() - start) / 1_000_000
+            assertTrue(result.isEmpty())
+            assertTrue(elapsedMs < 5_000, "deadline should cap the fetch stage, took ${elapsedMs}ms")
+        }
+        deadlineFetcher.shutdown()
+    }
+
+    @Test
+    fun `feed is attempted exactly maxAttempts times`() {
+        val calls = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/rss") { exchange ->
+            calls.incrementAndGet()
+            exchange.sendResponseHeaders(503, -1)
+            exchange.close()
+        }
+        server.start()
+        val cappedFetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 2, retryDelayMs = 0)
+        try {
+            val result = cappedFetcher.fetchFeed(FeedConfig("http://localhost:${server.address.port}/rss"), "tech")
+            assertTrue(result.isEmpty())
+            assertEquals(2, calls.get())
+        } finally {
+            server.stop(0)
+            cappedFetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `maxConcurrentFetches bounds simultaneous requests`() {
+        val rss = rssWithItems("https://example.com/1")
+        val inFlight = AtomicInteger(0)
+        val maxInFlight = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        // The default HttpServer executor is single-threaded and would serialize requests,
+        // masking the very concurrency this test measures.
+        server.executor = Executors.newCachedThreadPool()
+        server.createContext("/rss") { exchange ->
+            val now = inFlight.incrementAndGet()
+            maxInFlight.updateAndGet { max -> maxOf(max, now) }
+            Thread.sleep(200)
+            inFlight.decrementAndGet()
+            exchange.sendResponseHeaders(200, rss.size.toLong())
+            exchange.responseBody.use { it.write(rss) }
+        }
+        server.start()
+        val boundedFetcher = RssFetcher(
+            enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0, maxConcurrentFetches = 2
+        )
+        try {
+            val url = "http://localhost:${server.address.port}/rss"
+            val categories = mapOf(
+                "tech" to CategoryConfig(
+                    emoji = "💻",
+                    feeds = List(6) { FeedConfig(url) },
+                    channelId = "@tech"
+                )
+            )
+            val result = boundedFetcher.fetchAll(categories)
+            assertEquals(6, result.size)
+            assertTrue(maxInFlight.get() <= 2, "observed ${maxInFlight.get()} concurrent requests, expected <= 2")
+        } finally {
+            server.stop(0)
+            boundedFetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `nextRetryDelayMs prefers Retry-After, clamps, and defers when past deadline`() {
+        assertEquals(5_000L, RssFetcher.nextRetryDelayMs(retryAfterMs = 5_000L, fallbackDelayMs = 15_000L, remainingMs = 100_000L))
+        assertEquals(15_000L, RssFetcher.nextRetryDelayMs(retryAfterMs = null, fallbackDelayMs = 15_000L, remainingMs = 100_000L))
+        assertEquals(300_000L, RssFetcher.nextRetryDelayMs(retryAfterMs = 999_999L, fallbackDelayMs = 15_000L, remainingMs = 1_000_000L))
+        assertEquals(null, RssFetcher.nextRetryDelayMs(retryAfterMs = null, fallbackDelayMs = 15_000L, remainingMs = 10_000L))
+    }
+
+    @Test
+    fun `interrupting the waiting thread returns promptly and restores the flag`() {
+        val rss = rssWithItems("https://example.com/1")
+        val slowFetcher = RssFetcher(
+            enforceUrlValidation = false, maxAttempts = 10, retryDelayMs = 60_000, fetchDeadlineMs = 600_000
+        )
+        withFlakyFeed(rss, failStatus = 503, failTimes = 99) { url ->
+            val flagRestored = AtomicBoolean(false)
+            val returned = CountDownLatch(1)
+            val t = Thread {
+                slowFetcher.fetchFeed(FeedConfig(url), "tech")
+                flagRestored.set(Thread.currentThread().isInterrupted)
+                returned.countDown()
+            }
+            t.start()
+            Thread.sleep(300) // let the first attempt fail and the 60s retry get queued
+            t.interrupt()
+            assertTrue(returned.await(5, TimeUnit.SECONDS), "fetchFeed should return promptly after interrupt")
+            assertTrue(flagRestored.get(), "interrupt flag should be restored")
+        }
+        slowFetcher.shutdown()
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

@@ -598,6 +598,43 @@ class NewsDatabase(dbPath: String) {
         }
     }
 
+    /**
+     * Single-category variant of [fetchReadyForDigestByCategory] — same readiness predicate
+     * and ordering, scoped to one category so per-category pipelines don't pull each
+     * other's articles.
+     */
+    fun fetchReadyForDigest(category: String, staleTimeoutHours: Long = 3): List<Article> {
+        val cutoff = LocalDateTime.now().minusHours(staleTimeoutHours)
+        return transaction {
+            ArticlesTable
+                .selectAll()
+                .where {
+                    (ArticlesTable.category eq category) and
+                        (
+                            (ArticlesTable.status eq ArticleStatus.UNPROCESSED.name) or
+                                (
+                                    (ArticlesTable.status eq ArticleStatus.PROCESSING.name) and
+                                        (ArticlesTable.processingStartedAt.isNull() or (ArticlesTable.processingStartedAt less cutoff))
+                                    )
+                            )
+                }
+                // BUG-015: deterministic, newest-first order so the prompt's article order is stable
+                // across runs. id DESC breaks ties when several rows share a pubDate.
+                .orderBy(ArticlesTable.pubDate to SortOrder.DESC, ArticlesTable.id to SortOrder.DESC)
+                .map {
+                    Article(
+                        category = it[ArticlesTable.category],
+                        title = it[ArticlesTable.title],
+                        link = it[ArticlesTable.link],
+                        description = it[ArticlesTable.description],
+                        pubDate = it[ArticlesTable.pubDate],
+                        imageUrl = it[ArticlesTable.imageUrl],
+                        summary = it[ArticlesTable.summary]
+                    )
+                }
+        }
+    }
+
     fun fetchProcessingByCategory(category: String): List<Article> {
         return transaction {
             ArticlesTable

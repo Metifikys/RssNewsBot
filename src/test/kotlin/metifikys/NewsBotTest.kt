@@ -77,6 +77,19 @@ class NewsBotTest {
         // Default: treat all articles as new (no existing links in DB)
         every { db.findExistingLinks(any()) } returns emptySet()
 
+        // The per-category pipeline fetches via fetchCategory(); bridge it to the fetchAll
+        // stub each test defines, filtered to the asked category, so tests keep stubbing
+        // fetchAll exactly as before.
+        every { fetcher.newFetchDeadline() } returns Long.MAX_VALUE
+        every { fetcher.fetchCategory(any(), any(), any()) } answers {
+            fetcher.fetchAll(config.categories).filter { it.category == firstArg<String>() }
+        }
+        // Same bridge for the ready query: the single-category variant delegates to the
+        // map-returning method the tests stub.
+        every { db.fetchReadyForDigest(any(), any()) } answers {
+            db.fetchReadyForDigestByCategory(secondArg())[firstArg<String>()] ?: emptyList()
+        }
+
         val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
         bot = NewsBot(config, fetcher, articleFetcher, db, sender, llmClientsFactory = llmClientsFactory)
     }
@@ -707,6 +720,8 @@ class NewsBotTest {
             // Mocked RssFetcher → no network fetch; runDigestCycle goes straight to fetchReadyForDigestByCategory
             val noopFetcher = mockk<RssFetcher>()
             every { noopFetcher.fetchAll(any()) } returns emptyList()
+            every { noopFetcher.newFetchDeadline() } returns Long.MAX_VALUE
+            every { noopFetcher.fetchCategory(any(), any(), any()) } returns emptyList()
 
             val realArticleFetcher = ArticleFetcher(noopFetcher, enforceUrlValidation = false)
             val realLlmClientsFactory = LlmClientsFactory(itConfig, realDb)
