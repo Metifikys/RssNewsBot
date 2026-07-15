@@ -110,6 +110,20 @@ class EventExtractorTest {
     }
 
     @Test
+    fun `extract propagates InterruptedException instead of falling back to legacy`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { openAI.completeJson(any(), any(), any()) } throws InterruptedException("cancelled")
+
+        assertFailsWith<InterruptedException> {
+            extractor.extract("games", cat(), listOf(article("https://a.com/1")))
+        }
+        // Thread.interrupted() also clears the flag so it doesn't leak into other tests.
+        assertTrue(Thread.interrupted(), "interrupt flag must be restored")
+    }
+
+    @Test
     fun `extract returns FallbackToLegacy on malformed JSON`() {
         every { promptLoader.resolve(any()) } returns okResolved
         every { promptLoader.substitute(any(), any()) } answers { firstArg() }

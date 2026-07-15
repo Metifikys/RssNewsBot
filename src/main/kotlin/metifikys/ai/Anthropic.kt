@@ -146,6 +146,9 @@ class Anthropic(
                 val jsonString = completeJson(systemPrompt, userPrompt)
                 Json.parseToJsonElement(jsonString)
                 return jsonString
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw e            // cancellation (cycle deadline / shutdown) — never retry
             } catch (e: Exception) {
                 lastException = e
                 attempt++

@@ -120,6 +120,9 @@ class ClaudeCli(
                 throw e            // usage/credit limit — retrying can't help
             } catch (e: NonRetryableCliException) {
                 throw e            // expired login / bad model — retrying can't help
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw e            // cancellation (cycle deadline / shutdown) — never retry
             } catch (e: Exception) {
                 lastException = e
                 attempt++
@@ -190,7 +193,8 @@ class ClaudeCli(
      * thread would block until the process exits and defeat the timeout. We therefore
      * [Process.waitFor] with the timeout first; only on clean exit do we join the drains
      * and read their buffers. A timeout force-kills the process and surfaces a (retryable)
-     * IOException.
+     * IOException; an interrupt (cancellation) also force-kills the child before propagating,
+     * so a cancelled worker never leaks a live `claude` process.
      */
     private fun runOnce(args: List<String>, prompt: String): String {
         val process = ProcessBuilder(args)
@@ -222,7 +226,14 @@ class ClaudeCli(
             }
         }.apply { isDaemon = true; start() }
 
-        val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+        val finished = try {
+            process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            // Cancellation (cycle deadline / shutdown), not a CLI failure: kill the child or it
+            // keeps running — and burning subscription usage — after this worker is gone.
+            process.destroyForcibly()
+            throw e
+        }
         if (!finished) {
             process.destroyForcibly()
             throw IOException("claude CLI timed out after ${timeoutSeconds}s")

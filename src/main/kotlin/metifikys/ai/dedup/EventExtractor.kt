@@ -185,6 +185,11 @@ class EventExtractor(
             selectedClient.client.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt, maxRetry = 3)
         } catch (e: BillingException) {
             throw e
+        } catch (e: InterruptedException) {
+            // Cancellation (cycle deadline / shutdown) — abort the category; the legacy
+            // fallback would only spawn more doomed calls on an interrupted worker.
+            Thread.currentThread().interrupt()
+            throw e
         } catch (e: Exception) {
             logger.warn(e) {
                 "[Category:$category][Dedup] Step 1 LLM call failed via ${selectedClient.providerLabel} - falling back to legacy"

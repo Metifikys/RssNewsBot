@@ -56,6 +56,16 @@ data class ProcessingConfig(
      */
     val maxConcurrentCategories: Int = 12,
     /**
+     * Per-cycle wall-clock budget (minutes) for the category fan-out barrier — how long one
+     * cycle's category pipelines may run after the fetch stage before unfinished workers are
+     * interrupted (their articles are reverted / reclaimed next cycle). Must comfortably exceed
+     * the worst-case chain of inner LLM timeouts — e.g. several Step-1 + render calls of up to
+     * `claudeCli.timeoutSeconds` each, times their retries — otherwise the barrier cancels
+     * perfectly healthy workers mid-call. Load-time validation warns when a single configured
+     * CLI timeout alone exceeds this budget.
+     */
+    val categoryDeadlineMinutes: Long = 15,
+    /**
      * How many days of article rows to keep. Each cycle deletes articles whose `pubDate` is older
      * than this. Replaces the old hard-coded `deleteOlderThan(1500)`. Validated at load time to be
      * >= max(weekly.lookbackDays, every category's semanticDedup.windowDays) so the retention
@@ -711,6 +721,22 @@ object ConfigLoader {
         }
         require(config.processing.maxConcurrentCategories >= 1) {
             "processing.maxConcurrentCategories must be >= 1 (got ${config.processing.maxConcurrentCategories})"
+        }
+        require(config.processing.categoryDeadlineMinutes >= 1) {
+            "processing.categoryDeadlineMinutes must be >= 1 (got ${config.processing.categoryDeadlineMinutes})"
+        }
+        run {
+            val maxCliTimeout = maxOf(
+                config.claudeCli?.timeoutSeconds ?: 0,
+                config.codexCli?.timeoutSeconds ?: 0
+            )
+            if (maxCliTimeout > config.processing.categoryDeadlineMinutes * 60) {
+                logger.warn {
+                    "processing.categoryDeadlineMinutes (${config.processing.categoryDeadlineMinutes}m) is below a " +
+                        "single CLI call's timeout (${maxCliTimeout}s) — the cycle barrier will interrupt healthy " +
+                        "LLM calls mid-flight; raise categoryDeadlineMinutes above the worst-case per-category LLM chain"
+                }
+            }
         }
         require(config.processing.llmCallRetentionDays >= 1) {
             "processing.llmCallRetentionDays must be >= 1 (got ${config.processing.llmCallRetentionDays})"

@@ -5,7 +5,10 @@ import org.junit.jupiter.api.assertThrows
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -75,6 +78,68 @@ class ClaudeCliTest {
         )
         val cli = ClaudeCli(endpoint(), command = cmd, timeoutSeconds = 30)
         assertThrows<BillingException> { cli.complete("sys", "hello") }
+    }
+
+    @Test
+    fun `interrupt kills the child process and propagates`() {
+        // The shim sleeps ~3s and then writes a marker file. If an interrupt mid-waitFor leaves
+        // the child running (the orphan-process leak), the marker appears once the sleep ends.
+        val dir = Files.createTempDirectory("claudecli-test").toFile()
+        val marker = File(dir, "marker.txt")
+        val cmd = if (isWindows) {
+            val f = File(dir, "shim.cmd")
+            f.writeText("@echo off\r\nping -n 4 127.0.0.1 >nul\r\necho done> \"${marker.absolutePath}\"\r\n")
+            f.absolutePath
+        } else {
+            val f = File(dir, "shim.sh")
+            f.writeText("#!/bin/sh\nsleep 3\ntouch \"${marker.absolutePath}\"\n")
+            f.setExecutable(true)
+            f.absolutePath
+        }
+        val cli = ClaudeCli(endpoint(), command = cmd, timeoutSeconds = 30, maxRetries = 0)
+
+        val thrown = AtomicReference<Throwable>()
+        val flagRestored = AtomicBoolean(false)
+        val t = Thread {
+            try {
+                cli.complete("sys", "hello")
+            } catch (e: Throwable) {
+                thrown.set(e)
+                flagRestored.set(Thread.currentThread().isInterrupted)
+            }
+        }
+        t.start()
+        Thread.sleep(700)   // let the subprocess spawn and waitFor begin
+        t.interrupt()
+        t.join(5_000)
+
+        assertTrue(thrown.get() is InterruptedException, "expected InterruptedException, got: ${thrown.get()}")
+        assertTrue(flagRestored.get(), "interrupt flag must be restored")
+        Thread.sleep(3_500) // long enough for a leaked child to finish its sleep and write the marker
+        assertFalse(marker.exists(), "child process survived the interrupt — marker file was written")
+    }
+
+    @Test
+    fun `completeJson with maxRetry does not retry after an interrupt`() {
+        val cmd = shim(winBody = "ping -n 4 127.0.0.1 >nul", shBody = "sleep 3")
+        // Old behavior: the outer completeJson loop caught the interrupt as a retryable failure
+        // and went into its 20s backoff sleep; the worker must instead exit promptly.
+        val cli = ClaudeCli(endpoint(), command = cmd, timeoutSeconds = 30, maxRetries = 2)
+        val thrown = AtomicReference<Throwable>()
+        val t = Thread {
+            try {
+                cli.completeJson("sys", "user", maxRetry = 3)
+            } catch (e: Throwable) {
+                thrown.set(e)
+            }
+        }
+        t.start()
+        Thread.sleep(700)
+        t.interrupt()
+        t.join(5_000)
+
+        assertFalse(t.isAlive, "worker should exit promptly instead of retrying/backing off")
+        assertTrue(thrown.get() is InterruptedException, "expected InterruptedException, got: ${thrown.get()}")
     }
 
     @Test

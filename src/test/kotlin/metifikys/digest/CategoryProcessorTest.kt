@@ -512,6 +512,45 @@ class CategoryProcessorTest {
         verify { db.markUnprocessed(any()) }
     }
 
+    // ── cancellation (cycle-deadline interrupt) ────────────────────────────────
+
+    @Test
+    fun `sync fallback InterruptedException reverts and keeps the interrupt flag`() {
+        val (p, db, factory) = deps(cfg(minArticles = 1, primaryMaxPending = 2))
+        every { db.countPendingBatchesForCategory("tech") } returns 5  // stuck → sync route
+        val syncClient = mockk<LlmClient>()
+        every { factory.forRender(any()) } returns syncClient
+        every {
+            syncClient.summarizeArticles(any(), any(), any(), any(), any(), any(), any())
+        } throws InterruptedException("cancelled")
+
+        p.process(mapOf("tech" to (1..6).map { article(it) }))
+
+        // Thread.interrupted() also clears the flag so it doesn't leak into other tests.
+        assertTrue(Thread.interrupted(), "worker interrupt flag must survive the sync-fallback catch")
+        verify { db.markUnprocessed(any()) }
+    }
+
+    @Test
+    fun `Step 1 InterruptedException reverts without falling back to legacy`() {
+        val cat = cat(dedup = DedupConfig(promptFile = "x.yaml"))
+        val extractor = mockk<EventExtractor>()
+        val (p, db, factory, promptLoader, _) = deps(
+            cfg(minArticles = 1, category = cat),
+            eventExtractor = extractor
+        )
+        every { promptLoader.resolve(any()) } returns resolvedDedup
+        every { extractor.extract(any(), any(), any()) } throws InterruptedException("cancelled")
+
+        p.process(mapOf("tech" to (1..3).map { article(it) }))
+
+        assertTrue(Thread.interrupted(), "interrupt flag must be restored")
+        verify { db.markUnprocessed(any()) }
+        // Cancellation must NOT spawn the legacy path (that was the 2026-07-15 orphan-process bug).
+        verify(exactly = 0) { factory.forBatch(any()) }
+        verify(exactly = 0) { factory.forRender(any()) }
+    }
+
     // ── process(): per-category isolation (parallel fan-out) ───────────────────
 
     @Test

@@ -58,17 +58,6 @@ class DigestCycle(
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    private companion object {
-        /**
-         * Per-cycle ceiling for the category pipeline barrier, added on top of the fetch
-         * deadline. Mirrors CategoryProcessor's fan-out deadline: comfortably above the inner
-         * LLM timeouts (CLI 300s, Anthropic callTimeout 5min, OpenAI read windows). On expiry,
-         * unfinished pipeline workers are cancelled; their articles stay PROCESSING and are
-         * reclaimed next cycle via the stale-timeout.
-         */
-        const val CATEGORY_DEADLINE_MINUTES = 15L
-    }
-
     fun runCycle() {
         logger.info { "=== Digest cycle started at ${LocalDateTime.now()} ===" }
         try {
@@ -106,9 +95,13 @@ class DigestCycle(
                 val tasks = categories.map { (name, catCfg) ->
                     Callable { runCategoryPipeline(name, catCfg, fetchDeadlineNanos) }
                 }
-                // Barrier deadline = fetch budget + the old category fan-out ceiling, so the
-                // single-thread scheduler can never be wedged by a pathological hang.
-                val barrierSeconds = config.fetcher.fetchDeadlineSeconds + CATEGORY_DEADLINE_MINUTES * 60
+                // Barrier deadline = fetch budget + the category fan-out ceiling, so the
+                // single-thread scheduler can never be wedged by a pathological hang. The
+                // ceiling is configurable because it must stay above the worst-case chain of
+                // inner LLM timeouts (e.g. claudeCli.timeoutSeconds × retries per call) —
+                // otherwise the barrier interrupts healthy workers mid-call.
+                val barrierSeconds = config.fetcher.fetchDeadlineSeconds +
+                    config.processing.categoryDeadlineMinutes * 60
                 pool.invokeAll(tasks, barrierSeconds, TimeUnit.SECONDS)
             } finally {
                 pool.shutdown()

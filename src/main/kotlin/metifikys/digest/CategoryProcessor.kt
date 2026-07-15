@@ -58,14 +58,6 @@ open class CategoryProcessor(
 
     private companion object {
         const val SYNC_FALLBACK_CAP = 60
-
-        /**
-         * Per-cycle ceiling for the category fan-out barrier. Comfortably above the inner LLM
-         * timeouts (CLI 300s, Anthropic callTimeout 5min, OpenAI read windows). On expiry,
-         * unfinished category workers are cancelled; their articles stay PROCESSING and are
-         * reclaimed next cycle via the stale-timeout.
-         */
-        const val CATEGORY_DEADLINE_MINUTES = 15L
     }
 
     private val extractorCounters = ConcurrentHashMap<String, AtomicLong>()
@@ -104,8 +96,9 @@ open class CategoryProcessor(
             }
             // Safety deadline so a pathological hang (beyond the inner LLM timeouts) can't wedge
             // the scheduler. Unfinished tasks are cancelled; their articles stay PROCESSING and
-            // are reclaimed next cycle via the stale-timeout.
-            pool.invokeAll(tasks, CATEGORY_DEADLINE_MINUTES, TimeUnit.MINUTES)
+            // are reclaimed next cycle via the stale-timeout. Configurable — must stay above the
+            // worst-case chain of inner LLM timeouts (see processing.categoryDeadlineMinutes).
+            pool.invokeAll(tasks, config.processing.categoryDeadlineMinutes, TimeUnit.MINUTES)
         } finally {
             pool.shutdown()
         }
@@ -126,6 +119,12 @@ open class CategoryProcessor(
     private fun runCategorySafely(name: String, articles: List<Article>) {
         try {
             processCategory(name, articles)
+        } catch (e: InterruptedException) {
+            // Cycle-deadline cancellation or shutdown — not an error. Affected articles were
+            // already reverted to UNPROCESSED (or stay PROCESSING and are reclaimed via the
+            // stale-timeout).
+            Thread.currentThread().interrupt()
+            logger.warn { "[Category:$name] cancelled (cycle deadline / shutdown)." }
         } catch (e: Exception) {
             errorLog.recordError(name, "[Category]", e)
             logger.error(e) { "[Category:$name] task failed — other categories unaffected." }
@@ -219,6 +218,11 @@ open class CategoryProcessor(
                 db.markUnprocessed(cappedLinks)
                 errorLog.recordBilling(name, "[Dedup]")
                 logger.warn { "[Category:$name][Dedup] Billing/quota limit in Step 1 — skipping." }
+                return
+            } catch (e: InterruptedException) {
+                db.markUnprocessed(cappedLinks)
+                Thread.currentThread().interrupt()
+                logger.warn { "[Category:$name][Dedup] Step 1 cancelled (cycle deadline / shutdown) — reverting to UNPROCESSED." }
                 return
             } catch (e: Exception) {
                 db.markUnprocessed(cappedLinks)
@@ -486,6 +490,11 @@ open class CategoryProcessor(
             errorLog.recordBilling(name, ctxLabel)
             logger.warn { "[Category:$name]$chunkLabel Billing/quota limit reached — skipping." }
             return
+        } catch (e: InterruptedException) {
+            db.markUnprocessed(links)
+            Thread.currentThread().interrupt()
+            logger.warn { "[Category:$name]$chunkLabel Batch submission cancelled (cycle deadline / shutdown) — reverting to UNPROCESSED." }
+            throw e
         } catch (e: Exception) {
             db.markUnprocessed(links)
             errorLog.recordError(name, ctxLabel, e)
@@ -553,6 +562,13 @@ open class CategoryProcessor(
             db.markUnprocessed(links)
             errorLog.recordBilling(name, chunkLabel.trim().ifEmpty { "[sync]" })
             logger.warn { "[Category:$name]$chunkLabel Billing/quota during sync fallback." }
+        } catch (e: InterruptedException) {
+            // Cancellation: revert and rethrow so a chunked legacy loop doesn't start
+            // more doomed calls on an interrupted worker.
+            db.markUnprocessed(links)
+            Thread.currentThread().interrupt()
+            logger.warn { "[Category:$name]$chunkLabel Sync fallback cancelled (cycle deadline / shutdown) — reverting to UNPROCESSED." }
+            throw e
         } catch (e: Exception) {
             db.markUnprocessed(links)
             errorLog.recordError(name, chunkLabel.trim().ifEmpty { "[sync]" }, e)
