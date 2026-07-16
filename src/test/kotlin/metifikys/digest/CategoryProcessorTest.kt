@@ -4,6 +4,7 @@ import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import metifikys.ai.BillingException
 import metifikys.ai.LlmClient
@@ -37,6 +38,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class CategoryProcessorTest {
@@ -510,6 +512,43 @@ class CategoryProcessorTest {
         p.process(mapOf("tech" to (1..6).map { article(it) }))
 
         verify { db.markUnprocessed(any()) }
+    }
+
+    // ── Step 1 input caps (extractMaxArticles / extractMaxPromptChars) ─────────
+
+    @Test
+    fun `Step 1 input is capped to extractMaxArticles keeping the newest`() {
+        val cat = cat(dedup = DedupConfig(promptFile = "x.yaml", extractMaxArticles = 5, extractMaxPromptChars = 1_000_000))
+        val extractor = mockk<EventExtractor>()
+        val (p, _, _, promptLoader, _) = deps(cfg(minArticles = 1, category = cat), eventExtractor = extractor)
+        every { promptLoader.resolve(any()) } returns resolvedDedup
+        val captured = slot<List<Article>>()
+        every { extractor.extract(any(), any(), capture(captured)) } returns
+            ExtractOutcome.Ready(ExtractionResult(extractions = emptyList(), shortlist = emptyList()))
+
+        val now = LocalDateTime.now()
+        // article n published n minutes ago → 1..5 are the newest
+        p.process(mapOf("tech" to (1..20).map { article(it, pubDate = now.minusMinutes(it.toLong())) }))
+
+        assertEquals(5, captured.captured.size)
+        assertEquals((1..5).map { "https://example.com/$it" }, captured.captured.map { it.link })
+    }
+
+    @Test
+    fun `Step 1 char budget admits at least one article`() {
+        val cat = cat(dedup = DedupConfig(promptFile = "x.yaml", extractMaxArticles = 100, extractMaxPromptChars = 1))
+        val extractor = mockk<EventExtractor>()
+        val (p, _, _, promptLoader, _) = deps(cfg(minArticles = 1, category = cat), eventExtractor = extractor)
+        every { promptLoader.resolve(any()) } returns resolvedDedup
+        val captured = slot<List<Article>>()
+        every { extractor.extract(any(), any(), capture(captured)) } returns
+            ExtractOutcome.Ready(ExtractionResult(extractions = emptyList(), shortlist = emptyList()))
+
+        val now = LocalDateTime.now()
+        p.process(mapOf("tech" to (1..10).map { article(it, pubDate = now.minusMinutes(it.toLong())) }))
+
+        assertEquals(1, captured.captured.size)
+        assertEquals("https://example.com/1", captured.captured.single().link)
     }
 
     // ── cancellation (cycle-deadline interrupt) ────────────────────────────────

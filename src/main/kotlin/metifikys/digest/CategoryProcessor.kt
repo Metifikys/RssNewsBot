@@ -9,6 +9,7 @@ import metifikys.ai.dedup.PromptLoader
 import metifikys.ai.dedup.ResolvedDedupPrompts
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
+import metifikys.config.DedupConfig
 import metifikys.db.NewsDatabase
 import metifikys.model.Article
 import metifikys.model.CategoryInput
@@ -58,6 +59,9 @@ open class CategoryProcessor(
 
     private companion object {
         const val SYNC_FALLBACK_CAP = 60
+
+        /** Estimated JSON syntax/field-name overhead per article in `CURRENT_BATCH_JSON`. */
+        const val EXTRACT_ARTICLE_JSON_OVERHEAD = 80
     }
 
     private val extractorCounters = ConcurrentHashMap<String, AtomicLong>()
@@ -198,12 +202,7 @@ open class CategoryProcessor(
         var dedupCapped: List<Article>? = null
 
         if (resolvedDedup != null) {
-            val capped = if (articles.size > 100) {
-                logger.warn {
-                    "[Category:$name][Dedup] capped Step 1 input from ${articles.size} to 100 (newest by pubDate)"
-                }
-                articles.sortedByDescending { it.pubDate }.take(100)
-            } else articles
+            val capped = capForExtract(name, categoryConfig.dedup, articles)
             val cappedLinks = capped.map { it.link }
             db.markProcessing(cappedLinks)
 
@@ -580,4 +579,40 @@ open class CategoryProcessor(
             logger.error(e) { "[Category:$name]$chunkLabel Sync fallback failed" }
         }
     }
+
+    /**
+     * Caps the Step-1 (extract) input to the category's `dedup.extractMaxArticles` count AND
+     * `dedup.extractMaxPromptChars` estimated article-JSON budget, keeping the newest articles
+     * by pubDate. The char budget exists because Step 1 may run through a sync CLI provider:
+     * a ~141KB prompt for 100 backlog articles both stretched the call to ~14 minutes AND made
+     * the model drift off the required JSON envelope (fragment / comma-separated output), so a
+     * count cap alone is not enough. Articles left out are never marked PROCESSING and are
+     * picked up next cycle.
+     */
+    private fun capForExtract(name: String, dedupConfig: DedupConfig?, articles: List<Article>): List<Article> {
+        val maxArticles = dedupConfig?.extractMaxArticles ?: 100
+        val maxChars = dedupConfig?.extractMaxPromptChars ?: 80_000
+        if (articles.size <= maxArticles && articles.sumOf { extractCharsOf(it) } <= maxChars) return articles
+
+        val newestFirst = articles.sortedByDescending { it.pubDate }
+        val capped = ArrayList<Article>(minOf(articles.size, maxArticles))
+        var chars = 0
+        for (a in newestFirst) {
+            if (capped.size >= maxArticles) break
+            val cost = extractCharsOf(a)
+            // Always admit at least one article, however large.
+            if (capped.isNotEmpty() && chars + cost > maxChars) break
+            capped += a
+            chars += cost
+        }
+        logger.warn {
+            "[Category:$name][Dedup] capped Step 1 input from ${articles.size} to ${capped.size} article(s) " +
+                    "(newest by pubDate; ~$chars prompt chars, maxArticles=$maxArticles, maxPromptChars=$maxChars)"
+        }
+        return capped
+    }
+
+    /** Estimated chars this article contributes to the Step-1 `CURRENT_BATCH_JSON`. */
+    private fun extractCharsOf(a: Article): Int =
+        a.title.length + a.link.length + a.promptText().length + EXTRACT_ARTICLE_JSON_OVERHEAD
 }

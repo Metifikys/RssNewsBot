@@ -524,6 +524,21 @@ data class DedupConfig(
     /** Maximum number of covered events embedded in the Step 1 prompt. */
     val maxContextEvents: Int = 200,
     /**
+     * Cap on articles per Step-1 extract call, newest by pubDate. Articles beyond the cap
+     * are left UNPROCESSED and picked up next cycle. Also bounded by [extractMaxPromptChars].
+     */
+    val extractMaxArticles: Int = 100,
+    /**
+     * Approximate char budget for the serialized article batch embedded in the Step-1 prompt
+     * (`{{CURRENT_BATCH_JSON}}`). Bounds the prompt so a sync CLI extract call both finishes
+     * inside its timeout AND keeps the model on the required JSON envelope — on a ~141KB
+     * prompt (100 backlog articles) claude-sonnet reproducibly drifted into fragment /
+     * comma-separated output that failed parsing on every ~14-minute retry (2026-07-16).
+     * At the default per-article promptText cap (1000 chars) this admits roughly 60–70
+     * articles. The covered-events context is bounded separately by [maxContextEvents].
+     */
+    val extractMaxPromptChars: Int = 80_000,
+    /**
      * Optional digest-quality gate. When non-null and `ranker.enabled` is true, Step 1's
      * shortlist is re-ranked and clamped in Kotlin before reaching Step 2. Safe to leave
      * null — falls back to the LLM's raw shortlist with a small default cap.
@@ -856,6 +871,14 @@ object ConfigLoader {
                 require(r.reactionWeight == 0.0 || config.feedback.enabled) {
                     "Category '$name' sets ranker.reactionWeight=${r.reactionWeight} but feedback.enabled=false — " +
                         "the affinity table is never populated, so the term would silently read zeros. Enable feedback: or drop the weight."
+                }
+            }
+            category.dedup?.let { d ->
+                require(d.extractMaxArticles > 0) {
+                    "Category '$name' dedup.extractMaxArticles must be > 0 (got ${d.extractMaxArticles})"
+                }
+                require(d.extractMaxPromptChars > 0) {
+                    "Category '$name' dedup.extractMaxPromptChars must be > 0 (got ${d.extractMaxPromptChars})"
                 }
             }
             category.semanticDedup?.let { sd ->
