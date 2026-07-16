@@ -56,15 +56,20 @@ data class ProcessingConfig(
      */
     val maxConcurrentCategories: Int = 12,
     /**
-     * Per-cycle wall-clock budget (minutes) for the category fan-out barrier — how long one
-     * cycle's category pipelines may run after the fetch stage before unfinished workers are
-     * interrupted (their articles are reverted / reclaimed next cycle). Must comfortably exceed
-     * the worst-case chain of inner LLM timeouts — e.g. several Step-1 + render calls of up to
-     * `claudeCli.timeoutSeconds` each, times their retries — otherwise the barrier cancels
-     * perfectly healthy workers mid-call. Load-time validation warns when a single configured
-     * CLI timeout alone exceeds this budget.
+     * Optional hard ceiling (minutes) on one cycle's category fan-out. `0` (default) means NO
+     * ceiling: the cycle simply ends when the slowest category finishes — categories still run
+     * in parallel, and every stage is internally bounded anyway (fetch deadline, HTTP timeouts,
+     * CLI force-kill, bounded retries), so nothing can hang forever. Digest work is never
+     * cancelled mid-flight in this mode.
+     *
+     * A positive value restores the old barrier: pipelines still running that many minutes
+     * after the fetch budget are interrupted and their articles revert / are reclaimed next
+     * cycle. If set, it must comfortably exceed the worst-case chain of inner LLM timeouts
+     * (e.g. several Step-1 + render calls of up to `claudeCli.timeoutSeconds` each, times
+     * their retries) — otherwise the barrier repeatedly cancels healthy workers, no digest
+     * ever completes, and the queue only grows. Load-time validation warns about that.
      */
-    val categoryDeadlineMinutes: Long = 15,
+    val categoryDeadlineMinutes: Long = 0,
     /**
      * How many days of article rows to keep. Each cycle deletes articles whose `pubDate` is older
      * than this. Replaces the old hard-coded `deleteOlderThan(1500)`. Validated at load time to be
@@ -722,10 +727,11 @@ object ConfigLoader {
         require(config.processing.maxConcurrentCategories >= 1) {
             "processing.maxConcurrentCategories must be >= 1 (got ${config.processing.maxConcurrentCategories})"
         }
-        require(config.processing.categoryDeadlineMinutes >= 1) {
-            "processing.categoryDeadlineMinutes must be >= 1 (got ${config.processing.categoryDeadlineMinutes})"
+        require(config.processing.categoryDeadlineMinutes >= 0) {
+            "processing.categoryDeadlineMinutes must be >= 0 (got ${config.processing.categoryDeadlineMinutes}); " +
+                "0 disables the barrier — the cycle waits for every category to finish"
         }
-        run {
+        if (config.processing.categoryDeadlineMinutes > 0) {
             val maxCliTimeout = maxOf(
                 config.claudeCli?.timeoutSeconds ?: 0,
                 config.codexCli?.timeoutSeconds ?: 0
@@ -733,8 +739,9 @@ object ConfigLoader {
             if (maxCliTimeout > config.processing.categoryDeadlineMinutes * 60) {
                 logger.warn {
                     "processing.categoryDeadlineMinutes (${config.processing.categoryDeadlineMinutes}m) is below a " +
-                        "single CLI call's timeout (${maxCliTimeout}s) — the cycle barrier will interrupt healthy " +
-                        "LLM calls mid-flight; raise categoryDeadlineMinutes above the worst-case per-category LLM chain"
+                        "single CLI call's timeout (${maxCliTimeout}s) — the cycle barrier will repeatedly interrupt " +
+                        "healthy LLM calls and no digest will complete; raise it above the worst-case per-category " +
+                        "LLM chain, or set 0 to wait for every category (default)"
                 }
             }
         }

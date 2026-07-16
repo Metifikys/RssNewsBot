@@ -95,14 +95,20 @@ class DigestCycle(
                 val tasks = categories.map { (name, catCfg) ->
                     Callable { runCategoryPipeline(name, catCfg, fetchDeadlineNanos) }
                 }
-                // Barrier deadline = fetch budget + the category fan-out ceiling, so the
-                // single-thread scheduler can never be wedged by a pathological hang. The
-                // ceiling is configurable because it must stay above the worst-case chain of
-                // inner LLM timeouts (e.g. claudeCli.timeoutSeconds × retries per call) —
-                // otherwise the barrier interrupts healthy workers mid-call.
-                val barrierSeconds = config.fetcher.fetchDeadlineSeconds +
-                    config.processing.categoryDeadlineMinutes * 60
-                pool.invokeAll(tasks, barrierSeconds, TimeUnit.SECONDS)
+                val deadlineMinutes = config.processing.categoryDeadlineMinutes
+                if (deadlineMinutes > 0) {
+                    // Opt-in hard ceiling: pipelines still running past fetch budget + ceiling
+                    // are interrupted; their articles revert / are reclaimed next cycle.
+                    val barrierSeconds = config.fetcher.fetchDeadlineSeconds + deadlineMinutes * 60
+                    pool.invokeAll(tasks, barrierSeconds, TimeUnit.SECONDS)
+                } else {
+                    // Default: wait for every category to finish — the cycle ends when the
+                    // slowest one does. Each pipeline is internally bounded (fetch deadline,
+                    // HTTP timeouts, CLI force-kill, bounded retries), so digest work is
+                    // never cancelled mid-flight and long cycles just delay the next run
+                    // (the scheduler is single-threaded — cycles never overlap).
+                    pool.invokeAll(tasks)
+                }
             } finally {
                 pool.shutdown()
             }

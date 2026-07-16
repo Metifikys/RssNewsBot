@@ -94,11 +94,16 @@ open class CategoryProcessor(
             val tasks = byCategory.map { (name, articles) ->
                 Callable { runCategorySafely(name, articles) }
             }
-            // Safety deadline so a pathological hang (beyond the inner LLM timeouts) can't wedge
-            // the scheduler. Unfinished tasks are cancelled; their articles stay PROCESSING and
-            // are reclaimed next cycle via the stale-timeout. Configurable — must stay above the
-            // worst-case chain of inner LLM timeouts (see processing.categoryDeadlineMinutes).
-            pool.invokeAll(tasks, config.processing.categoryDeadlineMinutes, TimeUnit.MINUTES)
+            // Default (0): wait for every category — digest work is never cancelled; the inner
+            // timeouts (HTTP, CLI force-kill, bounded retries) already bound each worker.
+            // A positive processing.categoryDeadlineMinutes opts back into the hard barrier:
+            // unfinished tasks are cancelled and their articles revert / are reclaimed.
+            val deadlineMinutes = config.processing.categoryDeadlineMinutes
+            if (deadlineMinutes > 0) {
+                pool.invokeAll(tasks, deadlineMinutes, TimeUnit.MINUTES)
+            } else {
+                pool.invokeAll(tasks)
+            }
         } finally {
             pool.shutdown()
         }
