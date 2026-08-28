@@ -1,0 +1,237 @@
+<title>Free-LLM бенчмарк RssNewsBot</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --paper:#F6F8F7; --surface:#FFFFFF; --ink:#1B2523; --muted:#5A6B65; --line:#DCE4E1;
+    --accent:#0E7A6A; --accent-soft:#E2F0ED;
+    --good:#1F7A45; --good-bg:#E3F2E8;
+    --warn:#9A5A12; --warn-bg:#F7ECDC;
+    --bad:#A23A2D; --bad-bg:#F8E7E3;
+    --dead:#5A6B65; --dead-bg:#E9EEEC;
+    --code-bg:#EEF3F1;
+  }
+  :root:not([data-theme="light"]){}
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#121816; --surface:#1A211F; --ink:#E4ECE8; --muted:#93A49D; --line:#2A3431;
+      --accent:#43BFA8; --accent-soft:#173430;
+      --good:#5FC98A; --good-bg:#17301F;
+      --warn:#E0A055; --warn-bg:#332612;
+      --bad:#E08273; --bad-bg:#361B16;
+      --dead:#8A9A93; --dead-bg:#232B28;
+      --code-bg:#202927;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#121816; --surface:#1A211F; --ink:#E4ECE8; --muted:#93A49D; --line:#2A3431;
+    --accent:#43BFA8; --accent-soft:#173430;
+    --good:#5FC98A; --good-bg:#17301F;
+    --warn:#E0A055; --warn-bg:#332612;
+    --bad:#E08273; --bad-bg:#361B16;
+    --dead:#8A9A93; --dead-bg:#232B28;
+    --code-bg:#202927;
+  }
+  *{box-sizing:border-box}
+  body{
+    background:var(--paper); color:var(--ink);
+    font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+    font-size:16px; line-height:1.55; margin:0; padding:0 20px 80px;
+  }
+  main{max-width:900px; margin:0 auto}
+  h1,h2{font-family:"IBM Plex Serif",Georgia,serif; text-wrap:balance; line-height:1.2}
+  h1{font-size:2rem; margin:48px 0 6px}
+  h2{font-size:1.35rem; margin:0 0 14px; padding-top:34px; border-top:1px solid var(--line)}
+  h3{font-size:1.02rem; margin:22px 0 8px}
+  p{max-width:72ch}
+  .sub{color:var(--muted); margin:0 0 34px; max-width:78ch}
+  .eyebrow{
+    font-size:.72rem; letter-spacing:.14em; text-transform:uppercase; color:var(--accent);
+    font-weight:600; margin:40px 0 4px;
+  }
+  code,.mono{font-family:"IBM Plex Mono",Consolas,monospace; font-size:.86em}
+  code{background:var(--code-bg); padding:1px 5px; border-radius:4px}
+  section{margin-bottom:8px}
+
+  .tldr{display:grid; grid-template-columns:repeat(auto-fit,minmax(255px,1fr)); gap:12px; margin:20px 0 8px}
+  .tldr .card{background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:6px; padding:14px 16px}
+  .tldr .card b{display:block; margin-bottom:4px}
+  .tldr .card p{margin:0; font-size:.92rem; color:var(--muted)}
+
+  .tablewrap{overflow-x:auto; margin:14px 0; border:1px solid var(--line); border-radius:6px; background:var(--surface)}
+  table{border-collapse:collapse; width:100%; font-size:.88rem}
+  th{
+    text-align:left; font-size:.72rem; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); font-weight:600; padding:9px 12px; border-bottom:1px solid var(--line);
+    white-space:nowrap;
+  }
+  td{padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+  td .mono{white-space:nowrap}
+  .note{font-size:.85rem; color:var(--muted); max-width:78ch}
+
+  .chip{display:inline-block; font-size:.74rem; font-weight:600; padding:2px 9px; border-radius:99px; white-space:nowrap}
+  .chip.good{color:var(--good); background:var(--good-bg)}
+  .chip.warn{color:var(--warn); background:var(--warn-bg)}
+  .chip.bad{color:var(--bad); background:var(--bad-bg)}
+  .chip.dead{color:var(--dead); background:var(--dead-bg)}
+
+  mark{background:var(--warn-bg); color:var(--warn); padding:0 3px; border-radius:3px; font-weight:500}
+  .quote-bad mark{background:var(--bad-bg); color:var(--bad)}
+
+  details{background:var(--surface); border:1px solid var(--line); border-radius:6px; margin:10px 0; overflow:hidden}
+  summary{cursor:pointer; padding:10px 14px; font-weight:600; font-size:.92rem}
+  summary:hover{color:var(--accent)}
+  summary:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
+  details>div{padding:2px 16px 14px; border-top:1px solid var(--line)}
+  .digest-sample{font-size:.88rem; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--code-bg); border-radius:6px; padding:12px 14px; margin:10px 0}
+  .digest-sample .src{color:var(--muted)}
+
+  pre.yaml{
+    background:var(--code-bg); border:1px solid var(--line); border-radius:6px; padding:14px 16px;
+    overflow-x:auto; font-family:"IBM Plex Mono",Consolas,monospace; font-size:.84rem; line-height:1.5;
+  }
+  ul{padding-left:22px; max-width:78ch}
+  li{margin:4px 0}
+  li::marker{color:var(--accent)}
+  .verd td:first-child{font-weight:500}
+  .small{font-size:.85rem}
+  a{color:var(--accent)}
+</style>
+
+<main>
+<h1>Free-LLM бенчмарк RssNewsBot</h1>
+<p class="sub">17 безкоштовних моделей OpenRouter × 2 реальні задачі бота (пер-статейне саммарі та рендер політичного дайджесту) на живих даних із prod-знімка <span class="mono">logs/news.db</span> від 26.08.2026 + аудит якості витягнутого контенту за ~30 днів. Прогін 28.08.2026, ~08:00 (латентність free-тіру мінлива — цифри є зрізом цього ранку).</p>
+
+<div class="tldr">
+  <div class="card"><b>🥇 Заміна для SUMMARIZE</b><p><span class="mono">nemotron-3-ultra</span> — краща за чинну <span class="mono">nemotron-3-super</span> в обох мовах, 0.3–0.9 с, той самий NVIDIA-ендпоінт. Запасна: <span class="mono">minimax-m3</span>.</p></div>
+  <div class="card"><b>🥈 Free-кандидати на RENDER</b><p><span class="mono">minimax-m3</span>, <span class="mono">dots-3-note-preview</span> і <span class="mono">minimax-m2.7</span> зібрали той самий набір новин, що й прод (claude-sonnet-5). Годяться як batchFallback.</p></div>
+  <div class="card"><b>⚠️ Чинна модель шкутильгає в UA</b><p><span class="mono">nemotron-3-super</span> в EN ок (саммарі в проді зараз англійські), але українською — «на <i>боеве дежурство</i>», «експлуат<i>ир</i>уватися», злиплі речення, мета-хвіст.</p></div>
+  <div class="card"><b>🧹 Екстракція</b><p>Найбільші втрати: сирий HTML у промптах (reddit 62%, t.me 42% бюджету), тизер-фіди по ~200 симв., site-chrome у fetchFullContent, 412 донат-постів/міс у політиці.</p></div>
+</div>
+
+<p class="eyebrow">Розділ 1</p>
+<h2>Методика</h2>
+<ul>
+  <li><b>Задача A — SUMMARIZE</b> (те, що зараз робить <span class="mono">nemotron-3-super:free</span> для tech/science: 3&nbsp;076 викликів за 14 днів). Точна репліка промпта <code>ArticleSummarizer</code>: 5 реальних статей — 3 EN (XDA, Wired, ScienceNews; повнотекстові, з прод-саммарі як бейзлайном), 2 UA (mezha — короткий тизер з <code>&lt;img&gt;</code>-сміттям, pravda — повний текст).</li>
+  <li><b>Задача B — RENDER дайджесту</b>. Точна репліка legacy-промпта politics-циклу 26.08 21:57: системний+юзер промпт з <code>config.yaml</code>, 4 попередні дайджести, 12 статей того циклу (сильні новини + шум: відбій тривоги, донат-пост, локальний кримінал). Бейзлайн — реально надісланий дайджест (3 пункти).</li>
+  <li>Виклики — голий <code>{model, messages}</code> без temperature/max_tokens, як у боті; ретраї на 429/5xx; вимір wall-clock. Автометрики: мова (частка кирилиці + російські літери), формат, дисципліна лінків (тільки з наданого списку / повтори з попередніх дайджестів / вигадані URL). Поверх — ручне суддівство кожного виводу.</li>
+</ul>
+
+<p class="eyebrow">Розділ 2</p>
+<h2>Дайджест: хто вміє бути редактором</h2>
+<p>Головний тест — не «чи гарно пише», а <b>чи вибирає правильні новини і не бреше</b>. Прод-бейзлайн (claude-sonnet-5) вибрав 3: пауза Держдепу по візах, візит Реткліффа до Москви, ліцензія на Aster 30. Збіг вибору з продом — сильний сигнал якості.</p>
+<div class="tablewrap"><table>
+<tr><th>Модель</th><th class="num">мс</th><th class="num">Пункти</th><th class="num">Валідні лінки</th><th class="num">Повтори*</th><th class="num">Вигадані</th><th>Мова</th><th>Вердикт</th></tr>
+<tr><td class="mono">minimax-m3</td><td class="num">3&nbsp;812</td><td class="num">4</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td>UA чиста</td><td><span class="chip good">відмінно</span></td></tr>
+<tr><td class="mono">dots-3-note-preview</td><td class="num">1&nbsp;131</td><td class="num">3</td><td class="num">3</td><td class="num">0</td><td class="num">0</td><td>UA (1 русизм у назві лінка)</td><td><span class="chip good">відмінно</span></td></tr>
+<tr><td class="mono">minimax-m2.7</td><td class="num">2&nbsp;620</td><td class="num">3</td><td class="num">3</td><td class="num">0</td><td class="num">0</td><td>UA чиста</td><td><span class="chip good">відмінно</span></td></tr>
+<tr><td class="mono">nemotron-3-ultra</td><td class="num">1&nbsp;076</td><td class="num">4</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td>UA чиста</td><td><span class="chip good">добре</span></td></tr>
+<tr><td class="mono">nemotron-3-super <span class="small">(чинна)</span></td><td class="num">555</td><td class="num">4</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td>UA з русизмом</td><td><span class="chip warn">посередньо</span></td></tr>
+<tr><td class="mono">ling-3.0-flash-fin</td><td class="num">1&nbsp;063</td><td class="num">2</td><td class="num">2</td><td class="num">0</td><td class="num">0</td><td>UA</td><td><span class="chip warn">пропустила топ-новину</span></td></tr>
+<tr><td class="mono">nano-omni-reasoning</td><td class="num">682</td><td class="num">4</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td><b>англійська</b></td><td><span class="chip bad">мова</span></td></tr>
+<tr><td class="mono">north-mini-code</td><td class="num">313</td><td class="num">4</td><td class="num">0†</td><td class="num">0</td><td class="num">0</td><td><b>англійська</b></td><td><span class="chip bad">мова + формат</span></td></tr>
+<tr><td class="mono">lfm-2.5-2.6b</td><td class="num">1&nbsp;431</td><td class="num">5</td><td class="num">0†</td><td class="num">2</td><td class="num">0</td><td>UA ламана</td><td><span class="chip bad">факти переплутані</span></td></tr>
+<tr><td class="mono">laguna-s-2.1</td><td class="num">1&nbsp;959</td><td class="num">5</td><td class="num">2</td><td class="num">3</td><td class="num">0</td><td>UA зі сміттям</td><td><span class="chip bad">повтори старого</span></td></tr>
+<tr><td class="mono">laguna-xs-2.1</td><td class="num">551</td><td class="num">6</td><td class="num">0</td><td class="num">5</td><td class="num">1</td><td>UA</td><td><span class="chip bad">провал</span></td></tr>
+<tr><td class="mono">gemma-4-26b / gemma-4-31b / glm-5.2 / nemotron-3.5-lightning</td><td class="num">—</td><td colspan="5" class="small">ендпоінти весь ранок віддавали «Provider returned error» (усі ретраї вичерпано)</td><td><span class="chip dead">недоступні</span></td></tr>
+<tr><td class="mono">inkling / inkling-small</td><td class="num">—</td><td colspan="5" class="small">«only available on agentic harnesses» — API для звичайних чат-викликів закритий, боту недоступні в принципі</td><td><span class="chip dead">закриті</span></td></tr>
+</table></div>
+<p class="note">* «Повтори» — пункти, взяті з блоку «ПОПЕРЕДНІ ДАЙДЖЕСТИ», що прямо заборонено промптом. † Лінки не у форматі <code>[назва](url)</code> — Telegram-розмітка бота зламається.</p>
+
+<h3>Приклади (розгорнути)</h3>
+<details><summary>✅ minimax-m3 — найповніший коректний дайджест</summary><div>
+<div class="digest-sample">• 🇮🇹🇫🇷 Італія та Франція нададуть Україні ліцензію на виробництво ракет-перехоплювачів Aster 30 для систем ППО SAMP/T; Італія готує пакет із чотирьох комплексів SAMP/T NG, ракет Aster 30 і семи радарів великої дальності, у жовтні Київ отримає частину ракет з італійських запасів. [Бабель](…)
+• 🇺🇸 Трамп прокоментував візит директора ЦРУ Реткліффа до Москви як «напівзвичайний» і заявив, що «щось із цього може вийти», не розкриваючи теми переговорів. [sud.ua](…)
+• 🇺🇸 Держдеп США тимчасово призупинив розгляд усіх заяв на імміграційні візи з усього світу — у посольствах і консульствах почалися тренінги консульських працівників, графіки розгляду скориговано. [Суспільне](…)
+• 🛡️ У Норвегії на авіабазі поблизу Тронгейма заступила на чергування перша спеціалізована протидронова установка C-UAS, розроблена для виявлення і збиття безпілотників вагою до 150 кг. [Українська правда](…)</div>
+<p class="note">Ті самі 3 новини, що вибрав прод, + захисна четверта (Норвегія) — прийнятний редакторський вибір. Жодного пункту зі «сміттєвих» статей.</p>
+</div></details>
+<details><summary>⚠️ nemotron-3-super (чинна прод-модель) — правильний вибір, слабка мова</summary><div>
+<div class="digest-sample quote-bad">• 🇺🇸 Держдеп США тимчасово зупинив розгляд усіх заяв на імміграційні візи по всьому світу. [Бабель](…)
+…
+• 🇳🇴 В Норвегії <mark>на боеве дежурство</mark> заступила перша установка для виявлення та збиття ворожих дронів. [Українська правда](…)</div>
+<p class="note">Вибір новин правильний, але пункти по одному куцому реченню (промпт дозволяє 1–2) і русизм прямо в тексті для каналу.</p>
+</div></details>
+<details><summary>❌ laguna-xs — анатомія провалу</summary><div>
+<div class="digest-sample quote-bad">• ⛽ <mark>Російські нафтопереробники відмовили постачати бензин у Казахстан</mark>, навіть за квоти, через страх санкцій. [ZN.UA](…262516)
+…
+• 🕵️ У справі про легалізацію застави за Галущенком слідство фіксує вказівки на керівника ОП <mark>у результаті арештів затримано чотирьох причетних</mark>. [ZN.UA](…262520)</div>
+<p class="note">Усі 6 пунктів — переказ <i>попередніх</i> дайджестів замість нових статей. Перший пункт — інверсія факту (у джерелі казахстанські НПЗ відмовились постачати бензин у РФ). Останній — склеїла дві різні справи (застава Галущенка + СБУ проти схеми з ліками). Один URL «відремонтувала» до неіснуючого (<span class="mono">…vvazayut…</span> замість <span class="mono">…vvazhayut…</span>). У задачі A ще й відповіла іспанською на англійську статтю.</p>
+</div></details>
+
+<p class="eyebrow">Розділ 3</p>
+<h2>Пер-статейне саммарі: точність і мова</h2>
+<p>Важливе уточнення: у проді summarize зараз увімкнений лише на англомовних фідах, і промпт вимагає відповідати мовою статті — тож 8&nbsp;155 з 8&nbsp;163 збережених саммарі за 30 днів англійські. Дві UA-статті в бенчі — це свідома проба: (1) чи дотримається модель «мови оригіналу», якщо увімкнути summarize на itc.ua/mezha/pravda, і (2) проксі якості української взагалі — критичної для рендера дайджестів. Розрив між моделями видно саме на (а) українській, (б) стійкості до вигадок, (в) вмінні ігнорувати сміття в тексті (сусідні новини-хвости, site-chrome). Прод-бейзлайн — збережені в БД саммарі чинної <span class="mono">nemotron-3-super</span>.</p>
+<div class="tablewrap"><table>
+<tr><th>Модель</th><th class="num">сер. мс</th><th>EN-якість</th><th>UA-якість</th><th>Головні гріхи</th></tr>
+<tr><td class="mono">nemotron-3-ultra</td><td class="num">549</td><td><span class="chip good">відмінно</span></td><td><span class="chip good">відмінно</span></td><td>крапки над «і»: цитати зі джерела, коректні числа, чиста UA</td></tr>
+<tr><td class="mono">minimax-m3</td><td class="num">1&nbsp;895</td><td><span class="chip good">відмінно</span></td><td><span class="chip good">відмінно</span></td><td>трохи повільніша</td></tr>
+<tr><td class="mono">dots-3-note-preview</td><td class="num">812</td><td><span class="chip good">відмінно</span></td><td><span class="chip good">добре</span></td><td>найкраще фільтрує сміттєві хвости; дрібні одруки в UA («офиційно»)</td></tr>
+<tr><td class="mono">minimax-m2.7</td><td class="num">3&nbsp;390</td><td><span class="chip good">відмінно</span></td><td><span class="chip good">відмінно</span></td><td>хвіст латентності до 10 с</td></tr>
+<tr><td class="mono">nemotron-3-super <span class="small">(чинна)</span></td><td class="num">341</td><td><span class="chip good">відмінно</span></td><td><span class="chip warn">слабко</span></td><td>«експлуат<b>ир</b>уватися», злиплі речення («…150 кг.Її…»), мета-хвіст «Усі наведені факти взяті прямо з статті» всупереч промпту</td></tr>
+<tr><td class="mono">ling-3.0-flash-fin</td><td class="num">800</td><td><span class="chip good">добре</span></td><td><span class="chip warn">так собі</span></td><td>короткий UA-тизер майже дослівно скопіювала замість саммарі</td></tr>
+<tr><td class="mono">gemma-4-26b</td><td class="num">901</td><td><span class="chip good">добре</span></td><td>—</td><td>встигла лише 3/6 задач між падіннями ендпоінта</td></tr>
+<tr><td class="mono">north-mini-code</td><td class="num">384</td><td><span class="chip good">добре</span></td><td><span class="chip bad">EN замість UA</span></td><td>на українську статтю відповідає англійською</td></tr>
+<tr><td class="mono">nano-omni-reasoning</td><td class="num">365</td><td><span class="chip good">добре</span></td><td><span class="chip bad">ламана</span></td><td>«за <b>presaла</b> на чергування», «Тронгейрид», «в ближайший час»; плутає стать («His» про Sydney Watson)</td></tr>
+<tr><td class="mono">lfm-2.5-2.6b</td><td class="num">703</td><td><span class="chip warn">так собі</span></td><td><span class="chip bad">ламана</span></td><td>«Збройних СНР», «Це нове заходо»; плутає деталі (роки Griner у клубі)</td></tr>
+<tr><td class="mono">laguna-s-2.1</td><td class="num">1&nbsp;185</td><td><span class="chip bad">вигадки</span></td><td><span class="chip bad">зіпсуті слова</span></td><td>вигадала цілу механіку graceful-shutdown, якої нема у статті; «призпіна», «пришвастливо»</td></tr>
+<tr><td class="mono">laguna-xs-2.1</td><td class="num">313</td><td><span class="chip bad">іспанська!</span></td><td><span class="chip warn">так собі</span></td><td>на EN-статтю відповіла іспанською; вигадала «інвестиції в інфраструктуру» в новині про U Mobile</td></tr>
+</table></div>
+<p class="note">Латентність: разові виклики цього ранку. Прод-лог тієї ж <span class="mono">nemotron-3-super</span> за 14 днів показує середню ~10 с — free-тір «дихає» залежно від навантаження, тож відносні порівняння надійніші за абсолютні.</p>
+
+<p class="eyebrow">Розділ 4</p>
+<h2>Що з цим робити в конфігу</h2>
+<ul>
+  <li><b>SUMMARIZE (tech/science)</b>: перемкнути <span class="mono">openrouter.model</span> з <span class="mono">nvidia/nemotron-3-super-120b-a12b:free</span> на <b><span class="mono">nvidia/nemotron-3-ultra-550b-a55b:free</span></b> — той самий NVIDIA-провайдер, помітно чистіша мова, у бенчі навіть швидша. План Б: <span class="mono">minimax/minimax-m3:free</span>.</li>
+  <li><b>RENDER</b>: прод-якість claude-sonnet-5 лишається найвищою — але тепер є безкоштовний «запасний рендерер»: <span class="mono">minimax-m3</span> (або швидша <span class="mono">dots-3-note-preview</span>) як <code>batchFallback</code>/<code>fallback</code> на випадок вичерпання підписки CLI.</li>
+  <li><b>Extract A/B</b>: механізм <code>extractAlternate</code> вже вміє слати кожен 2-й запит на альтернативу — <span class="mono">minimax-m3</span> природний кандидат для безкоштовної половини.</li>
+  <li><b>Чорний список</b> для UA-задач: обидві <span class="mono">laguna</span>, <span class="mono">lfm-2.5</span>, <span class="mono">north-mini-code</span>, <span class="mono">nano-omni</span> (EN-only), <span class="mono">inkling*</span> (закриті для звичайних API-викликів).</li>
+  <li><b>Квота free-тіру</b>: ~1000 запитів/добу на акаунт; прод-SUMMARIZE зараз ≈220/добу — запас на extract-A/B є, але два вискокооб'ємні use-case на одному ключі вже впритул.</li>
+</ul>
+<pre class="yaml">openrouter:
+  apiKey: "…"
+  model: "nvidia/nemotron-3-ultra-550b-a55b:free"   # було: nemotron-3-super-120b-a12b:free
+
+# приклад безкоштовного запасного рендерера для категорії:
+#   llm:
+#     render: { provider: claudecli, model: claude-sonnet-4-6,
+#               fallback: { provider: openrouter, model: "minimax/minimax-m3:free" } }</pre>
+
+<p class="eyebrow">Розділ 5</p>
+<h2>Аудит екстракції: що LLM бачить замість статей</h2>
+<p>Вікно ~30 днів знімка (по 26.08). Це другий важіль якості саммарі — часто важливіший за вибір моделі: половина проблем нижче просто спалює промпт-бюджет (<code>extractMaxPromptChars</code> ріже кількість статей у Step-1 саме по символах).</p>
+
+<h3>1 · Сирий HTML ніде не стрипається</h3>
+<p><code>description</code> зберігається як віддав фід; <code>promptText()</code> ріже перші 1000 символів — разом з тегами. Частка розмітки в промпт-бюджеті: <b>reddit 62%</b> (6&nbsp;278 статей), <b>massivelyop 76%</b>, <b>rpgsite 67%</b>, <b>destructoid 54%</b>, <b>gematsu 52%</b>, <b>t.me 42%</b> (4&nbsp;898 статей у політиці!), <b>gagadget 46%</b>, <b>mezha 42%</b>. Виправлення дешеве: <code>Jsoup.parse(desc).text()</code> при вставці в БД (після reddit-rewrite) або в <code>promptText()</code>. Ефект: ~у 1.5–2 рази більше корисного тексту на той самий бюджет + зникають «onclick=confirm(...)» у промптах політики.</p>
+
+<h3>2 · Тизер-фіди: LLM бачить 1–2 речення</h3>
+<div class="tablewrap"><table>
+<tr><th>Хост</th><th class="num">Статей/30д</th><th class="num">Медіана опису</th><th>fetchFullContent?</th></tr>
+<tr><td class="mono">techradar.com</td><td class="num">1&nbsp;628</td><td class="num">266</td><td>ні</td></tr>
+<tr><td class="mono">gamesradar.com</td><td class="num">1&nbsp;215</td><td class="num">207</td><td>ні</td></tr>
+<tr><td class="mono">thegamer.com</td><td class="num">720</td><td class="num">198</td><td>ні</td></tr>
+<tr><td class="mono">pcgamer.com</td><td class="num">625</td><td class="num">195</td><td>ні</td></tr>
+<tr><td class="mono">techcrunch.com</td><td class="num">505</td><td class="num">141</td><td>ні</td></tr>
+<tr><td class="mono">itc.ua</td><td class="num">800</td><td class="num">280</td><td>ні</td></tr>
+<tr><td class="mono">siliconera / gamedeveloper</td><td class="num">294</td><td class="num">≈100</td><td>ні</td></tr>
+<tr><td class="mono">kotaku.com <span class="small">(для порівняння)</span></td><td class="num">487</td><td class="num">1&nbsp;499</td><td><b>так</b></td></tr>
+</table></div>
+<p class="note">Разом ~49% gaming- і ~34% tech-статей доходять до дайджесту з текстом &lt;400 символів. Рекомендація: увімкнути <code>fetchFullContent: true</code> (+ за бажання <code>summarize:</code>) для топ-5 за обсягом; HostThrottle навантаження переживе.</p>
+
+<h3>3 · Site-chrome з'їдає enriched-бюджет</h3>
+<p>Jsoup-селектори чіпляють обв'язку сторінки, вона займає перші (найцінніші) символи з 1500: <b>wired.com — 95%</b> статей починаються з «Comment Loader Save StorySave this story…», <b>xda — 81%</b> з «Sign in to your XDA account», <b>pravda — 66%</b> містять «Реклама:», sud.ua — «Слідкуйте за актуальними новинами…». Рекомендація: словничок host→регекс-чисток перед збереженням, або пріоритезувати markdown.new для цих хостів.</p>
+
+<h3>4 · Порожні описи: YouTube і paywall</h3>
+<p>156 статей/30д із геть порожнім описом: <b>youtube+youtu.be — 89</b> (трейлери: тексту нема в принципі, у промпт іде лише заголовок), решта — paywall/бот-стіни після reddit-rewrite (<span class="mono">reuters 12, bloomberg 5, nytimes 3, wsj 3, axios 4</span>; economist/nyt мають найгірший відсоток «слабких» описів серед прямих фетчів). Для YouTube можна тягнути опис відео через oEmbed або просто маркувати «[trailer]»; для paywall-хостів чесніше зберігати reddit-заголовок+тред як опис (зараз болванка викидається, а сторінка не віддається).</p>
+
+<h3>5 · Сервісний шум у політичному каналі</h3>
+<p>t.me-фіди приносять у Step-1 (і інколи в дайджест-промпт, як у нашому бенчі): <b>412 донат-постів</b> (за «monobank»), <b>93 «повітряна тривога» + 68 «відбій»</b> за 30 днів. Це готові кандидати в <code>preferences.mute</code> категорії politics: <code>повітряна тривога</code>, <code>відбій тривоги</code>, <code>monobank</code> (обережно з коротким <code>збір</code> — зачепить legitimate новини). Доповнює франшизні пропозиції в <span class="mono">mute-suggestions.yaml</span>.</p>
+
+<h3>6 · Reddit: рішення вже на гілці</h3>
+<p><span class="mono">RedditLinkExtractor</span> (гілка <span class="mono">reaction-feedback</span>) вже перенаправляє лінк-пости на справжню статтю — у знімку лишилось 955 болванок «submitted by … [link]» проти ~14&nbsp;тис. історично, і це переважно селф-/медіа-пости, які за дизайном лишаються. Побічний ефект: перенаправлені лінки на paywall-хости дають порожні описи (див. п.4) — наступна ітерація тієї ж роботи.</p>
+
+<p class="eyebrow">Додаток</p>
+<h2>Відтворюваність</h2>
+<p class="small">Скрипти й сирі виводи лежать у scratchpad сесії: <span class="mono">bench.mjs</span> (раннер з ретраями і резюмом), <span class="mono">bench-input.json</span> (зафіксовані промпти), <span class="mono">results.jsonl</span> (115 викликів), <span class="mono">digests.md / summaries.md</span> (усі виводи поруч із джерелами), <span class="mono">quality*.mjs</span> (SQL-аудит). Ключ читається з <span class="mono">config.yaml</span> і ніде не зберігається. Gemma 4 (обидві), GLM-5.2 і Nemotron 3.5 Lightning варто перебенчити іншого дня — сьогодні їхні free-ендпоінти лежали весь ранок.</p>
+</main>
