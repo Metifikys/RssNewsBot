@@ -152,8 +152,11 @@ weekly:
 # affinity scores (franchise / event type / subject / source domain) in the audience_affinity
 # table, surfaced in the /status snapshot. Nothing reads the scores for selection yet — later
 # phases plug them into the shortlist ranker and prompts. Requires telegram.updatesPolling: true
-# to actually accumulate reactions. NOTE: the effective learning window is capped by
-# summaryHistory.retentionDays (covered_events supplies the dimensions and is pruned with it).
+# to actually accumulate reactions. covered_events supplies the dimensions for every reaction,
+# so while feedback.enabled is true its retention is stretched to max(summaryHistory.retentionDays,
+# lookbackDays) automatically — a 14-day retention used to silently truncate a 90-day lookback and
+# throw away ~72% of the collected reactions. Step-1 context stays bounded by dedup.contextDays,
+# so the only cost of the longer window is disk.
 feedback:
   enabled: false
   attributionHours: 36     # posts younger than this are too fresh to learn from
@@ -170,6 +173,31 @@ feedback:
   #   "🤡": 1.0            # e.g. an audience that uses 🤡 approvingly
   #   "custom:5368742036018122275": 0.75
 
+# Optional: manual, editor-controlled content preferences — the deterministic counterpart to the
+# learned reaction-feedback loop above. Where `feedback` LEARNS soft nudges from reactions (and can
+# never override newsworthiness), `preferences` are hard rules you set by hand.
+#
+# `mute`: a keyword blocklist applied BEFORE Step-1, so matching articles never reach the LLM at all
+# (saving tokens) and never appear in a digest. Matching is WHOLE-WORD and case-insensitive against
+# each article's title AND description: `cod` matches "CoD" and "CoD: Warzone" but NOT "code" or
+# "codex"; a multi-word entry like `call of duty` matches only that phrase. Applies to EVERY category
+# (global). Omit the block (or use an empty list) to mute nothing — the default.
+# preferences:
+#   mute:
+#     # Prefer specific multi-word keys — they can't collide with unrelated words. Example: drop all
+#     # Call of Duty coverage across every channel.
+#     - call of duty
+#     - black ops
+#     - warzone
+#     - modern warfare
+#     # Single-word keys are fine when distinctive (word-boundary matching prevents "diablo" ⊄ …):
+#     - diablo
+#     - palworld
+#     # Caveat: short/ambiguous keys are risky here BECAUSE this list is global — e.g. `cod` would
+#     # also hit "cod" (the fish) in a science channel, and `lol` would match casual "lol" anywhere.
+#     # Use multi-word keys, or scope the risky key to one channel via a category-level `mute:` list
+#     # (see the gaming category below) — the two lists are merged per category.
+
 categories:
   tech:
     emoji: "💻"
@@ -180,6 +208,13 @@ categories:
   gaming:
     emoji: "🎮"
     channelId: "@my_gaming_channel"
+    # Category-scoped keyword mute, MERGED with the global `preferences.mute` above (an article is
+    # dropped before Step-1 if it matches EITHER list). Same whole-word, case-insensitive matching.
+    # Use it for keys you want gone from THIS channel only — e.g. mute the short/ambiguous `cod`
+    # here without risking "cod" (the fish) in a science category.
+    # mute:
+    #   - cod
+    #   - league of legends
     # When true, each bullet is sent as a Telegram photo+caption (single post) if the
     # first linked article has an image extracted from RSS. Defaults to false.
     enableImages: true

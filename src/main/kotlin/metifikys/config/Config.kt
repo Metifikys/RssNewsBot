@@ -179,6 +179,7 @@ data class AppConfig(
     val admin: AdminConfig = AdminConfig(),
     val weekly: WeeklyConfig? = null,
     val feedback: FeedbackConfig = FeedbackConfig(),
+    val preferences: PreferencesConfig = PreferencesConfig(),
     /**
      * Per-(provider, model) prices used by `/status` cost stats. Costs are in USD per
      * 1,000,000 tokens (matches how OpenAI / Anthropic publish their pricing pages).
@@ -188,6 +189,25 @@ data class AppConfig(
      * [metifikys.ai.LlmPricing].
      */
     val pricing: List<LlmPriceEntry> = emptyList()
+)
+
+/**
+ * Manual, editor-controlled content preferences — the deterministic counterpart to the
+ * learned reaction-affinity loop ([FeedbackConfig]). Where affinity is a soft, clamped
+ * tiebreaker that never overrides newsworthiness, these are hard rules the operator sets by
+ * hand in YAML.
+ *
+ * Currently only [mute]: a keyword blocklist applied BEFORE Step-1, so muted articles never
+ * reach the LLM at all (saving tokens) and never appear in a digest. See
+ * [metifikys.digest.TopicMuteFilter] for the matching semantics (whole-word, case-insensitive).
+ */
+data class PreferencesConfig(
+    /**
+     * Keywords/phrases whose articles are dropped outright. Matched whole-word and
+     * case-insensitively against each article's title and description, e.g. `call of duty`,
+     * `warzone`, `cod`. Empty (default) = nothing is muted.
+     */
+    val mute: List<String> = emptyList()
 )
 
 /**
@@ -453,7 +473,15 @@ data class CategoryConfig(
      * `threshold`. The detector only writes to the log — it never mutates article
      * state. Designed as a stat-collection pass before committing to a hard filter.
      */
-    val semanticDedup: SemanticDedupConfig? = null
+    val semanticDedup: SemanticDedupConfig? = null,
+    /**
+     * Category-scoped keyword mute, merged with the global [PreferencesConfig.mute]: an article
+     * in this category is dropped before Step-1 if it matches EITHER list. Same whole-word,
+     * case-insensitive matching as the global list (see [metifikys.digest.TopicMuteFilter]). Use
+     * it for keys you only want gone from one channel — e.g. mute "cod" here without risking the
+     * fish in a science category. Empty (default) = only the global list applies.
+     */
+    val mute: List<String> = emptyList()
 )
 
 /**
@@ -828,6 +856,10 @@ object ConfigLoader {
             }
         }
 
+        config.preferences.mute.forEachIndexed { i, kw ->
+            require(kw.isNotBlank()) { "preferences.mute[$i] must not be blank" }
+        }
+
         // Validate database path — no traversal, must not be blank
         val dbPath = config.database.path
         require(dbPath.isNotBlank()) { "Database path must not be blank" }
@@ -860,6 +892,9 @@ object ConfigLoader {
                         "Category '$name' feed '${feed.url}' requested Codex CLI summarization but no codexCli: block is configured"
                     }
                 }
+            }
+            category.mute.forEachIndexed { i, kw ->
+                require(kw.isNotBlank()) { "Category '$name' mute[$i] must not be blank" }
             }
             category.dedup?.digest?.ranker?.let { r ->
                 require(r.reactionWeight in 0.0..1.0) {

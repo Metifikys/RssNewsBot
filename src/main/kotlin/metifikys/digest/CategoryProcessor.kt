@@ -67,6 +67,15 @@ open class CategoryProcessor(
     private val extractorCounters = ConcurrentHashMap<String, AtomicLong>()
 
     /**
+     * Hard keyword mute applied before Step-1, per category: the global `preferences.mute` list
+     * merged with each category's own `mute` list. Empty filter when neither is configured.
+     */
+    private val muteFilters: Map<String, TopicMuteFilter> =
+        config.categories.mapValues { (_, cat) ->
+            TopicMuteFilter.of(config.preferences.mute + cat.mute)
+        }
+
+    /**
      * Processes each ready category independently — categories never block each other:
      *  - Batch route: `submitCategoryBatch()` returns a CompletableFuture and delivery fires from
      *    its callback, so the submitting worker returns immediately.
@@ -145,10 +154,24 @@ open class CategoryProcessor(
      * early-out below is a `return` (these were `continue` when this body ran inside the
      * per-category loop).
      */
-    private fun processCategory(name: String, articles: List<Article>) {
+    private fun processCategory(name: String, allArticles: List<Article>) {
         val categoryConfig = config.categories[name] ?: return
         val historyMaxCount = config.summaryHistory.maxCount
-        val chunkSize = 100
+        val chunkSize = 50
+
+        // ── Step 0: hard keyword mute (preferences.mute + category mute) ──────
+        // Deterministic, editor-controlled drop applied before Step-1: muted articles never
+        // reach the LLM (saves tokens) and are marked PROCESSED so they leave the queue for good.
+        val muteFilter = muteFilters[name] ?: TopicMuteFilter.EMPTY
+        val articles = if (muteFilter.isEmpty()) allArticles else {
+            val (muted, kept) = allArticles.partition { muteFilter.matches(it) }
+            if (muted.isNotEmpty()) {
+                db.markProcessed(muted.map { it.link })
+                logger.info { "[Category:$name] Muted ${muted.size} article(s) via preferences.mute; ${kept.size} remain." }
+            }
+            kept
+        }
+        if (articles.isEmpty()) return
 
         // ── Step 1: pre-cycle gate ─────────────────────────────────────────────
         // (a) basic floor — too few articles to bother with the LLM at all

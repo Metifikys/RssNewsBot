@@ -22,6 +22,7 @@ import metifikys.config.DigestConfig
 import metifikys.config.FeedConfig
 import metifikys.config.LlmOverride
 import metifikys.config.OpenAIConfig
+import metifikys.config.PreferencesConfig
 import metifikys.config.ProcessingConfig
 import metifikys.config.RankerConfig
 import metifikys.config.SchedulerConfig
@@ -236,6 +237,67 @@ class CategoryProcessorTest {
         p.process(mapOf("tech" to listOf(article(1), article(2), article(3))))
 
         verify { db.fetchRecentSummaries("tech", 2) }
+    }
+
+    // ── process(): keyword mute (preferences.mute + category mute) ──────────────
+
+    private fun titled(n: Int, title: String) = Article(
+        category = "tech", title = title, link = "https://example.com/$n", description = "desc $n"
+    )
+
+    @Test
+    fun `global preferences mute drops matching articles before Step-1`() {
+        // minArticles high so the surviving article can't trigger submission — we only assert the drop.
+        val config = cfg(minArticles = 5).copy(preferences = PreferencesConfig(mute = listOf("warzone")))
+        val (p, db, factory) = deps(config)
+
+        p.process(mapOf("tech" to listOf(
+            titled(1, "New Warzone season launches"),
+            titled(2, "Elden Ring DLC review")
+        )))
+
+        verify { db.markProcessed(listOf("https://example.com/1")) }
+        verify(exactly = 0) { factory.forBatch(any()) }
+    }
+
+    @Test
+    fun `category mute is merged with the global list`() {
+        // Global mutes 'warzone'; the category additionally mutes 'cod'. Both must drop.
+        val cat = cat().copy(mute = listOf("cod"))
+        val config = cfg(minArticles = 5, category = cat)
+            .copy(preferences = PreferencesConfig(mute = listOf("warzone")))
+        val (p, db, factory) = deps(config)
+
+        p.process(mapOf("tech" to listOf(
+            titled(1, "New Warzone map"),      // global
+            titled(2, "CoD ranked play update"), // category
+            titled(3, "How to write clean code") // 'cod' must NOT match 'code'
+        )))
+
+        verify { db.markProcessed(listOf("https://example.com/1", "https://example.com/2")) }
+        verify(exactly = 0) { factory.forBatch(any()) }
+    }
+
+    @Test
+    fun `surviving articles proceed to submission after mute`() {
+        val config = cfg(minArticles = 1).copy(preferences = PreferencesConfig(mute = listOf("warzone")))
+        val (p, _, factory, _, deliverer) = deps(config)
+        val client = mockk<LlmClient>()
+        every { factory.forBatch(any()) } returns client
+        every { client.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("digest")
+        every { deliverer.deliver(any(), any(), any(), any()) } just Runs
+
+        p.process(mapOf("tech" to listOf(
+            titled(1, "Warzone patch notes"),  // dropped
+            titled(2, "Half-Life 3 confirmed"),
+            titled(3, "Silksong release date")
+        )))
+
+        // Only the two survivors are handed to the batch; the muted link is absent.
+        val submitted = slot<metifikys.model.CategoryInput>()
+        verify { client.submitCategoryBatch(eq("tech"), capture(submitted)) }
+        val links = submitted.captured.articles.map { it.link }
+        assertEquals(listOf("https://example.com/2", "https://example.com/3"), links)
     }
 
     // ── process(): dedup path ──────────────────────────────────────────────────
