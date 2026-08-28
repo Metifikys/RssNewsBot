@@ -14,6 +14,8 @@ import metifikys.config.TelegramConfig
 import metifikys.db.NewsDatabase
 import metifikys.db.SummaryRecord
 import metifikys.model.Article
+import metifikys.model.ShortlistItem
+import metifikys.telegram.SentRef
 import metifikys.telegram.TelegramSender
 import java.time.LocalDateTime
 import kotlin.test.Test
@@ -40,6 +42,13 @@ class DigestDelivererTest {
         link = "https://example.com/$n",
         description = "desc $n",
         pubDate = LocalDateTime.now()
+    )
+
+    private fun shortlistItem(eventKey: String, url: String) = ShortlistItem(
+        eventKey = eventKey,
+        coreFact = "fact for $eventKey",
+        url = url,
+        status = "new"
     )
 
     @Test
@@ -73,6 +82,52 @@ class DigestDelivererTest {
 
         verify(exactly = 0) { sender.sendToChannel(any(), any(), any()) }
         verify { db.markUnprocessed(articles.map { it.link }) }
+    }
+
+    @Test
+    fun `partial send does not record the failed topic's event as covered`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+
+        val articles = listOf(article(1), article(2))
+        val shortlist = listOf(shortlistItem("evt-1", article(1).link), shortlistItem("evt-2", article(2).link))
+        val summary = "• **First.**\n\n[Title 1](https://example.com/1)\n" +
+            "• **Second.**\n\n[Title 2](https://example.com/2)"
+
+        // Topic 1 delivers, topic 2 fails to send.
+        every { sender.sendToChannel(any(), match { it.contains("/1") }, any()) } returns listOf(SentRef(-100L, 11L))
+        every { sender.sendToChannel(any(), match { it.contains("/2") }, any()) } returns emptyList()
+
+        DigestDeliverer(config(), db, sender).deliver("tech", summary, articles, shortlist)
+
+        // The failed topic's article stays UNPROCESSED for retry...
+        verify { db.markUnprocessed(listOf(article(2).link)) }
+        // ...so its event must NOT land in covered_events: a covered row would make Step 1 call
+        // the retry a duplicate and the story would never reach the channel.
+        verify {
+            db.insertCoveredEvents(match { rows -> rows.map { it.eventKey } == listOf("evt-1") })
+        }
+    }
+
+    @Test
+    fun `fully successful send records every shortlist event as covered`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendToChannel(any(), any(), any()) } returns listOf(SentRef(-100L, 11L))
+
+        val articles = listOf(article(1), article(2))
+        val shortlist = listOf(shortlistItem("evt-1", article(1).link), shortlistItem("evt-2", article(2).link))
+        val summary = "• **First.**\n\n[Title 1](https://example.com/1)\n" +
+            "• **Second.**\n\n[Title 2](https://example.com/2)"
+
+        DigestDeliverer(config(), db, sender).deliver("tech", summary, articles, shortlist)
+
+        verify {
+            db.insertCoveredEvents(match { rows -> rows.map { it.eventKey }.toSet() == setOf("evt-1", "evt-2") })
+        }
+        verify(exactly = 0) { db.markUnprocessed(any()) }
     }
 
     @Test

@@ -222,11 +222,22 @@ class DigestDeliverer(
 
                 val partialSummary = sentTopics.joinToString("\n• ", prefix = "• ")
                 db.saveSummary(categoryName, partialSummary, sentTopics.size)
-                persistCoveredEvents(categoryName, shortlist)
+
+                // An event whose topic failed to send must NOT be recorded as covered: its
+                // articles are deliberately kept UNPROCESSED for retry, but a covered_events
+                // row makes Step 1 classify that retry as a duplicate and drop it — so the
+                // event would silently never reach the channel. Same "success wins on overlap"
+                // policy as the link reconciliation above.
+                val sentEventKeys = (topics.indices - failedTopicIdx.toSet())
+                    .flatMap { topicUrls[it] }.mapNotNull { eventKeyByUrl[it] }.toSet()
+                val unsentEventKeys = failedTopicIdx
+                    .flatMap { topicUrls[it] }.mapNotNull { eventKeyByUrl[it] }.toSet() - sentEventKeys
+                persistCoveredEvents(categoryName, shortlist?.filterNot { it.eventKey in unsentEventKeys })
 
                 logger.warn {
                     "Category '$categoryName' partial: ${sentTopics.size}/${topics.size} sent, " +
-                        "${toUnprocess.size} link(s) kept UNPROCESSED for retry, ${toProcess.size} marked PROCESSED."
+                        "${toUnprocess.size} link(s) kept UNPROCESSED for retry, ${toProcess.size} marked PROCESSED" +
+                        (if (unsentEventKeys.isEmpty()) "." else ", ${unsentEventKeys.size} event(s) left uncovered for retry: $unsentEventKeys")
                 }
             }
         }
