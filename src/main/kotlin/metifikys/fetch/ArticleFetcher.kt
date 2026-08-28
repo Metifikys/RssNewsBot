@@ -72,6 +72,44 @@ class ArticleFetcher(
         /** BUG-021: max concurrent page fetches during enrichment. */
         private const val FETCH_PARALLELISM = 8
 
+        /**
+         * Site chrome that jsoup/markdown.new extraction drags in from the page shell —
+         * login nudges, share bars, "follow us" plugs, ad markers. It sits at the START of
+         * the extracted text on the worst hosts (95% of wired.com rows began with the
+         * save-story widget; 81% of XDA rows with the sign-in nudge), so it eats the most
+         * valuable chars of the [maxContentLength] budget. Removed BEFORE truncation.
+         * Literal, host-agnostic patterns only — when in doubt, leave the text alone.
+         */
+        private val CHROME_PATTERNS = listOf(
+            // wired.com: repeated "Comment Loader Save StorySave this story" prefix
+            Regex("""(?:Comment Loader\s*)*(?:Save StorySave this story\s*)+"""),
+            // xda-developers.com
+            Regex("""Sign in to your XDA account\s*"""),
+            // sciencenews.org share bar: "Share this: … (Opens in new window) … Print"
+            Regex("""Share this:.{0,400}?\(Opens in new window\)\s*Print\b""", RegexOption.DOT_MATCHES_ALL),
+            // sud.ua
+            Regex("""Слідкуйте за актуальними новинами у соцмережах SUD\.UA\s*"""),
+            Regex("""Тільки актуальне: читайте SUD\.UA у Telegram\s*"""),
+            Regex("""Підписуйтесь на наш Telegram-канал[^.!?]{0,120}"""),
+            // pravda.com.ua / eurointegration
+            Regex("""Підписуйся на [«"]Європейську правду[»"]!?\s*"""),
+            Regex("""Якщо ви помітили помилку, виділіть необхідний текст і натисніть Ctrl ?\+ ?Enter[^.!?]*[.!?]?"""),
+            Regex("""Шановні читачі, просимо дотримуватись Правил коментування\s*"""),
+            Regex("""\bРеклама:\s*"""),
+        )
+
+        /** Meta-tag fallbacks tried when body extraction yields nothing; first non-trivial wins. */
+        private val META_DESCRIPTION_SELECTORS = listOf(
+            "meta[property=og:description]",
+            "meta[name=twitter:description]",
+            "meta[name=description]"
+        )
+
+        /** A meta description shorter than this is a stub ("Read more…") — not worth storing. */
+        private const val MIN_META_DESCRIPTION_LENGTH = 40
+
+        private val WHITESPACE_RUNS = Regex("""\s{2,}""")
+
         /** BUG-021: hard cap on total enrichment wall-clock per call, so the scheduler thread
          * is never blocked for the worst-case N × 20s. Articles not fetched in time are returned
          * unchanged (enrichment is best-effort by contract). */
@@ -173,10 +211,14 @@ class ArticleFetcher(
         if (article.link.isBlank() || !passesUrlValidation(article.link)) return article
 
         return try {
-            val markdown = fetchMarkdownNew(article.link)
+            val markdown = fetchMarkdownNew(article.link)?.let { cleanExtractedText(it) }?.takeIf { it.isNotBlank() }
             val html = fetchHtml(article.link)
 
-            val text = markdown ?: html?.let { extractText(it, article.link) }
+            val text = markdown
+                ?: html?.let { h ->
+                    extractText(h, article.link)?.let { cleanExtractedText(it) }?.takeIf { it.isNotBlank() }
+                        ?: extractMetaDescription(h, article.link)
+                }
             if (text.isNullOrBlank()) {
                 logger.warn { "[ArticleFetcher] No usable content extracted from '${article.link}'" }
             } else {
@@ -225,16 +267,21 @@ class ArticleFetcher(
 
         return try {
             // Strategy 1: markdown.new (purpose-built content extraction)
-            val markdown = fetchMarkdownNew(article.link)
+            val markdown = fetchMarkdownNew(article.link)?.let { cleanExtractedText(it) }?.takeIf { it.isNotBlank() }
             if (markdown != null) {
                 logger.info { "[ArticleFetcher] Enriched via markdown.new '${article.link}' (${markdown.length} chars)" }
                 return article.copy(description = markdown.take(maxContentLength))
             }
 
-            // Strategy 2: Fallback to Jsoup HTML extraction
+            // Strategy 2: Fallback to Jsoup HTML extraction; when body extraction yields
+            // nothing, fall through to the page's own meta description (paywall/JS-shell
+            // pages usually still serve the lede there).
             logger.info { "[ArticleFetcher] Falling back to Jsoup for '${article.link}'" }
             val html = fetchHtml(article.link) ?: return article
-            val extracted = extractText(html, article.link)
+            val extracted = extractText(html, article.link)?.let { cleanExtractedText(it) }?.takeIf { it.isNotBlank() }
+                ?: extractMetaDescription(html, article.link)?.also {
+                    logger.info { "[ArticleFetcher] Body extraction empty — using meta description for '${article.link}'" }
+                }
             if (extracted.isNullOrBlank()) {
                 logger.warn { "[ArticleFetcher] No usable content extracted from '${article.link}'" }
                 article
@@ -380,6 +427,34 @@ class ArticleFetcher(
             }
             response.body?.string()
         }
+    }
+
+    /**
+     * Scrubs known site chrome (see [CHROME_PATTERNS]) out of extracted article text and
+     * collapses the whitespace the removals leave behind. Applied to BOTH extraction paths
+     * (markdown.new and jsoup) before the [maxContentLength] cut, so the budget goes to
+     * article content rather than page shell.
+     */
+    internal fun cleanExtractedText(text: String): String {
+        var out = text
+        for (pattern in CHROME_PATTERNS) out = pattern.replace(out, " ")
+        return out.replace(WHITESPACE_RUNS, " ").trim()
+    }
+
+    /**
+     * Last-resort text source when body extraction yields nothing: the page's own
+     * `og:description` / `twitter:description` / `meta description`. Paywalled and
+     * JS-shell pages (Reuters/Bloomberg teasers behind reddit rewrites, YouTube watch
+     * pages) usually still serve the lede there, which beats storing an empty
+     * description that leaves the digest LLM with only a title.
+     */
+    internal fun extractMetaDescription(html: String, baseUrl: String): String? {
+        val doc: Document = Jsoup.parse(html, baseUrl)
+        for (selector in META_DESCRIPTION_SELECTORS) {
+            val content = doc.selectFirst(selector)?.attr("content")?.trim().orEmpty()
+            if (content.length >= MIN_META_DESCRIPTION_LENGTH) return cleanExtractedText(content)
+        }
+        return null
     }
 
     /**
