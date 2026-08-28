@@ -9,6 +9,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.CategoryConfig
 import metifikys.config.FeedConfig
 import metifikys.model.Article
+import metifikys.model.HtmlText
 import org.jsoup.Jsoup
 import java.net.HttpURLConnection
 import java.net.URL
@@ -423,7 +424,11 @@ class RssFetcher(
                         category = category,
                         title = entry.title ?: "",
                         link = reddit?.link ?: permalink,
-                        description = reddit?.description ?: description,
+                        // Store plain text: feed HTML (t.me mirrors, WordPress excerpts, reddit
+                        // self-post bodies) otherwise eats a large share of the per-article
+                        // prompt budget downstream. Image extraction below still sees the RAW
+                        // description — the <img>/thumbnail lives in the markup being stripped.
+                        description = HtmlText.strip(reddit?.description ?: description),
                         pubDate = pubDate,
                         imageUrl = extractImageUrl(entry, description),
                         // A rewritten entry has no body of its own, so the page behind the

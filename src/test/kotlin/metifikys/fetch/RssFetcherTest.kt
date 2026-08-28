@@ -76,6 +76,31 @@ class RssFetcherTest {
     }
 
     @Test
+    fun `fetchFeed stores descriptions as plain text, markup stripped at ingestion`() {
+        val rss = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel>
+                <title>Test Feed</title>
+                <link>https://example.com</link>
+                <item>
+                  <title>HTML entry</title>
+                  <link>https://example.com/html</link>
+                  <description>&lt;p&gt;&lt;b&gt;Перший&lt;/b&gt; факт зі &lt;a href="https://example.com/x" onclick="confirm()"&gt;лінком&lt;/a&gt;.&lt;/p&gt;&lt;br&gt;Другий&amp;#32;факт.</description>
+                </item>
+              </channel>
+            </rss>
+        """.trimIndent().toByteArray()
+
+        withLocalFeed(rss) { url ->
+            val result = fetcher.fetchFeed(FeedConfig(url), "tech")
+            assertEquals(1, result.size)
+            // Tags gone, entities decoded, anchor text kept, attribute junk dropped.
+            assertEquals("Перший факт зі лінком. Другий факт.", result[0].description)
+        }
+    }
+
+    @Test
     fun `fetchFeed extracts image URL from enclosure`() {
         val rss = """
             <?xml version="1.0" encoding="UTF-8"?>

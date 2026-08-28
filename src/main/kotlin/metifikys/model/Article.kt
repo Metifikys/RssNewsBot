@@ -17,7 +17,12 @@ data class Article(
     /** Ephemeral — not persisted. Provider name from [FeedConfig.summarize][metifikys.config.FeedConfig.summarize]. */
     val summarize: String? = null
 ) {
-    /** Body text used in digest LLM prompts: prefer LLM summary when present, otherwise raw description. */
+    /**
+     * Body text used in digest LLM prompts: prefer LLM summary when present, otherwise the
+     * description. The description is HTML-stripped defensively — new rows are already stored
+     * clean by RssFetcher, but rows written before that change (and any path that bypasses it)
+     * still carry raw feed markup, which would eat the [maxChars] budget.
+     */
     fun promptText(maxChars: Int = 1000): String =
-        (summary?.takeIf { it.isNotBlank() } ?: description).take(maxChars)
+        (summary?.takeIf { it.isNotBlank() } ?: HtmlText.strip(description)).take(maxChars)
 }
