@@ -172,9 +172,10 @@ class NewsBot(
 
     fun start() {
         logger.info { "RssNewsBot started." }
-        val syncProvider = if (config.openrouter != null) "openrouter(${config.openrouter.model})" else "openai(${config.openai.model})"
-        val extractorProvider = if (config.openrouter != null) {
-            "openai(${config.openai.model}) + openrouter(${config.openrouter.model}) on every 2nd request"
+        val orModels = config.openrouter?.modelPriority?.joinToString(" → ")
+        val syncProvider = if (orModels != null) "openrouter($orModels)" else "openai(${config.openai.model})"
+        val extractorProvider = if (orModels != null) {
+            "openai(${config.openai.model}) + openrouter($orModels) on every 2nd request"
         } else {
             "openai(${config.openai.model})"
         }

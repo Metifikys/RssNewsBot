@@ -30,6 +30,7 @@ class LlmClientsFactoryTest {
 
     private fun config(
         withOpenRouter: Boolean = true,
+        orModels: List<String> = emptyList(),
         withAnthropic: Boolean = false,
         withClaudeCli: Boolean = false,
         claudeCliModel: String = "claude-cli-default",
@@ -39,7 +40,7 @@ class LlmClientsFactoryTest {
     ) = AppConfig(
         telegram = TelegramConfig(botToken = "tok"),
         openai = OpenAIConfig(apiKey = "sk-test", model = "gpt-default", batchModel = "gpt-batch-default"),
-        openrouter = if (withOpenRouter) OpenRouterConfig(apiKey = "or", model = "router-default") else null,
+        openrouter = if (withOpenRouter) OpenRouterConfig(apiKey = "or", model = "router-default", models = orModels) else null,
         anthropic = if (withAnthropic) AnthropicConfig(
             apiKey = "ant-key",
             model = "claude-default",
@@ -600,5 +601,63 @@ class LlmClientsFactoryTest {
         val client = factory.forBatchFallback(cat)
         assertNotNull(client)
         assertTrue(client is FallbackLlmClient)
+    }
+
+    // ─── OpenRouter `models:` priority ladder on the global default ───
+
+    @Test
+    fun `forSummarize openrouter default walks the models ladder in order`() {
+        val factory = LlmClientsFactory(config(orModels = listOf("or/m1", "or/m2", "or/m3")), db)
+        val client = factory.forSummarize(null, "openrouter")
+
+        assertTrue(client is FallbackLlmClient)
+        assertEquals("or/m1", client.primary.endpoint.model)
+        val second = client.fallback
+        assertTrue(second is FallbackLlmClient)
+        assertEquals("or/m2", second.primary.endpoint.model)
+        assertEquals("or/m3", second.fallback.endpoint.model)
+        assertFalse(second.fallback is FallbackLlmClient)
+    }
+
+    @Test
+    fun `forSummarize openrouter default with single model builds no chain`() {
+        val factory = LlmClientsFactory(config(), db)
+        val client = factory.forSummarize(null, "openrouter")
+        assertFalse(client is FallbackLlmClient)
+        assertEquals("router-default", client.endpoint.model)
+    }
+
+    @Test
+    fun `forRender default honors the models ladder`() {
+        val factory = LlmClientsFactory(config(orModels = listOf("or/m1", "or/m2")), db)
+        val client = factory.forRender(null)
+        assertTrue(client is FallbackLlmClient)
+        assertEquals("or/m1", client.primary.endpoint.model)
+        assertEquals("or/m2", client.fallback.endpoint.model)
+    }
+
+    @Test
+    fun `forExtract default alternate honors the models ladder`() {
+        val factory = LlmClientsFactory(config(orModels = listOf("or/m1", "or/m2")), db)
+        val (primary, alternate) = factory.forExtract(null)
+        assertEquals("gpt-default", primary.endpoint.model)
+        assertNotNull(alternate)
+        assertTrue(alternate is FallbackLlmClient)
+        assertEquals("or/m1", alternate.primary.endpoint.model)
+    }
+
+    @Test
+    fun `category summarize override pins one model and bypasses the ladder`() {
+        val factory = LlmClientsFactory(
+            config(
+                orModels = listOf("or/m1", "or/m2"),
+                categories = mapOf("sports" to cat(CategoryLlmOverrides(summarize = LlmOverride("openrouter", "or/pinned"))))
+            ),
+            db
+        )
+        val cat = cat(CategoryLlmOverrides(summarize = LlmOverride("openrouter", "or/pinned")))
+        val client = factory.forSummarize(cat, "openrouter")
+        assertFalse(client is FallbackLlmClient)
+        assertEquals("or/pinned", client.endpoint.model)
     }
 }

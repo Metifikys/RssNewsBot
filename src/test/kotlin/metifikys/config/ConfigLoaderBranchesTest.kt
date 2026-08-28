@@ -264,7 +264,7 @@ class ConfigLoaderBranchesTest {
                   - https://example.com/rss
         """.trimIndent()
         val ex = assertThrows<IllegalArgumentException> { load(yaml) }
-        assertTrue(ex.message!!.contains("OpenRouter model"))
+        assertTrue(ex.message!!.contains("OpenRouter needs `model`"))
     }
 
     @Test
@@ -1444,6 +1444,72 @@ class ConfigLoaderBranchesTest {
         assertNotNull(ovr)
         assertEquals(true, ovr.extract?.batch)
         assertEquals(true, ovr.extractAlternate?.batch)
+    }
+
+    // ─── OpenRouter `models:` priority ladder ───
+
+    /**
+     * Minimal valid config with an `openrouter:` block whose model lines are [modelLines]
+     * (each re-indented under the block). Built flush-left so load()'s trimIndent is a no-op —
+     * interpolating blocks into a trimIndent template breaks YAML sibling indentation.
+     */
+    private fun openRouterYaml(vararg modelLines: String): String {
+        val extra = modelLines.joinToString("") { "  $it\n" }
+        return "telegram:\n  botToken: \"t\"\n" +
+            "openai:\n  apiKey: \"sk\"\n" +
+            "openrouter:\n  apiKey: \"or-key\"\n" + extra +
+            "database:\n  path: \"/tmp/test.db\"\n" +
+            "scheduler:\n  intervalMinutes: 60\n" +
+            "categories:\n  sports:\n    emoji: \"x\"\n    channelId: \"@sports\"\n" +
+            "    feeds:\n      - https://example.com/rss\n"
+    }
+
+    @Test
+    fun `openrouter models list parses and drives modelPriority in order`() {
+        val cfg = load(openRouterYaml("models:", "  - \"a/one:free\"", "  - \"b/two:free\""))
+        assertEquals(listOf("a/one:free", "b/two:free"), cfg.openrouter?.modelPriority)
+    }
+
+    @Test
+    fun `openrouter single model still resolves as one-element priority`() {
+        val cfg = load(openRouterYaml("model: \"a/solo:free\""))
+        assertEquals(listOf("a/solo:free"), cfg.openrouter?.modelPriority)
+    }
+
+    @Test
+    fun `openrouter models replaces model when both are set`() {
+        val cfg = load(openRouterYaml("model: \"ignored/old:free\"", "models:", "  - \"a/one:free\""))
+        assertEquals(listOf("a/one:free"), cfg.openrouter?.modelPriority)
+    }
+
+    @Test
+    fun `openrouter without model and models throws`() {
+        val ex = assertThrows<IllegalArgumentException> { load(openRouterYaml()) }
+        assertTrue(ex.message!!.contains("model"))
+    }
+
+    @Test
+    fun `openrouter models with blank entry throws`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(openRouterYaml("models:", "  - \"a/one:free\"", "  - \"  \""))
+        }
+        assertTrue(ex.message!!.contains("blank"))
+    }
+
+    @Test
+    fun `openrouter models with duplicates throws`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(openRouterYaml("models:", "  - \"a/one:free\"", "  - \"a/one:free\""))
+        }
+        assertTrue(ex.message!!.contains("duplicates"))
+    }
+
+    @Test
+    fun `openrouter models over the cap throws`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(openRouterYaml("models:", "  - \"a/1\"", "  - \"a/2\"", "  - \"a/3\"", "  - \"a/4\"", "  - \"a/5\""))
+        }
+        assertTrue(ex.message!!.contains("at most"))
     }
 
 }

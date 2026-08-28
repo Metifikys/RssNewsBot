@@ -22,6 +22,16 @@ openrouter:
   # Set via env var OPENROUTER_API_KEY or replace the placeholder below
   apiKey: "YOUR_OPENROUTER_API_KEY"
   model: "provider/your-free-model"      # prefixed model name, e.g. some-provider/free-tier-model
+  # Optional priority ladder for free-tier flakiness. When `models` is set it REPLACES
+  # `model`: every sync call (summarize / render / extract-alternate on the global default)
+  # tries the first entry and walks down on failure — provider error, dead endpoint,
+  # exhausted retries. Max 4 entries, no duplicates or blanks. `/status` still attributes
+  # each call to the model that actually answered. A per-category `llm.*` override that
+  # pins provider+model bypasses the ladder deliberately.
+  # models:
+  #   - nvidia/nemotron-3-ultra-550b-a55b:free
+  #   - minimax/minimax-m3:free
+  #   - dots-studio/dots-3-note-preview:free
   baseUrl: "https://openrouter.ai/api/v1" # optional; this is the default
   httpReferer: "https://github.com/your/repo"  # optional attribution header
   xTitle: "RssNewsBot"                        # optional attribution header

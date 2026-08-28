@@ -290,14 +290,34 @@ data class OpenAIConfig(
  * Step 1 event extraction also uses it as the alternate endpoint for every second request,
  * while the Batch API path always stays on OpenAI (OpenRouter doesn't expose a compatible
  * Batch API).
+ *
+ * Model selection: either a single [model], or a priority-ordered [models] list. When
+ * [models] is set it REPLACES [model]: every sync call tries the first entry and walks
+ * down the list on failure (provider error, exhausted retries) via
+ * [metifikys.ai.FallbackLlmClient]. Free-tier endpoints come and go by the hour, so a
+ * dead first choice must not take summarize/render down with it. A per-category
+ * `llm.*` override that pins provider+model bypasses the ladder deliberately.
  */
 data class OpenRouterConfig(
     val apiKey: String,
-    val model: String,
+    val model: String = "",
+    val models: List<String> = emptyList(),
     val baseUrl: String = "https://openrouter.ai/api/v1",
     val httpReferer: String? = null,
     val xTitle: String? = null
-)
+) {
+    /** Priority-ordered candidate models: [models] when set, else the single [model]. */
+    val modelPriority: List<String>
+        get() = if (models.isNotEmpty()) models else listOf(model)
+
+    companion object {
+        /**
+         * Cap on the [models] ladder — matches the explicit fallback-chain depth cap
+         * (primary + 3): by the fourth dead endpoint the cycle is better off failing fast.
+         */
+        const val MAX_MODELS = 4
+    }
+}
 
 /**
  * Optional Anthropic provider.
@@ -739,7 +759,16 @@ object ConfigLoader {
             require(openRouter.apiKey.isNotBlank()) {
                 "OpenRouter apiKey must not be empty when openrouter block is present (set OPENROUTER_API_KEY env var or config.yaml)"
             }
-            require(openRouter.model.isNotBlank()) { "OpenRouter model must not be empty" }
+            require(openRouter.model.isNotBlank() || openRouter.models.isNotEmpty()) {
+                "OpenRouter needs `model` or a non-empty `models` priority list"
+            }
+            require(openRouter.models.none { it.isBlank() }) { "OpenRouter models list must not contain blank entries" }
+            require(openRouter.models.size == openRouter.models.distinct().size) {
+                "OpenRouter models list must not contain duplicates"
+            }
+            require(openRouter.models.size <= OpenRouterConfig.MAX_MODELS) {
+                "OpenRouter models list supports at most ${OpenRouterConfig.MAX_MODELS} entries"
+            }
             require(openRouter.baseUrl.isNotBlank()) { "OpenRouter baseUrl must not be empty" }
         }
         if (anthropic != null) {

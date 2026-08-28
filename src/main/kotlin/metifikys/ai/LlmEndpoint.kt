@@ -39,6 +39,11 @@ data class LlmEndpoint(
             )
         }
 
+        /**
+         * Endpoint for the global `openrouter:` block, carrying the FIRST model of the
+         * priority list. Callers that honor the whole `models:` ladder build per-model
+         * copies via [LlmEndpoint.copy] — see `LlmClientsFactory.forOpenRouterDefault`.
+         */
         fun forOpenRouter(config: AppConfig): LlmEndpoint? {
             val or = config.openrouter ?: return null
             val headers = buildMap {
@@ -48,7 +53,7 @@ data class LlmEndpoint(
             return LlmEndpoint(
                 baseUrl = or.baseUrl.trimEnd('/'),
                 apiKey = or.apiKey,
-                model = or.model,
+                model = or.modelPriority.first(),
                 extraHeaders = headers
             )
         }

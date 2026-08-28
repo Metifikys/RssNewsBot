@@ -24,11 +24,31 @@ class LlmClientsFactory(
 
     fun forRender(category: CategoryConfig?): LlmClient {
         val ovr = category?.llm?.render
-        val primary = meter(
-            client(resolve(ovr) { LlmEndpoint.forSync(config) }, batchCapable = false),
-            category, LlmUseCase.RENDER
-        )
+        if (ovr == null) {
+            // Global sync default (mirrors LlmEndpoint.forSync): OpenRouter — with its
+            // model-priority ladder — when configured, else OpenAI.
+            forOpenRouterDefault(category, LlmUseCase.RENDER)?.let { return it }
+            return meter(client(LlmEndpoint.forOpenAI(config), batchCapable = false), category, LlmUseCase.RENDER)
+        }
+        val primary = meter(client(overrideEndpoint(ovr), batchCapable = false), category, LlmUseCase.RENDER)
         return withFallback(ovr, primary, category, LlmUseCase.RENDER)
+    }
+
+    /**
+     * Client for the global `openrouter:` default, honoring the `models:` priority ladder:
+     * the first model is primary and each later one serves as the on-failure fallback for
+     * the one before it ([FallbackLlmClient] chain). Free-tier endpoints come and go by
+     * the hour — a dead first choice must not take the whole use case down with it. Each
+     * link is metered separately, so `/status` attributes every call to the model that
+     * actually answered. Null when no `openrouter:` block is configured; a single-model
+     * config degenerates to today's plain client.
+     */
+    private fun forOpenRouterDefault(category: CategoryConfig?, useCase: LlmUseCase): LlmClient? {
+        val or = config.openrouter ?: return null
+        val base = LlmEndpoint.forOpenRouter(config) ?: return null
+        return or.modelPriority
+            .map { m -> meter(client(base.copy(model = m), batchCapable = false), category, useCase) }
+            .reduceRight { primary, fallbackChain -> FallbackLlmClient(primary, fallbackChain) }
     }
 
     /**
@@ -65,9 +85,7 @@ class LlmClientsFactory(
             primary to alternate
         } else {
             val primary = meter(client(LlmEndpoint.forOpenAI(config), batchCapable = false), category, LlmUseCase.EXTRACT)
-            val alternate = LlmEndpoint.forOpenRouter(config)?.let {
-                meter(client(it, batchCapable = false), category, LlmUseCase.EXTRACT)
-            }
+            val alternate = forOpenRouterDefault(category, LlmUseCase.EXTRACT)
             primary to alternate
         }
     }
@@ -102,7 +120,8 @@ class LlmClientsFactory(
             overrideEndpoint(matchedOvr)
         } else when (feedProvider) {
             "openai" -> LlmEndpoint.forOpenAI(config)
-            "openrouter" -> LlmEndpoint.forOpenRouter(config)
+            // Default openrouter path honors the models: priority ladder (already metered).
+            "openrouter" -> return forOpenRouterDefault(category, LlmUseCase.SUMMARIZE)
                 ?: error("feed.summarize=openrouter but no openrouter: block configured")
             "anthropic" -> LlmEndpoint.forAnthropic(config)
                 ?: error("feed.summarize=anthropic but no anthropic: block configured")
@@ -183,9 +202,6 @@ class LlmClientsFactory(
         } else {
             "OpenRouter does not support the Batch API"
         }
-
-    private fun resolve(o: LlmOverride?, default: () -> LlmEndpoint): LlmEndpoint =
-        if (o != null) overrideEndpoint(o) else default()
 
     private fun overrideEndpoint(o: LlmOverride): LlmEndpoint = when (o.provider) {
         "openai" -> LlmEndpoint.forOpenAI(config).copy(model = o.model)
