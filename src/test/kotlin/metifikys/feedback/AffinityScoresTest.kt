@@ -12,9 +12,9 @@ class AffinityScoresTest {
 
     private val now: LocalDateTime = LocalDateTime.of(2026, 7, 14, 12, 0)
 
-    private fun row(dimension: String, key: String, score: Double) = AudienceAffinityRow(
+    private fun row(dimension: String, key: String, score: Double, nTone: Double = 5.0) = AudienceAffinityRow(
         category = "games", dimension = dimension, key = key,
-        n = 5.0, engagementZ = 0.0, sentiment = score, score = score, updatedAt = now
+        n = 5.0, nTone = nTone, engagementZ = 0.0, sentiment = score, score = score, updatedAt = now
     )
 
     private fun item(
@@ -67,6 +67,21 @@ class AffinityScoresTest {
         assertTrue("gamesradar" !in block)
         assertTrue("some subject" !in block)
         assertTrue("newsworthiness" in block, "guardrail sentence must be present")
+    }
+
+    @Test
+    fun `thin keys stay out of the prompt block but still count in itemScore`() {
+        // Production case: 'business_move' -0.13 rested on TWO rated posts — a strong-looking
+        // score with almost no evidence behind it must not become "responds POORLY" in the
+        // Step-1 prompt. The numeric path is deliberately ungated (epsilon floor covers it).
+        val scores = AffinityScores.of(listOf(
+            row(AffinityMath.DIM_EVENT_TYPE, "business_move", -0.13, nTone = 1.7),
+            row(AffinityMath.DIM_EVENT_TYPE, "product_launch", -0.19, nTone = 13.7)
+        ))
+        val block = scores.buildAudienceSignals()
+        assertTrue("product_launch" in block)
+        assertTrue("business_move" !in block)
+        assertEquals(0.30 * -0.13, scores.itemScore(item(eventType = "business_move")), 1e-9)
     }
 
     @Test

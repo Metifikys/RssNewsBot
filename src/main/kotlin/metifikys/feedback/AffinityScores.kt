@@ -17,7 +17,7 @@ import java.util.Locale
  * scale (0 = category average, roughly ±0.5 in practice).
  */
 class AffinityScores private constructor(
-    private val byDimension: Map<String, Map<String, Double>>
+    private val byDimension: Map<String, Map<String, AudienceAffinityRow>>
 ) {
 
     companion object {
@@ -26,9 +26,20 @@ class AffinityScores private constructor(
         const val WEIGHT_SOURCE = 0.20
         const val WEIGHT_SUBJECT = 0.15
 
+        /**
+         * A key must rest on at least this much decay-weighted RATED evidence (`nTone`,
+         * not `n`) before the prompt block may teach the LLM about it. `n` counts every
+         * delivered message carrying the key; only reacted ones move the score, and with a
+         * single reader-operator most keys hold just one or two clicks — one 👎 on one
+         * article must not brand a whole franchise "the audience responds POORLY" for the
+         * strongest lever in the pipeline. The numeric ranker path stays ungated: its
+         * contributions are epsilon-floored and clamped instead.
+         */
+        const val MIN_PROMPT_TONE_SAMPLES = 3.0
+
         /** Builds a lookup from one category's affinity rows (pass rows for THAT category only). */
         fun of(rows: List<AudienceAffinityRow>): AffinityScores = AffinityScores(
-            rows.groupBy { it.dimension }.mapValues { (_, r) -> r.associate { it.key to it.score } }
+            rows.groupBy { it.dimension }.mapValues { (_, r) -> r.associateBy { it.key } }
         )
 
         val EMPTY = AffinityScores(emptyMap())
@@ -37,7 +48,7 @@ class AffinityScores private constructor(
     fun isEmpty(): Boolean = byDimension.isEmpty()
 
     private fun score(dimension: String, key: String): Double =
-        byDimension[dimension]?.get(key.trim().lowercase()) ?: 0.0
+        byDimension[dimension]?.get(key.trim().lowercase())?.score ?: 0.0
 
     /** Raw affinity of a shortlist item on the centered score scale. */
     fun itemScore(item: ShortlistItem): Double =
@@ -48,14 +59,17 @@ class AffinityScores private constructor(
 
     /**
      * Compact prompt block for `{{AUDIENCE_SIGNALS}}`: the strongest liked/disliked
-     * franchise + event-type keys, or "" when nothing clears [minAbsScore] (an empty
-     * placeholder is better than teaching the LLM from noise). Sources and subjects are
-     * deliberately excluded — the LLM shouldn't up-rank an outlet, only content traits.
+     * franchise + event-type keys, or "" when nothing clears [minAbsScore] with at least
+     * [MIN_PROMPT_TONE_SAMPLES] of rated evidence (an empty placeholder is better than
+     * teaching the LLM from noise). Sources and subjects are deliberately excluded — the
+     * LLM shouldn't up-rank an outlet, only content traits.
      */
     fun buildAudienceSignals(minAbsScore: Double = 0.05, topN: Int = 5): String {
         val relevant = listOf(AffinityMath.DIM_FRANCHISE, AffinityMath.DIM_EVENT_TYPE)
             .flatMap { dim ->
-                byDimension[dim].orEmpty().map { (key, s) -> Triple(dim, key, s) }
+                byDimension[dim].orEmpty().values
+                    .filter { it.nTone >= MIN_PROMPT_TONE_SAMPLES }
+                    .map { Triple(dim, it.key, it.score) }
             }
         val liked = relevant.filter { it.third >= minAbsScore }.sortedByDescending { it.third }.take(topN)
         val disliked = relevant.filter { it.third <= -minAbsScore }.sortedBy { it.third }.take(topN)

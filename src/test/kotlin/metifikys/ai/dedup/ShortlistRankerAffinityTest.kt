@@ -91,6 +91,31 @@ class ShortlistRankerAffinityTest {
     }
 
     @Test
+    fun `sub-threshold affinity contributes exactly zero`() {
+        val cfg = config(weight = 0.15)
+        assertEquals(0.0, ShortlistRanker.affinityContribution(item("x"), cfg) { 0.009 }, 0.0)
+        assertEquals(0.0, ShortlistRanker.affinityContribution(item("x"), cfg) { -0.009 }, 0.0)
+        // Just over the threshold still counts, so the gate is a floor and not a dead band.
+        assertTrue(ShortlistRanker.affinityContribution(item("x"), cfg) { 0.011 } > 0.0)
+    }
+
+    @Test
+    fun `a category with no tone variance cannot reorder the baseline`() {
+        // Reproduces production tech: every key sits at a near-identical tiny residue because
+        // the operator only ever pressed one emoji. Those differences must not displace the
+        // deterministic tiebreak chain, and an unseen key (0.0) must not outrank a known one.
+        val items = listOf(item("a"), item("b"), item("c"), item("d"))
+        val cfg = config(weight = 0.15)
+        val residues = mapOf("a" to -0.00197, "b" to -0.00220, "c" to -0.00315, "d" to 0.0)
+        val scorer: (ShortlistItem) -> Double = { residues.getValue(it.eventKey) }
+
+        assertEquals(
+            ShortlistRanker.rank(items, cfg).kept.map { it.eventKey },
+            ShortlistRanker.rank(items, cfg, scorer).kept.map { it.eventKey }
+        )
+    }
+
+    @Test
     fun `contribution is clamped to maxAffinityBoost`() {
         val cfg = config(weight = 1.0, boost = 0.5)
         val up = ShortlistRanker.affinityContribution(item("x"), cfg) { 100.0 }

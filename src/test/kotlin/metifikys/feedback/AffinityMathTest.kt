@@ -76,6 +76,20 @@ class AffinityMathTest {
     }
 
     @Test
+    fun `nTone counts only the reacted messages behind a key`() {
+        // 2 reacted + 6 silent posts share a franchise: n covers all 8, nTone only the 2.
+        val messages =
+            List(2) { msg("mixed", volume = 20, valenceSum = 20.0) } +
+            List(6) { msg("mixed", volume = 0, valenceSum = 0.0) }
+        val rows = AffinityMath.aggregate(messages, params())
+
+        val mixed = rowsFor(rows, AffinityMath.DIM_FRANCHISE, "mixed")
+        val decay = Math.pow(0.5, 5.0 / 45.0)
+        assertEquals(8 * decay, mixed.n, 1e-9)
+        assertEquals(2 * decay, mixed.nTone, 1e-9)
+    }
+
+    @Test
     fun `low-volume messages carry no tone`() {
         // 2 reactions < minVolume=3 → tone is discarded; the only signal left is the prior 0.
         val messages =

@@ -2,6 +2,7 @@ package metifikys.ai.dedup
 
 import metifikys.config.DigestConfig
 import metifikys.model.ShortlistItem
+import kotlin.math.abs
 
 /**
  * Post-Step-1 editorial gate. Applies reject thresholds, composite scoring, diversity caps,
@@ -24,6 +25,20 @@ object ShortlistRanker {
         "acquisition",
         "studio_closure"
     )
+
+    /**
+     * Raw affinity below this is treated as no signal at all. A category whose operator
+     * only ever presses one emoji has no tone variance, so every key's score collapses onto
+     * the category prior and lands within a few thousandths of zero — production tech rows
+     * sat at ~-0.002 across the board. Those residues are far too small to overcome the
+     * composite's coarse grid (newsworthiness/digestFit are integers), so they could never
+     * change a real ranking decision, yet they were still enough to break exact ties and
+     * displace the deliberate [eventTypeRank] → newsworthiness tiebreak chain. Worse, an
+     * unseen key contributes exactly 0.0, which outranks every *known* key in such a
+     * category — quietly promoting unrecognized items. Snapping to zero restores the
+     * baseline ordering until the reactions carry actual direction.
+     */
+    const val MIN_AFFINITY = 0.01
 
     /** Human-readable reason for dropping an item — surfaces in QA logs. */
     data class Dropped(val item: ShortlistItem, val reason: String)
@@ -112,7 +127,8 @@ object ShortlistRanker {
     /**
      * Audience-affinity term in composite points: raw centered affinity (±~0.5) scaled ×10
      * onto the 0–10 composite scale, weighted by `ranker.reactionWeight`, clamped to
-     * ±`ranker.maxAffinityBoost`. 0 whenever the scorer is absent or the weight is 0.
+     * ±`ranker.maxAffinityBoost`. 0 whenever the scorer is absent, the weight is 0, or the
+     * raw affinity is below [MIN_AFFINITY].
      * Public so the caller can log per-item contributions next to the ranking diff.
      */
     fun affinityContribution(
@@ -123,8 +139,10 @@ object ShortlistRanker {
         if (affinityScorer == null) return 0.0
         val weight = config.ranker.reactionWeight
         if (weight <= 0.0) return 0.0
+        val raw = affinityScorer(item)
+        if (abs(raw) < MIN_AFFINITY) return 0.0
         val boost = config.ranker.maxAffinityBoost
-        return (weight * 10.0 * affinityScorer(item)).coerceIn(-boost, boost)
+        return (weight * 10.0 * raw).coerceIn(-boost, boost)
     }
 
     /** Falls back to legacy `importance` when the LLM didn't emit `newsworthiness`. */

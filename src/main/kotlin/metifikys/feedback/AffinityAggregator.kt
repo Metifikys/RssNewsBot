@@ -129,9 +129,15 @@ class AffinityAggregator(
         }
     }
 
-    /** `key=+0.42 (sent=+0.80 z=+1.2 n=3.5)` — score first, then the raw parts behind it. */
+    /**
+     * `key=+0.42 (sent=+0.80 z=+1.2 n=1.7/3.5)` — score first, then the raw parts behind it.
+     * `n` reads `nTone/n`: only the reacted messages (`nTone`) move the score, while `n`
+     * counts every delivered message carrying the key. A wide gap means the score rests on
+     * far less evidence than the sample size suggests.
+     */
     private fun cell(r: metifikys.db.AudienceAffinityRow): String =
-        "'${r.key}'=${fmt(r.score)} (sent=${fmt(r.sentiment)} z=${fmt(r.engagementZ)} n=${"%.1f".format(java.util.Locale.ROOT, r.n)})"
+        "'${r.key}'=${fmt(r.score)} (sent=${fmt(r.sentiment)} z=${fmt(r.engagementZ)} " +
+            "n=${"%.1f".format(java.util.Locale.ROOT, r.nTone)}/${"%.1f".format(java.util.Locale.ROOT, r.n)})"
 
     private fun fmt(v: Double): String = "%+.2f".format(java.util.Locale.ROOT, v)
 }

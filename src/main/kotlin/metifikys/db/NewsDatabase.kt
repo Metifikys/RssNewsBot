@@ -241,6 +241,11 @@ object AudienceAffinityTable : Table("audience_affinity") {
     val dimension = varchar("dimension", 30)   // "franchise" | "event_type" | "subject" | "source"
     val key = varchar("key", 500)
     val n = double("n")
+    /**
+     * Decay-weighted count of the messages that actually carried a reaction — the subset
+     * [n] that produced the score. Defaulted for rows written before the column existed.
+     */
+    val nTone = double("n_tone").default(0.0)
     val engagementZ = double("engagement_z")
     val sentiment = double("sentiment")
     val score = double("score")
@@ -419,6 +424,7 @@ data class AudienceAffinityRow(
     val dimension: String,
     val key: String,
     val n: Double,
+    val nTone: Double = 0.0,
     val engagementZ: Double,
     val sentiment: Double,
     val score: Double,
@@ -1620,6 +1626,7 @@ class NewsDatabase(dbPath: String) {
                     it[dimension] = r.dimension
                     it[key] = r.key
                     it[n] = r.n
+                    it[nTone] = r.nTone
                     it[engagementZ] = r.engagementZ
                     it[sentiment] = r.sentiment
                     it[score] = r.score
@@ -1637,6 +1644,7 @@ class NewsDatabase(dbPath: String) {
                 dimension = it[AudienceAffinityTable.dimension],
                 key = it[AudienceAffinityTable.key],
                 n = it[AudienceAffinityTable.n],
+                nTone = it[AudienceAffinityTable.nTone],
                 engagementZ = it[AudienceAffinityTable.engagementZ],
                 sentiment = it[AudienceAffinityTable.sentiment],
                 score = it[AudienceAffinityTable.score],

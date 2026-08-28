@@ -51,6 +51,51 @@ class AffinityAggregatorTest {
         dbFile.delete()
     }
 
+    @Test
+    fun `an audience_affinity table predating n_tone is migrated in place`() {
+        // Production already has this table without the column; the schema sync must ADD it
+        // rather than leave replaceAudienceAffinity writing to a column that does not exist.
+        val legacyFile = File.createTempFile("test-affinity-legacy", ".db")
+        try {
+            java.sql.DriverManager.getConnection("jdbc:sqlite:${legacyFile.absolutePath}").use { c ->
+                c.createStatement().use {
+                    it.executeUpdate(
+                        """
+                        CREATE TABLE audience_affinity (
+                            category VARCHAR(100) NOT NULL, dimension VARCHAR(30) NOT NULL,
+                            "key" VARCHAR(500) NOT NULL, n DOUBLE PRECISION NOT NULL,
+                            engagement_z DOUBLE PRECISION NOT NULL, sentiment DOUBLE PRECISION NOT NULL,
+                            score DOUBLE PRECISION NOT NULL, updated_at TEXT NOT NULL,
+                            CONSTRAINT pk_audience_affinity PRIMARY KEY (category, dimension, "key")
+                        )
+                        """.trimIndent()
+                    )
+                    it.executeUpdate(
+                        "INSERT INTO audience_affinity VALUES " +
+                            "('games','franchise','legacy',7.0,0.5,0.6,0.3,'2026-08-01 00:00:00.000')"
+                    )
+                }
+            }
+
+            val migrated = NewsDatabase(legacyFile.absolutePath)
+            val existing = migrated.fetchAudienceAffinity().single()
+            assertEquals("legacy", existing.key)
+            assertEquals(0.0, existing.nTone, "pre-existing rows default to 0.0")
+
+            val row = metifikys.db.AudienceAffinityRow(
+                category = "games", dimension = "franchise", key = "fresh",
+                n = 4.0, nTone = 2.5, engagementZ = 0.1, sentiment = 0.7, score = 0.2,
+                updatedAt = now.withNano(0)
+            )
+            migrated.replaceAudienceAffinity(listOf(row))
+            assertEquals(listOf(row), migrated.fetchAudienceAffinity())
+        } finally {
+            legacyFile.delete()
+            // Re-point Exposed at this test's own database — NewsDatabase connects globally.
+            db = NewsDatabase(dbFile.absolutePath)
+        }
+    }
+
     private fun feedback(enabled: Boolean = true, minVolume: Int = 3) = FeedbackConfig(
         enabled = enabled,
         attributionHours = 36,
@@ -196,7 +241,7 @@ class AffinityAggregatorTest {
     fun `replace and fetch audience affinity round-trips`() {
         val row = metifikys.db.AudienceAffinityRow(
             category = "games", dimension = "franchise", key = "silksong",
-            n = 3.5, engagementZ = 1.2, sentiment = 0.8, score = 0.42,
+            n = 3.5, nTone = 1.8, engagementZ = 1.2, sentiment = 0.8, score = 0.42,
             updatedAt = now.withNano(0)
         )
         db.replaceAudienceAffinity(listOf(row))

@@ -141,6 +141,7 @@ object AffinityMath {
                     dimension = dimension,
                     key = key,
                     n = n,
+                    nTone = nTone,
                     engagementZ = engagementZ,
                     sentiment = if (nTone > 0.0) tonedGroup.sumOf { it.weight * it.tone!! } / nTone else 0.0,
                     score = score,

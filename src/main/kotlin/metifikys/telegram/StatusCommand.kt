@@ -153,8 +153,11 @@ class StatusCommand(
             if (catRows.isEmpty()) continue
             val top = catRows.take(2)
             val bottom = catRows.takeLast(2).filter { it !in top }
+            // n reads `nTone/n` — reacted messages over delivered ones. Only the first number
+            // is evidence; a key like `+0.30 (n=0.9/4.5)` rests on a single reaction.
             fun cell(r: metifikys.db.AudienceAffinityRow) =
-                "${escapeMarkdown(r.key)} ${"%+.2f".format(Locale.ROOT, r.score)} (n=${"%.1f".format(Locale.ROOT, r.n)})"
+                "${escapeMarkdown(r.key)} ${"%+.2f".format(Locale.ROOT, r.score)} " +
+                    "(n=${"%.1f".format(Locale.ROOT, r.nTone)}/${"%.1f".format(Locale.ROOT, r.n)})"
             sb.append("  ${escapeMarkdown(name)}: ↑ ${top.joinToString(", ") { cell(it) }}")
             if (bottom.isNotEmpty()) sb.append(" · ↓ ${bottom.joinToString(", ") { cell(it) }}")
             sb.append('\n')
