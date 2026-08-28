@@ -434,7 +434,11 @@ class NewsBotTest {
     // ── Stuck-batch fallback tests ────────────────────────────────────────────
 
     @Test
-    fun `when more than 2 batches stuck pending, bypass batch and use sync with cap 60`() {
+    fun `when more than 2 batches stuck pending, bypass batch and use sync for every chunk`() {
+        // 80 articles exceed the legacy chunk size (50), so the stuck-sync route must run once
+        // per chunk — 50 + 30 — rather than dropping the tail. Each call still carries
+        // maxArticles=SYNC_FALLBACK_CAP (60); the cap itself cannot bind while chunks stay
+        // below it, but it must keep reaching the client.
         val articles = (1..80).map { article("https://a.com/$it") }
         every { fetcher.fetchAll(any()) } returns articles
         every { db.insertArticles(any()) } returns articles.size
@@ -450,12 +454,20 @@ class NewsBotTest {
         verify(exactly = 0) { openAIBatch.submitCategoryBatch(any(), any()) }
         verify(exactly = 1) {
             openAI.summarizeArticles(
-                eq("tech"), any(), match { it.size == 60 }, any(), any(), any(), eq(60)
+                eq("tech"), any(), match { it.size == 50 }, any(), any(), any(), eq(60)
             )
         }
-        val first60 = articles.take(60).map { it.link }
-        verify { db.markProcessing(first60) }
-        verify { db.markProcessed(first60) }
+        verify(exactly = 1) {
+            openAI.summarizeArticles(
+                eq("tech"), any(), match { it.size == 30 }, any(), any(), any(), eq(60)
+            )
+        }
+        // Both chunks are claimed before their LLM call — no article is silently skipped.
+        val links = articles.map { it.link }
+        verify { db.markProcessing(links.take(50)) }
+        verify { db.markProcessing(links.drop(50)) }
+        // The fixture summary only cites a.com/1, so only the chunk owning it commits.
+        verify { db.markProcessed(links.take(50)) }
     }
 
     @Test
@@ -497,7 +509,9 @@ class NewsBotTest {
     @Test
     fun `batchFallback override fires at primaryMaxPending and routes to fallback client`() {
         // Defaults: primaryMaxPending=2, secondaryMaxPending=1 → fallback fires at pending in [2, 3).
-        val articles = (1..80).map { article("https://a.com/$it") }
+        // Exactly one legacy chunk (50), so the assertion below is about WHICH client is used,
+        // not about how the chunker split the input.
+        val articles = (1..50).map { article("https://a.com/$it") }
         val fallbackClient = mockk<metifikys.ai.LlmClient>()
         val configWithFallback = config.copy(
             categories = mapOf(
@@ -530,15 +544,15 @@ class NewsBotTest {
         verify(exactly = 0) { openAIBatch.submitCategoryBatch(any(), any()) }
         // primary render client is NOT used — the fallback client is
         verify(exactly = 0) { openAI.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) }
-        // fallback client receives the call, capped to SYNC_FALLBACK_CAP=60
+        // fallback client receives the whole chunk, still carrying maxArticles=SYNC_FALLBACK_CAP
         verify(exactly = 1) {
             fallbackClient.summarizeArticles(
-                eq("tech"), any(), match { it.size == 60 }, any(), any(), any(), eq(60)
+                eq("tech"), any(), match { it.size == 50 }, any(), any(), any(), eq(60)
             )
         }
-        val first60 = articles.take(60).map { it.link }
-        verify { db.markProcessing(first60) }
-        verify { db.markProcessed(first60) }
+        val links = articles.map { it.link }
+        verify { db.markProcessing(links) }
+        verify { db.markProcessed(links) }
     }
 
     @Test
@@ -582,7 +596,8 @@ class NewsBotTest {
     fun `pending exceeds primary plus secondary cutoff falls through to sync render even with batchFallback`() {
         // primaryMax=2 + secondaryMax=1 = syncCutoff=3 when batchFallback is configured.
         // At pending=3, secondary band is exhausted → fall through to render LLM.
-        val articles = (1..80).map { article("https://a.com/$it") }
+        // One legacy chunk (50) keeps the assertion focused on WHICH client is used.
+        val articles = (1..50).map { article("https://a.com/$it") }
         val fallbackClient = mockk<metifikys.ai.LlmClient>(relaxed = true)
         val configWithFallback = config.copy(
             categories = mapOf(
@@ -615,7 +630,7 @@ class NewsBotTest {
         verify(exactly = 0) { fallbackClient.summarizeArticles(any(), any(), any(), any(), any(), any(), any()) }
         verify(exactly = 1) {
             openAI.summarizeArticles(
-                eq("tech"), any(), match { it.size == 60 }, any(), any(), any(), eq(60)
+                eq("tech"), any(), match { it.size == 50 }, any(), any(), any(), eq(60)
             )
         }
     }

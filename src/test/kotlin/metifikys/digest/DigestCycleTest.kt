@@ -7,10 +7,12 @@ import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
 import metifikys.config.DatabaseConfig
 import metifikys.config.FeedConfig
+import metifikys.config.FeedbackConfig
 import metifikys.config.OpenAIConfig
 import metifikys.config.ProcessingConfig
 import metifikys.config.SchedulerConfig
 import metifikys.config.TelegramConfig
+import metifikys.db.CoveredEventRow
 import metifikys.db.NewsDatabase
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
@@ -50,13 +52,17 @@ class DigestCycleTest {
 
     // ── wiring helpers ────────────────────────────────────────────────────────
 
-    private fun cfg(categories: Map<String, CategoryConfig>) = AppConfig(
+    private fun cfg(
+        categories: Map<String, CategoryConfig>,
+        feedback: FeedbackConfig = FeedbackConfig()
+    ) = AppConfig(
         telegram = TelegramConfig(botToken = "t"),
         openai = OpenAIConfig(apiKey = "sk"),
         database = DatabaseConfig(path = dbFile.absolutePath),
         scheduler = SchedulerConfig(intervalMinutes = 60),
         categories = categories,
-        processing = ProcessingConfig(minArticles = 1)
+        processing = ProcessingConfig(minArticles = 1),
+        feedback = feedback
     )
 
     private fun cat(vararg urls: String) = CategoryConfig(
@@ -181,7 +187,7 @@ class DigestCycleTest {
             // Simulate the cycle barrier interrupting the worker during enrichment: the
             // best-effort stages swallow the interrupt and only restore the flag.
             val interruptingFetcher = mockk<ArticleFetcher>()
-            every { interruptingFetcher.enrich(any()) } answers {
+            every { interruptingFetcher.enrich(any(), any()) } answers {
                 Thread.currentThread().interrupt()
                 firstArg()
             }
@@ -242,6 +248,46 @@ class DigestCycleTest {
             assertEquals(2, processor.calls.count { it.first == "tech" })
         } finally {
             server.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `covered events survive retention cleanup as long as the affinity lookback needs them`() {
+        // covered_events is the join partner of every affinity input, so pruning it at
+        // summaryHistory.retentionDays (14) would silently truncate feedback.lookbackDays (90).
+        val emptyFeed = serverRss(rssWithItems())
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            fun seedOldEvent() = db.insertCoveredEvents(
+                listOf(
+                    CoveredEventRow(
+                        category = "tech",
+                        eventKey = "old-event",
+                        subject = "s", franchise = "f", eventType = "e",
+                        coreFact = "fact", importance = 5, url = "https://example.com/old",
+                        coveredAt = LocalDateTime.now().minusDays(30)
+                    )
+                )
+            )
+            fun survivors() = db.fetchRecentEvents("tech", sinceDays = 365, limit = 100).size
+
+            // Feedback off → the 14-day retention applies and the 30-day-old row goes.
+            val off = cfg(mapOf("tech" to cat(urlOf(emptyFeed))))
+            seedOldEvent()
+            cycle(off, fetcher, RecordingCategoryProcessor(off, db)).runCycle()
+            assertEquals(0, survivors(), "without feedback the default 14-day retention prunes it")
+
+            // Feedback on with a 90-day lookback → the row must stay reachable.
+            val on = cfg(
+                mapOf("tech" to cat(urlOf(emptyFeed))),
+                feedback = FeedbackConfig(enabled = true, lookbackDays = 90)
+            )
+            seedOldEvent()
+            cycle(on, fetcher, RecordingCategoryProcessor(on, db)).runCycle()
+            assertEquals(1, survivors(), "a 90-day lookback must outrank the 14-day retention")
+        } finally {
+            emptyFeed.stop(0)
             fetcher.shutdown()
         }
     }

@@ -15,7 +15,9 @@ import java.net.URL
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
@@ -24,9 +26,12 @@ private val logger = KotlinLogging.logger {}
 /**
  * Queue-model RSS fetcher. Every feed gets ONE HTTP attempt per pass on a shared bounded
  * pool; a retryable failure (408/429/5xx/transport) re-enters the queue after a delay
- * instead of sleeping in place, so a dead feed never blocks the feeds behind it. The whole
- * stage is capped by a wall-clock deadline — feeds still failing at the deadline are
- * skipped for this cycle (link-dedup catches their articles up next cycle).
+ * instead of sleeping in place, so a dead feed never blocks the feeds behind it. Rate
+ * limiting is handled per HOST through [HostThrottle]: a 429 cools the whole host down
+ * and teaches it a request spacing, so feeds sharing a host (e.g. reddit subreddits
+ * across categories) stop hammering it in lockstep. The whole stage is capped by a
+ * wall-clock deadline — feeds still failing at the deadline are skipped for this cycle
+ * (link-dedup catches their articles up next cycle).
  */
 class RssFetcher(
     /**
@@ -47,7 +52,12 @@ class RssFetcher(
     /** Max simultaneous HTTP requests across ALL categories (feeds usually share one RSSHub host). */
     private val maxConcurrentFetches: Int = 3,
     /** Wall-clock budget for one fetch stage started via [fetchAll]/[fetchFeed]/[newFetchDeadline]. */
-    private val fetchDeadlineMs: Long = 240_000L
+    private val fetchDeadlineMs: Long = 240_000L,
+    /**
+     * Per-host gate shared by ALL feeds and categories: a 429 cools the whole host down
+     * and teaches it a request spacing. Self-tuning — injectable only for tests.
+     */
+    private val hostThrottle: HostThrottle = HostThrottle()
 ) {
 
     companion object {
@@ -101,10 +111,30 @@ class RssFetcher(
         )
     }
 
+    /**
+     * Cache validators a feed handed us on its last successful 200, replayed as `If-None-Match` /
+     * `If-Modified-Since` on the next attempt. Process-lifetime and in-memory on purpose — the
+     * same tradeoff [HostThrottle] makes: the bot runs continuously, so a restart costing one
+     * full re-fetch per feed is not worth a DB column.
+     */
+    private data class FeedValidators(val eTag: String?, val lastModified: String?)
+
+    private val feedValidators = ConcurrentHashMap<String, FeedValidators>()
+
     /** Result of a single HTTP attempt against one feed. */
     private sealed interface FetchOutcome {
         data class Success(val articles: List<Article>) : FetchOutcome
-        data class Retryable(val reason: String, val retryAfterMs: Long?, val cause: Exception? = null) : FetchOutcome
+
+        /** HTTP 304 — the feed is byte-for-byte what we already parsed; nothing new to ingest. */
+        object NotModified : FetchOutcome
+
+        data class Retryable(
+            val reason: String,
+            val retryAfterMs: Long?,
+            val cause: Exception? = null,
+            /** True for HTTP 429 — the signal that must throttle the whole HOST, not just this feed. */
+            val rateLimited: Boolean = false
+        ) : FetchOutcome
         data class Fatal(val reason: String) : FetchOutcome
     }
 
@@ -181,7 +211,9 @@ class RssFetcher(
     /**
      * Schedules one attempt for one feed. On a retryable failure the feed re-enqueues
      * itself with a delay — the pool slot frees up immediately for other feeds ("back of
-     * the queue") and no thread ever sleeps.
+     * the queue") and no thread ever sleeps. Before touching the network the attempt asks
+     * the per-host gate: a host in cooldown / spacing-busy re-queues the attempt WITHOUT
+     * consuming it, so only real HTTP attempts count toward [maxAttempts].
      */
     private fun scheduleAttempt(
         feedConfig: FeedConfig,
@@ -198,13 +230,46 @@ class RssFetcher(
                 result.complete(emptyList())
                 return@schedule
             }
+            val host = hostKey(feedConfig.url)
+            val gateDelayMs = hostThrottle.acquireDelayMs(host)
+            if (gateDelayMs > 0) {
+                val remainingMs = (deadlineNanos - System.nanoTime()) / 1_000_000
+                if (gateDelayMs >= remainingMs) {
+                    logger.warn { "Host $host is cooling down past the stage deadline — ${feedConfig.url} deferred to next cycle" }
+                    result.complete(emptyList())
+                } else {
+                    logger.debug { "Host $host throttled — ${feedConfig.url} re-queued in ${gateDelayMs / 1000}s (attempt $attempt not consumed)" }
+                    scheduleAttempt(feedConfig, category, attempt, withJitter(gateDelayMs), deadlineNanos, result)
+                }
+                return@schedule
+            }
             when (val outcome = fetchFeedOnce(feedConfig, category)) {
-                is FetchOutcome.Success -> result.complete(outcome.articles)
-                is FetchOutcome.Fatal -> result.complete(emptyList())
+                is FetchOutcome.Success -> {
+                    hostThrottle.onSuccess(host)
+                    result.complete(outcome.articles)
+                }
+                // 304: the feed is unchanged since our last successful parse. Its entries are
+                // already in the DB, so an empty result is exactly what link-dedup would have
+                // produced anyway — and it still counts as a healthy response for the host.
+                FetchOutcome.NotModified -> {
+                    hostThrottle.onSuccess(host)
+                    result.complete(emptyList())
+                }
+                is FetchOutcome.Fatal -> {
+                    // HTTP itself succeeded (the failure was parse-side), so it still counts
+                    // as a success for the host's rate limiting.
+                    hostThrottle.onSuccess(host)
+                    result.complete(emptyList())
+                }
                 is FetchOutcome.Retryable -> {
+                    val hostCooldownMs = if (outcome.rateLimited) {
+                        val cooldown = hostThrottle.onRateLimit(host, outcome.retryAfterMs)
+                        logger.warn { "HTTP 429 from $host — cooling the whole host down for ${cooldown / 1000}s" }
+                        cooldown
+                    } else null
                     val remainingMs = (deadlineNanos - System.nanoTime()) / 1_000_000
                     val nextDelay = if (attempt >= maxAttempts) null
-                        else nextRetryDelayMs(outcome.retryAfterMs, retryDelayMs, remainingMs)
+                        else nextRetryDelayMs(hostCooldownMs ?: outcome.retryAfterMs, retryDelayMs, remainingMs)
                     if (nextDelay == null) {
                         if (outcome.cause != null) {
                             logger.error(outcome.cause) { "${outcome.reason} from ${feedConfig.url} (attempt $attempt/$maxAttempts) — deferred to next cycle" }
@@ -214,12 +279,19 @@ class RssFetcher(
                         result.complete(emptyList())
                     } else {
                         logger.warn { "${outcome.reason} from ${feedConfig.url} (attempt $attempt/$maxAttempts), requeued in ${nextDelay / 1000}s" }
-                        scheduleAttempt(feedConfig, category, attempt + 1, nextDelay, deadlineNanos, result)
+                        scheduleAttempt(feedConfig, category, attempt + 1, withJitter(nextDelay), deadlineNanos, result)
                     }
                 }
             }
         }, delayMs, TimeUnit.MILLISECONDS)
     }
+
+    /** Adds 0–20% random jitter so same-host feeds never re-fire in a synchronized burst. */
+    private fun withJitter(delayMs: Long): Long =
+        delayMs + ThreadLocalRandom.current().nextLong(delayMs / 5 + 1)
+
+    /** Throttle key for a feed URL: lowercase authority (host:port). Falls back to the raw URL. */
+    private fun hostKey(url: String): String = HostThrottle.hostKey(url)
 
     /** Waits for the fanned-out fetches until the deadline and gathers partial results. */
     private fun awaitFetches(
@@ -250,19 +322,30 @@ class RssFetcher(
         val url = feedConfig.url
         var connection: HttpURLConnection? = null
         try {
+            val cached = feedValidators[url]
             connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15_000
                 readTimeout = 15_000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; RssNewsBot/1.0)")
+                // Conditional GET: a feed that hasn't changed since the last cycle answers 304 with
+                // an empty body — no transfer, no XML parse, and one less full request counted
+                // against the host's rate limit (the main source of the 429s HostThrottle absorbs).
+                cached?.eTag?.let { setRequestProperty("If-None-Match", it) }
+                cached?.lastModified?.let { setRequestProperty("If-Modified-Since", it) }
             }
 
             val responseCode = connection.responseCode
+            if (responseCode == HttpURLConnection.HTTP_NOT_MODIFIED) {
+                logger.debug { "[RSS] $url → 304 Not Modified, skipping parse" }
+                return FetchOutcome.NotModified
+            }
             // BUG-006: retry the whole transient-error family (408 timeout, 429 rate-limit,
             // every 5xx), not just 502. Honor a Retry-After header when the server sends one.
             if (isRetryableStatus(responseCode)) {
                 return FetchOutcome.Retryable(
                     reason = "Got HTTP $responseCode",
-                    retryAfterMs = parseRetryAfterMs(connection.getHeaderField("Retry-After"))
+                    retryAfterMs = parseRetryAfterMs(connection.getHeaderField("Retry-After")),
+                    rateLimited = responseCode == 429
                 )
             }
 
@@ -280,6 +363,9 @@ class RssFetcher(
                 logger.warn(parseEx) { "Failed to parse RSS from $url — skipping this cycle" }
                 return FetchOutcome.Fatal("parse failure")
             }
+            // Remember the validators only after a clean parse, so a 304 can never stand in for
+            // a response we failed to turn into articles.
+            rememberValidators(url, connection)
             return FetchOutcome.Success(toArticles(feed, feedConfig, category))
         } catch (e: Exception) {
             return FetchOutcome.Retryable(
@@ -292,9 +378,25 @@ class RssFetcher(
         }
     }
 
+    /**
+     * Stores this response's `ETag` / `Last-Modified` for the next cycle's conditional GET.
+     * A response carrying neither drops any previously cached pair, so we never replay a stale
+     * validator against a server that stopped sending them.
+     */
+    private fun rememberValidators(url: String, connection: HttpURLConnection) {
+        val eTag = connection.getHeaderField("ETag")?.takeIf { it.isNotBlank() }
+        val lastModified = connection.getHeaderField("Last-Modified")?.takeIf { it.isNotBlank() }
+        if (eTag == null && lastModified == null) {
+            feedValidators.remove(url)
+        } else {
+            feedValidators[url] = FeedValidators(eTag, lastModified)
+        }
+    }
+
     /** Maps a parsed feed's entries to [Article]s (unchanged from the sequential fetcher). */
     private fun toArticles(feed: SyndFeed, feedConfig: FeedConfig, category: String): List<Article> {
         val url = feedConfig.url
+        var rewritten = 0
         val articles = feed.entries
             .filter { it.link?.isNotBlank() == true }
             .mapNotNull { entry ->
@@ -307,16 +409,27 @@ class RssFetcher(
                         ?.atZone(ZoneId.systemDefault())
                         ?.toLocalDateTime()
                         ?: LocalDateTime.now()
+                    // BUG-020: canonicalize the link at ingestion so utm/fbclid/trailing-slash
+                    // variants of the same story dedup to one row.
+                    val permalink = LinkNormalizer.normalize(entry.link)
+                    // A reddit link post carries no content of its own — only a boilerplate card
+                    // with a `[link]` anchor to the real article. Follow it, so the story (and not
+                    // reddit's markup) is what gets enriched, deduped and published. The image is
+                    // taken from the ORIGINAL description: reddit's preview thumbnail is the one
+                    // piece of the card worth keeping.
+                    val reddit = RedditLinkExtractor.rewrite(permalink, description)
+                    if (reddit != null) rewritten++
                     Article(
                         category = category,
                         title = entry.title ?: "",
-                        // BUG-020: canonicalize the link at ingestion so utm/fbclid/trailing-slash
-                        // variants of the same story dedup to one row.
-                        link = LinkNormalizer.normalize(entry.link),
-                        description = description,
+                        link = reddit?.link ?: permalink,
+                        description = reddit?.description ?: description,
                         pubDate = pubDate,
                         imageUrl = extractImageUrl(entry, description),
-                        fetchFullContent = feedConfig.fetchFullContent,
+                        // A rewritten entry has no body of its own, so the page behind the
+                        // outbound link is the only source of text — fetch it regardless of
+                        // what the feed's own `fetchFullContent` says.
+                        fetchFullContent = feedConfig.fetchFullContent || reddit != null,
                         summarize = feedConfig.summarize
                     )
                 } catch (e: Exception) {
@@ -326,6 +439,9 @@ class RssFetcher(
             }
         val withImage = articles.count { it.imageUrl != null }
         logger.info { "[RSS] $url → ${articles.size} entries, $withImage with images, ${articles.size - withImage} without." }
+        if (rewritten > 0) {
+            logger.info { "[RSS] $url → $rewritten reddit link post(s) repointed at their outbound article." }
+        }
         return articles
     }
 

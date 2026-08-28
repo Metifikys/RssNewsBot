@@ -153,13 +153,21 @@ class DigestCycle(
             val newRawArticles = rawArticles.filter { it.link !in existingLinks }
             logger.info { "[Cycle:$name] After dedup: ${newRawArticles.size} new article(s) (${existingLinks.size} already in DB)." }
 
-            val enriched = articleFetcher.enrich(newRawArticles)
-            val summarized = articleSummarizer.summarize(enriched)
-
-            // Fill preview images (og:image) for image-enabled categories whose RSS entries
-            // carried no image. The helper filters by category internally, so handing it a
-            // single category's articles is safe.
-            val articles = fillPreviewImages(summarized)
+            // Enrichment and preview-image lookup share one pass: both want the article's HTML,
+            // so an article needing text AND an og:image is fetched once instead of twice. The
+            // predicate keeps ArticleFetcher decoupled from config — we decide here which
+            // categories have images enabled. Runs before summarization; the summarizer only
+            // sets `summary`, so image filling is order-independent.
+            val imageCategories = config.categories.filterValues { it.enableImages }.keys
+            val enriched = articleFetcher.enrich(newRawArticles) { it.category in imageCategories }
+            if (imageCategories.isNotEmpty()) {
+                val eligible = newRawArticles.count { it.category in imageCategories && it.imageUrl == null }
+                if (eligible > 0) {
+                    val found = enriched.count { it.category in imageCategories && it.imageUrl != null }
+                    logger.info { "[PreviewImage:$name] $eligible eligible article(s), $found now carry a preview image." }
+                }
+            }
+            val articles = articleSummarizer.summarize(enriched)
 
             val inserted = db.insertArticles(articles)
             logger.info { "[Cycle:$name] Inserted $inserted new article(s) into DB." }
@@ -207,7 +215,7 @@ class DigestCycle(
         }
         db.deleteOlderThan(config.processing.articleRetentionDays)
         db.deleteOldSummaries(config.summaryHistory.retentionDays)
-        db.pruneOldCoveredEvents(config.summaryHistory.retentionDays)
+        db.pruneOldCoveredEvents(coveredEventsRetentionDays())
         db.pruneOldEventEmbeddings(config.summaryHistory.retentionDays)
         db.deleteOldRejectedEvents()
         db.deleteOldDigestMessages()
@@ -217,22 +225,21 @@ class DigestCycle(
     }
 
     /**
-     * For articles in image-enabled categories that have no RSS image, fetches the article
-     * page's Open Graph / Twitter Card preview image and populates [Article.imageUrl].
-     * Articles in non-image categories or that already have an image pass through untouched.
+     * `covered_events` is not only the Step-1 dedup memory — it is the join partner of every
+     * affinity input (`fetchAffinityInputs` INNER JOINs it to recover a message's subject /
+     * franchise / eventType / url). Pruning it at `summaryHistory.retentionDays` therefore
+     * silently truncates `feedback.lookbackDays`: production ran a 14-day retention against a
+     * 90-day lookback and discarded ~72% of every reaction ever collected, which is also why
+     * `feedback.halflifeDays=45` never had room to decay anything. Step 1's own context stays
+     * bounded by `dedup.contextDays` / `maxContextEvents` regardless, so holding the rows
+     * longer costs disk, not prompt size.
      */
-    private fun fillPreviewImages(articles: List<metifikys.model.Article>): List<metifikys.model.Article> {
-        val imageCats = config.categories.filterValues { it.enableImages }.keys
-        if (imageCats.isEmpty()) return articles
-
-        val (eligible, rest) = articles.partition { it.category in imageCats && it.imageUrl == null }
-        if (eligible.isEmpty()) return articles
-
-        val withImages = articleFetcher.fillPreviewImages(eligible)
-        val found = withImages.count { it.imageUrl != null }
-        logger.info { "[PreviewImage] ${eligible.size} eligible article(s), $found got a preview image." }
-        return withImages + rest
-    }
+    private fun coveredEventsRetentionDays(): Long =
+        if (config.feedback.enabled) {
+            maxOf(config.summaryHistory.retentionDays, config.feedback.lookbackDays)
+        } else {
+            config.summaryHistory.retentionDays
+        }
 
     /**
      * On startup, checks the DB for any batch jobs that were still "pending" when the

@@ -22,6 +22,7 @@ import metifikys.digest.WeeklyScheduler
 import metifikys.feedback.AffinityAggregator
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
+import metifikys.fetch.HostThrottle
 import metifikys.fetch.RssFetcher
 import metifikys.telegram.StatusCommand
 import metifikys.telegram.StatusPoster
@@ -31,6 +32,19 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
+
+/**
+ * ONE per-host gate for every outbound request the bot makes — RSS feeds and the article pages
+ * they link to alike. Those routinely share a host (reddit, a publisher's own domain), so a 429
+ * earned by either must slow down both; separate throttles would let the article fetcher, which
+ * fetches 8 pages at a time, immediately re-earn the ban the feed fetcher just backed off from.
+ *
+ * File-private singleton rather than a constructor parameter so the public [NewsBot] signature
+ * (and its positional call sites) stays untouched — it is only the DEFAULT for the two fetchers,
+ * both of which tests still inject freely. Hosts that never 429 cost nothing, so a process-wide
+ * instance carries no state a second bot instance would notice.
+ */
+private val SHARED_HOST_THROTTLE = HostThrottle()
 
 /**
  * Entry point: wires collaborators, owns the scheduler thread, and delegates each tick
@@ -43,10 +57,14 @@ class NewsBot(
         maxAttempts = config.fetcher.maxAttempts,
         retryDelayMs = config.fetcher.retryDelaySeconds * 1000,
         maxConcurrentFetches = config.fetcher.maxConcurrentFetches,
-        fetchDeadlineMs = config.fetcher.fetchDeadlineSeconds * 1000
+        fetchDeadlineMs = config.fetcher.fetchDeadlineSeconds * 1000,
+        hostThrottle = SHARED_HOST_THROTTLE
     ),
-    // Validation-only instance (validateFeedUrl); its lazy fetch pool never starts.
-    articleFetcher: ArticleFetcher = ArticleFetcher(RssFetcher(allowPrivateHosts = true)),
+    // Validation-only RssFetcher (validateFeedUrl); its lazy fetch pool never starts.
+    articleFetcher: ArticleFetcher = ArticleFetcher(
+        RssFetcher(allowPrivateHosts = true),
+        hostThrottle = SHARED_HOST_THROTTLE
+    ),
     private val db: NewsDatabase = NewsDatabase(config.database.path),
     sender: TelegramSender = TelegramSender(config.telegram.botToken),
     promptLoader: PromptLoader = PromptLoader(),
@@ -257,10 +275,10 @@ class NewsBot(
 
         digestCycle.resumePendingBatches()
         logger.info { "Running first digest cycle immediately." }
-        runDigestCycle()
+        runDigestCycleGuarded()
         val intervalMinutes = config.scheduler.intervalMinutes
         scheduler.scheduleAtFixedRate(
-            { runDigestCycle() },
+            { runDigestCycleGuarded() },
             intervalMinutes,
             intervalMinutes,
             TimeUnit.MINUTES
@@ -278,6 +296,24 @@ class NewsBot(
     }
 
     fun runDigestCycle() = digestCycle.runCycle()
+
+    /**
+     * Scheduler-facing wrapper. [java.util.concurrent.ScheduledExecutorService] silently cancels
+     * ALL future executions when a task throws, so anything escaping [runCycle] — which guards
+     * `Exception` but not `Error` (OOM, StackOverflowError, NoClassDefFoundError) — would leave
+     * the process alive with the digest loop permanently dead and nothing in the log to say so.
+     * Catching [Throwable] here keeps the schedule alive and makes the failure loud.
+     */
+    private fun runDigestCycleGuarded() {
+        try {
+            runDigestCycle()
+        } catch (t: Throwable) {
+            logger.error(t) {
+                "[Scheduler] Digest cycle threw ${t.javaClass.simpleName} — schedule kept alive, " +
+                    "next cycle runs as planned."
+            }
+        }
+    }
 
     internal fun resumePendingBatches() = digestCycle.resumePendingBatches()
 }

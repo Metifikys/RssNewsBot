@@ -303,7 +303,12 @@ class RssFetcherTest {
     @Test
     fun `fetchFeed retries on 429 honoring Retry-After then parses the feed`() {
         val rss = rssWithItems("https://example.com/1")
-        val retryFetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 3, retryDelayMs = 0)
+        // Zeroed host throttle: this test exercises the per-feed Retry-After path, not the
+        // host-level cooldown (which has its own tests below).
+        val retryFetcher = RssFetcher(
+            enforceUrlValidation = false, maxAttempts = 3, retryDelayMs = 0,
+            hostThrottle = HostThrottle(initialSpacingMs = 0, initialCooldownMs = 0)
+        )
         // Retry-After: 0 keeps the test instant while still exercising the header-parse path.
         withFlakyFeed(rss, failStatus = 429, failTimes = 1, retryAfter = "0") { url ->
             val result = retryFetcher.fetchFeed(FeedConfig(url), "tech")
@@ -451,6 +456,96 @@ class RssFetcherTest {
         }
     }
 
+    // ── per-host 429 throttling ──────────────────────────────────────────────
+
+    @Test
+    fun `429 on one feed cools down the whole host so sibling feeds skip the network`() {
+        val rss = rssWithItems("https://example.com/1")
+        val rateLimitedCalls = AtomicInteger(0)
+        val healthyCalls = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/limited") { exchange ->
+            rateLimitedCalls.incrementAndGet()
+            exchange.sendResponseHeaders(429, -1)
+            exchange.close()
+        }
+        server.createContext("/healthy") { exchange ->
+            healthyCalls.incrementAndGet()
+            exchange.sendResponseHeaders(200, rss.size.toLong())
+            exchange.responseBody.use { it.write(rss) }
+        }
+        server.start()
+        // Cooldown far beyond the stage deadline: after /limited's 429 the host is closed,
+        // so /healthy must be deferred to the next cycle WITHOUT ever hitting the server.
+        val throttledFetcher = RssFetcher(
+            enforceUrlValidation = false, maxAttempts = 3, retryDelayMs = 0,
+            maxConcurrentFetches = 1, fetchDeadlineMs = 2_000,
+            hostThrottle = HostThrottle(initialSpacingMs = 0, initialCooldownMs = 600_000)
+        )
+        try {
+            val base = "http://localhost:${server.address.port}"
+            val categories = mapOf(
+                "tech" to CategoryConfig(
+                    emoji = "💻",
+                    feeds = listOf(FeedConfig("$base/limited"), FeedConfig("$base/healthy")),
+                    channelId = "@tech"
+                )
+            )
+            val result = throttledFetcher.fetchAll(categories)
+            assertTrue(result.isEmpty())
+            assertEquals(1, rateLimitedCalls.get(), "one 429 must be enough — no per-feed retries against a cooling host")
+            assertEquals(0, healthyCalls.get(), "sibling feed on the same host must not hit the network during cooldown")
+        } finally {
+            server.stop(0)
+            throttledFetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `feeds on a rate-limited host recover after the host cooldown expires`() {
+        val rss = rssWithItems("https://example.com/1")
+        val limitedCalls = AtomicInteger(0)
+        val healthyCalls = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/limited") { exchange ->
+            if (limitedCalls.getAndIncrement() == 0) {
+                exchange.sendResponseHeaders(429, -1)
+                exchange.close()
+            } else {
+                exchange.sendResponseHeaders(200, rss.size.toLong())
+                exchange.responseBody.use { it.write(rss) }
+            }
+        }
+        server.createContext("/healthy") { exchange ->
+            healthyCalls.incrementAndGet()
+            exchange.sendResponseHeaders(200, rss.size.toLong())
+            exchange.responseBody.use { it.write(rss) }
+        }
+        server.start()
+        val recoveringFetcher = RssFetcher(
+            enforceUrlValidation = false, maxAttempts = 3, retryDelayMs = 0,
+            maxConcurrentFetches = 1, fetchDeadlineMs = 10_000,
+            hostThrottle = HostThrottle(initialSpacingMs = 0, initialCooldownMs = 300)
+        )
+        try {
+            val base = "http://localhost:${server.address.port}"
+            val categories = mapOf(
+                "tech" to CategoryConfig(
+                    emoji = "💻",
+                    feeds = listOf(FeedConfig("$base/limited"), FeedConfig("$base/healthy")),
+                    channelId = "@tech"
+                )
+            )
+            val result = recoveringFetcher.fetchAll(categories)
+            assertEquals(2, result.size, "both feeds should succeed once the cooldown expires")
+            assertEquals(2, limitedCalls.get())
+            assertEquals(1, healthyCalls.get(), "healthy feed must wait out the cooldown, not burn attempts against it")
+        } finally {
+            server.stop(0)
+            recoveringFetcher.shutdown()
+        }
+    }
+
     @Test
     fun `nextRetryDelayMs prefers Retry-After, clamps, and defers when past deadline`() {
         assertEquals(5_000L, RssFetcher.nextRetryDelayMs(retryAfterMs = 5_000L, fallbackDelayMs = 15_000L, remainingMs = 100_000L))
@@ -482,6 +577,44 @@ class RssFetcherTest {
         slowFetcher.shutdown()
     }
 
+    @Test
+    fun `a reddit link post is ingested as the article it points at`() {
+        val permalink = "https://www.reddit.com/r/technology/comments/1vovlwd/chinese_magnetic_sensor"
+        val rss = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel>
+                <title>r/technology</title>
+                <link>https://www.reddit.com/r/technology</link>
+                <item>
+                  <title>Chinese magnetic sensor breakthrough</title>
+                  <link>$permalink</link>
+                  <description><![CDATA[
+                    <table><tr><td><a href="$permalink/"><img src="https://external-preview.redd.it/57pf.jpeg" /></a></td>
+                    <td> submitted by <a href="https://www.reddit.com/user/malcolm58">/u/malcolm58</a> <br/>
+                    <span><a href="https://www.scmp.com/news/china/science/article/3363975/sensor">[link]</a></span>
+                    <span><a href="$permalink/">[comments]</a></span></td></tr></table>
+                  ]]></description>
+                </item>
+              </channel>
+            </rss>
+        """.trimIndent().toByteArray()
+
+        withLocalFeed(rss) { url ->
+            val article = fetcher.fetchFeed(FeedConfig(url, fetchFullContent = false), "tech").single()
+
+            assertEquals("https://www.scmp.com/news/china/science/article/3363975/sensor", article.link)
+            assertEquals("", article.description, "the boilerplate card must not survive as the description")
+            assertTrue(
+                article.fetchFullContent,
+                "the outbound page is the only source of text, so enrichment must be forced on"
+            )
+            // Reddit's preview thumbnail is the one useful part of the card — read off the
+            // ORIGINAL description, so blanking it must not cost us the image.
+            assertEquals("https://external-preview.redd.it/57pf.jpeg", article.imageUrl)
+        }
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private fun rssWithItems(vararg links: String): ByteArray {
@@ -498,6 +631,72 @@ class RssFetcherTest {
               </channel>
             </rss>
         """.trimIndent().toByteArray()
+    }
+
+    @Test
+    fun `second fetch replays ETag and treats 304 as no new articles`() {
+        val rss = rssWithItems("https://example.com/1")
+        val seenIfNoneMatch = mutableListOf<String?>()
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/rss") { exchange ->
+            val ifNoneMatch = exchange.requestHeaders.getFirst("If-None-Match")
+            synchronized(seenIfNoneMatch) { seenIfNoneMatch.add(ifNoneMatch) }
+            if (ifNoneMatch == "\"v1\"") {
+                exchange.sendResponseHeaders(304, -1)
+                exchange.close()
+            } else {
+                exchange.responseHeaders.add("ETag", "\"v1\"")
+                exchange.sendResponseHeaders(200, rss.size.toLong())
+                exchange.responseBody.use { it.write(rss) }
+            }
+        }
+        server.start()
+        val cachingFetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val feed = FeedConfig("http://localhost:${server.address.port}/rss")
+
+            val first = cachingFetcher.fetchFeed(feed, "tech")
+            assertEquals(1, first.size, "cold fetch must parse the feed")
+
+            val second = cachingFetcher.fetchFeed(feed, "tech")
+            assertTrue(second.isEmpty(), "304 must yield no articles — they are already in the DB")
+
+            assertEquals(listOf(null, "\"v1\""), synchronized(seenIfNoneMatch) { seenIfNoneMatch.toList() })
+        } finally {
+            server.stop(0)
+            cachingFetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `a response without validators clears the cached pair`() {
+        val rss = rssWithItems("https://example.com/1")
+        val sentETag = AtomicBoolean(true)
+        val seenIfNoneMatch = mutableListOf<String?>()
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/rss") { exchange ->
+            synchronized(seenIfNoneMatch) { seenIfNoneMatch.add(exchange.requestHeaders.getFirst("If-None-Match")) }
+            // First response carries an ETag, the second deliberately drops it.
+            if (sentETag.getAndSet(false)) exchange.responseHeaders.add("ETag", "\"v1\"")
+            exchange.sendResponseHeaders(200, rss.size.toLong())
+            exchange.responseBody.use { it.write(rss) }
+        }
+        server.start()
+        val cachingFetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val feed = FeedConfig("http://localhost:${server.address.port}/rss")
+            cachingFetcher.fetchFeed(feed, "tech")
+            cachingFetcher.fetchFeed(feed, "tech")   // sends If-None-Match, gets 200 with no ETag
+            cachingFetcher.fetchFeed(feed, "tech")   // must NOT replay the stale validator
+
+            assertEquals(
+                listOf(null, "\"v1\"", null),
+                synchronized(seenIfNoneMatch) { seenIfNoneMatch.toList() }
+            )
+        } finally {
+            server.stop(0)
+            cachingFetcher.shutdown()
+        }
     }
 
     private fun withLocalFeed(body: ByteArray, block: (url: String) -> Unit) {

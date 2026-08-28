@@ -21,6 +21,12 @@ private val logger = KotlinLogging.logger {}
  *
  * SSRF protection: reuses [RssFetcher.validateFeedUrl] before any network call.
  * All failures are silent — the original article is always returned unchanged on any error.
+ *
+ * Rate limiting: every outbound request passes through the SAME [HostThrottle] instance the RSS
+ * fetcher uses. Article pages and feeds routinely live on one host (reddit, a publisher's own
+ * domain), so without a shared gate this class would fetch [FETCH_PARALLELISM] pages at once
+ * against a host the fetcher is carefully backing off from — and re-earn the 429 the throttle
+ * just absorbed.
  */
 class ArticleFetcher(
     private val rssFetcher: RssFetcher,
@@ -28,7 +34,13 @@ class ArticleFetcher(
     /** Articles with descriptions shorter than this are eligible for content fetching. */
     private val minDescriptionLength: Int = 50,
     /** Maximum characters of extracted text to store as the enriched description. */
-    private val maxContentLength: Int = 1500
+    private val maxContentLength: Int = 1500,
+    /**
+     * Per-host gate shared with [RssFetcher]. Defaults to a private instance so standalone /
+     * test construction keeps working; production passes the fetcher's own so feed and page
+     * requests charge one budget.
+     */
+    private val hostThrottle: HostThrottle = HostThrottle()
 ) {
 
     companion object {
@@ -64,6 +76,13 @@ class ArticleFetcher(
          * is never blocked for the worst-case N × 20s. Articles not fetched in time are returned
          * unchanged (enrichment is best-effort by contract). */
         private const val FETCH_BUDGET_MILLIS = 90_000L
+
+        /**
+         * Longest a worker will sit waiting on [HostThrottle] before giving up on one article.
+         * A cooling-down host must not park a pool slot for the whole [FETCH_BUDGET_MILLIS] —
+         * enrichment is best-effort, and the article is re-eligible next cycle.
+         */
+        private const val MAX_HOST_WAIT_MILLIS = 30_000L
     }
 
     private val client = OkHttpClient.Builder()
@@ -86,16 +105,35 @@ class ArticleFetcher(
 
     /**
      * Enriches articles that have [Article.fetchFullContent] set and a short/empty description
-     * by fetching their linked URL and extracting the article body text.
+     * by fetching their linked URL and extracting the article body text, and — for articles
+     * [needsPreviewImage] selects — fills [Article.imageUrl] from the page's Open Graph /
+     * Twitter Card tags in the SAME pass.
      *
-     * Articles that already have sufficient description, or where fetching is not requested,
+     * Both jobs are done together because they want the same HTML: run as two passes (the old
+     * `enrich(...)` then `fillPreviewImages(...)` sequence) an article needing both would fetch
+     * its page twice whenever markdown.new was unavailable, parse it twice with jsoup, and spin
+     * up two thread pools. The caller supplies [needsPreviewImage] so this class stays decoupled
+     * from config (it is the caller that knows which categories have images enabled).
+     *
+     * Articles that already have sufficient description, or where neither job is requested,
      * are returned unchanged. Failures are always silent.
      *
-     * @return New list with enriched descriptions where applicable; original articles otherwise.
+     * @return New list with enriched descriptions / preview images where applicable;
+     *   original articles otherwise.
      */
-    fun enrich(articles: List<Article>): List<Article> =
+    fun enrich(
+        articles: List<Article>,
+        needsPreviewImage: (Article) -> Boolean = { false }
+    ): List<Article> =
         mapBounded(articles) { article ->
-            if (article.fetchFullContent) tryFetchContent(article) else article
+            val wantsContent = article.fetchFullContent
+            val wantsImage = article.imageUrl == null && needsPreviewImage(article)
+            when {
+                wantsContent && wantsImage -> tryFetchContentAndImage(article)
+                wantsContent -> tryFetchContent(article)
+                wantsImage -> tryFetchPreviewImage(article)
+                else -> article
+            }
         }
 
     /**
@@ -126,33 +164,45 @@ class ArticleFetcher(
     }
 
     /**
-     * Fills [Article.imageUrl] for articles that have none by fetching the linked page and
-     * reading its Open Graph / Twitter Card preview image meta tags.
-     *
-     * The caller decides which articles to pass (keeps this class decoupled from config) —
-     * typically only articles in image-enabled categories whose RSS entry carried no image.
-     * Articles that already have an [Article.imageUrl] are skipped. Failures are silent: the
-     * original article is returned unchanged on any error.
-     *
-     * @return New list with [Article.imageUrl] populated where a preview image was found;
-     *   original articles otherwise.
+     * Single-fetch path for an article that wants BOTH body text and a preview image.
+     * markdown.new is still tried first for the text (it extracts better than our selectors),
+     * but the page itself is fetched exactly once and serves both the `og:image` lookup and
+     * the text fallback — where the two-pass version fetched and parsed it twice.
      */
-    fun fillPreviewImages(articles: List<Article>): List<Article> =
-        mapBounded(articles) { article ->
-            if (article.imageUrl == null) tryFetchPreviewImage(article) else article
+    private fun tryFetchContentAndImage(article: Article): Article {
+        if (article.link.isBlank() || !passesUrlValidation(article.link)) return article
+
+        return try {
+            val markdown = fetchMarkdownNew(article.link)
+            val html = fetchHtml(article.link)
+
+            val text = markdown ?: html?.let { extractText(it, article.link) }
+            if (text.isNullOrBlank()) {
+                logger.warn { "[ArticleFetcher] No usable content extracted from '${article.link}'" }
+            } else {
+                val via = if (markdown != null) "markdown.new" else "Jsoup"
+                logger.info { "[ArticleFetcher] Enriched via $via '${article.link}' (${text.length} chars)" }
+            }
+
+            val image = html?.let { extractOgImage(it, article.link) }?.takeIf { it.isNotBlank() }
+            if (image == null) {
+                logger.debug { "[ArticleFetcher] No preview image found for '${article.link}'" }
+            } else {
+                logger.info { "[ArticleFetcher] Preview image for '${article.link}': $image" }
+            }
+
+            article.copy(
+                description = if (text.isNullOrBlank()) article.description else text.take(maxContentLength),
+                imageUrl = image ?: article.imageUrl
+            )
+        } catch (e: Exception) {
+            logFetchFailure(article.link, "content+image", e)
+            article
         }
+    }
 
     private fun tryFetchPreviewImage(article: Article): Article {
-        if (article.link.isBlank()) return article
-
-        if (enforceUrlValidation) {
-            try {
-                rssFetcher.validateFeedUrl(article.link)
-            } catch (e: IllegalArgumentException) {
-                logger.warn { "[ArticleFetcher] Rejected article URL '${article.link}': ${e.message}" }
-                return article
-            }
-        }
+        if (article.link.isBlank() || !passesUrlValidation(article.link)) return article
 
         return try {
             val html = fetchHtml(article.link) ?: return article
@@ -165,28 +215,13 @@ class ArticleFetcher(
                 article.copy(imageUrl = image)
             }
         } catch (e: Exception) {
-            // Worker interrupted (cycle deadline / pool shutdownNow) — okhttp surfaces it as
-            // InterruptedIOException with the flag still set. Cancellation, not a fetch failure.
-            if (Thread.currentThread().isInterrupted()) {
-                logger.debug { "[ArticleFetcher] Preview image fetch cancelled for '${article.link}'" }
-            } else {
-                logger.error(e) { "[ArticleFetcher] Failed to fetch preview image for '${article.link}'" }
-            }
+            logFetchFailure(article.link, "preview image", e)
             article
         }
     }
 
     private fun tryFetchContent(article: Article): Article {
-        if (article.link.isBlank()) return article
-
-        if (enforceUrlValidation) {
-            try {
-                rssFetcher.validateFeedUrl(article.link)
-            } catch (e: IllegalArgumentException) {
-                logger.warn { "[ArticleFetcher] Rejected article URL '${article.link}': ${e.message}" }
-                return article
-            }
-        }
+        if (article.link.isBlank() || !passesUrlValidation(article.link)) return article
 
         return try {
             // Strategy 1: markdown.new (purpose-built content extraction)
@@ -208,13 +243,77 @@ class ArticleFetcher(
                 article.copy(description = extracted.take(maxContentLength))
             }
         } catch (e: Exception) {
-            if (Thread.currentThread().isInterrupted()) {
-                logger.debug { "[ArticleFetcher] Content fetch cancelled for '${article.link}'" }
-            } else {
-                logger.error(e) { "[ArticleFetcher] Failed to fetch '${article.link}'" }
-            }
+            logFetchFailure(article.link, "content", e)
             article
         }
+    }
+
+    /** SSRF guard shared by every fetch path. Returns false (and logs) when the URL is rejected. */
+    private fun passesUrlValidation(url: String): Boolean {
+        if (!enforceUrlValidation) return true
+        return try {
+            rssFetcher.validateFeedUrl(url)
+            true
+        } catch (e: IllegalArgumentException) {
+            logger.warn { "[ArticleFetcher] Rejected article URL '$url': ${e.message}" }
+            false
+        }
+    }
+
+    /**
+     * Worker interrupted (cycle deadline / pool shutdownNow) — okhttp surfaces it as
+     * InterruptedIOException with the flag still set. Cancellation, not a fetch failure.
+     */
+    private fun logFetchFailure(url: String, what: String, e: Exception) {
+        if (Thread.currentThread().isInterrupted) {
+            logger.debug { "[ArticleFetcher] $what fetch cancelled for '$url'" }
+        } else {
+            logger.error(e) { "[ArticleFetcher] Failed to fetch $what for '$url'" }
+        }
+    }
+
+    /**
+     * Blocks until the shared [HostThrottle] lets this worker hit [url]'s host, giving up after
+     * [MAX_HOST_WAIT_MILLIS]. Unlike the RSS fetcher — which re-queues onto a scheduled pool —
+     * enrichment runs on short-lived workers under their own budget, so a bounded wait in place
+     * is both simpler and adequate.
+     *
+     * @return true when a slot was reserved and the caller MUST perform the request.
+     */
+    private fun awaitHostSlot(url: String): Boolean {
+        val host = HostThrottle.hostKey(url)
+        var waitedMs = 0L
+        while (true) {
+            val delayMs = hostThrottle.acquireDelayMs(host)
+            if (delayMs <= 0L) return true
+            if (waitedMs + delayMs > MAX_HOST_WAIT_MILLIS) {
+                logger.debug { "[ArticleFetcher] $host throttled past the per-article budget — skipping $url" }
+                return false
+            }
+            try {
+                Thread.sleep(delayMs)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+            waitedMs += delayMs
+        }
+    }
+
+    /**
+     * Feeds a response back into the shared per-host gate. A 429 cools the whole host down —
+     * the same cooldown the RSS fetcher then obeys for that host's feeds — and returns false so
+     * the caller abandons this article rather than reading a rate-limit body.
+     */
+    private fun recordHostOutcome(url: String, code: Int, retryAfter: String?): Boolean {
+        val host = HostThrottle.hostKey(url)
+        if (code == 429) {
+            val cooldownMs = hostThrottle.onRateLimit(host, RssFetcher.parseRetryAfterMs(retryAfter))
+            logger.warn { "[ArticleFetcher] HTTP 429 from $host — cooling the whole host down for ${cooldownMs / 1000}s" }
+            return false
+        }
+        hostThrottle.onSuccess(host)
+        return true
     }
 
     /**
@@ -222,8 +321,11 @@ class ArticleFetcher(
      * Returns null on any failure, allowing the caller to fall back to Jsoup.
      */
     private fun fetchMarkdownNew(url: String): String? {
+        val requestUrl = "${MARKDOWN_NEW_BASE_URL}${url}?retain_images=false"
+        // markdown.new is a shared third-party proxy with its own rate limit — gate it like any
+        // other host so a 429 there backs every worker off instead of only the one that saw it.
+        if (!awaitHostSlot(requestUrl)) return null
         return try {
-            val requestUrl = "${MARKDOWN_NEW_BASE_URL}${url}?retain_images=false"
             val request = Request.Builder()
                 .url(requestUrl)
                 .header("User-Agent", "Mozilla/5.0 (compatible; RssNewsBot/1.0)")
@@ -235,6 +337,7 @@ class ArticleFetcher(
                 if (remaining != null) {
                     logger.debug { "[ArticleFetcher] markdown.new rate limit remaining: $remaining" }
                 }
+                if (!recordHostOutcome(requestUrl, response.code, response.header("Retry-After"))) return null
                 if (!response.isSuccessful) {
                     logger.warn { "[ArticleFetcher] markdown.new HTTP ${response.code} for $url" }
                     return null
@@ -257,6 +360,7 @@ class ArticleFetcher(
     }
 
     private fun fetchHtml(url: String): String? {
+        if (!awaitHostSlot(url)) return null
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", "Mozilla/5.0 (compatible; RssNewsBot/1.0)")
@@ -264,6 +368,7 @@ class ArticleFetcher(
             .build()
 
         return client.newCall(request).execute().use { response ->
+            if (!recordHostOutcome(url, response.code, response.header("Retry-After"))) return null
             if (!response.isSuccessful) {
                 logger.warn { "[ArticleFetcher] HTTP ${response.code} for $url" }
                 return null
