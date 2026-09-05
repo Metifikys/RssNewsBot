@@ -19,6 +19,19 @@ class BillingException(message: String) : Exception(message)
  */
 class NonRetryableCliException(message: String) : Exception(message)
 
+/**
+ * Thrown when a CLI-backed LLM provider (`claude -p`, `codex exec`) hit its force-kill
+ * ceiling ([timeoutSeconds]) without producing an answer. It is an [IOException] so callers
+ * that only know about I/O failures still handle it, but the CLI retry loops treat it as
+ * terminal: a call that already burned the full ceiling is not going to succeed by being
+ * re-run immediately on the same input, and with the inner (per-call) and outer
+ * (`completeJson(maxRetry)`) loops both retrying it, one oversized Step-1 prompt stalled a
+ * category for 12 × 20 min ≈ 4 h (2026-09-04, tech, ~132 KB prompt) — and, with the cycle
+ * barrier waiting for every category, the whole bot with it. Failing on the first timeout
+ * lets Step 1 fall back to the legacy chunked path and the next cycle retry with fresh input.
+ */
+class CliTimeoutException(message: String) : java.io.IOException(message)
+
 /** Substrings in error bodies that indicate a permanent billing/quota block. */
 private val BILLING_ERROR_MARKERS = setOf(
     "billing_hard_limit_reached",

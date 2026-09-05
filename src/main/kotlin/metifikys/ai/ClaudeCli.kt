@@ -120,6 +120,8 @@ class ClaudeCli(
                 throw e            // usage/credit limit — retrying can't help
             } catch (e: NonRetryableCliException) {
                 throw e            // expired login / bad model — retrying can't help
+            } catch (e: CliTimeoutException) {
+                throw e            // already burned the full ceiling — re-running the same input won't help
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
                 throw e            // cancellation (cycle deadline / shutdown) — never retry
@@ -170,7 +172,7 @@ class ClaudeCli(
         try {
             return RetryPolicy.retry(
                 maxRetries = maxRetries,
-                isFatal = { it is BillingException || it is NonRetryableCliException },
+                isFatal = { it is BillingException || it is NonRetryableCliException || it is CliTimeoutException },
                 onRetry = { attempt, e -> logger.error(e) { "ClaudeCli attempt $attempt failed" } },
                 delayMillis = { _, _ -> retryBackoffMillis }
             ) {
@@ -192,10 +194,20 @@ class ClaudeCli(
      * and stderr are drained on their own threads — reading stdout to EOF on the calling
      * thread would block until the process exits and defeat the timeout. We therefore
      * [Process.waitFor] with the timeout first; only on clean exit do we join the drains
-     * and read their buffers. A timeout force-kills the process and surfaces a (retryable)
-     * IOException; an interrupt (cancellation) also force-kills the child before propagating,
-     * so a cancelled worker never leaks a live `claude` process.
+     * and read their buffers. A timeout force-kills the process and surfaces a
+     * [CliTimeoutException] (terminal for both retry loops) carrying the tail of whatever the
+     * CLI printed so far; an interrupt (cancellation) also force-kills the child before
+     * propagating, so a cancelled worker never leaks a live `claude` process.
      */
+    /** Last [limit] chars of the combined stdout/stderr, for the timeout message. */
+    private fun outputTail(stdout: StringBuilder, stderr: StringBuilder, limit: Int = 1500): String {
+        val combined = listOf(stdout.toString().trim(), stderr.toString().trim())
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+            .trim()
+        return combined.ifBlank { "<no output>" }.takeLast(limit)
+    }
+
     private fun runOnce(args: List<String>, prompt: String): String {
         val process = ProcessBuilder(args)
             .directory(workDir)
@@ -236,7 +248,12 @@ class ClaudeCli(
         }
         if (!finished) {
             process.destroyForcibly()
-            throw IOException("claude CLI timed out after ${timeoutSeconds}s")
+            stdoutDrain.join(1000)
+            stderrDrain.join(1000)
+            throw CliTimeoutException(
+                "claude CLI timed out after ${timeoutSeconds}s (model '${model.ifBlank { "<cli-default>" }}', " +
+                    "prompt ${prompt.length} chars); output so far: ${outputTail(stdoutBuf, stderrBuf)}"
+            )
         }
         stdinWriter.join(1000)
         stdoutDrain.join(1000)

@@ -58,6 +58,21 @@ class ClaudeCliTest {
     }
 
     @Test
+    fun `timeout is terminal for both retry loops and carries the CLI output tail`() {
+        val cmd = shim(
+            winBody = "echo still-waiting-upstream 1>&2\r\nping -n 5 127.0.0.1 >nul",
+            shBody = "echo still-waiting-upstream >&2\nsleep 5"
+        )
+        // Default maxRetries (2) + outer maxRetry=3: without the fail-fast this would take minutes.
+        val cli = ClaudeCli(endpoint(), command = cmd, timeoutSeconds = 1)
+        val started = System.nanoTime()
+        val ex = assertThrows<CliTimeoutException> { cli.completeJson("sys", "hello", maxRetry = 3) }
+        val elapsedSec = (System.nanoTime() - started) / 1_000_000_000.0
+        assertTrue(ex.message?.contains("still-waiting-upstream") == true, "output tail missing: ${ex.message}")
+        assertTrue(elapsedSec < 15, "expected a single attempt, took ${elapsedSec}s")
+    }
+
+    @Test
     fun `non-zero exit surfaces a retryable IOException with stderr`() {
         val cmd = shim(
             winBody = "echo boom 1>&2\r\nexit /b 3",

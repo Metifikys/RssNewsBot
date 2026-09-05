@@ -92,6 +92,25 @@ class CodexCliTest {
     }
 
     @Test
+    fun `timeout is terminal for both retry loops and carries the CLI output tail`() {
+        // 2026-09-04: a hung `codex exec` (OpenAI/Codex incident, ~132 KB Step-1 prompt) was
+        // retried 3× inner × 4× outer = 12 × 20 min ≈ 4 h. A timeout must fail on the first
+        // attempt and say what the CLI printed before it was killed.
+        val cmd = shim(
+            winBody = "echo still-waiting-upstream 1>&2\r\nping -n 5 127.0.0.1 >nul",
+            shBody = "echo still-waiting-upstream >&2\nsleep 5"
+        )
+        // Default maxRetries (2) + outer maxRetry=3: without the fail-fast this would take minutes.
+        val cli = CodexCli(endpoint(), command = cmd, timeoutSeconds = 1)
+        val started = System.nanoTime()
+        val ex = assertThrows<CliTimeoutException> { cli.completeJson("sys", "hello", maxRetry = 3) }
+        val elapsedSec = (System.nanoTime() - started) / 1_000_000_000.0
+        assertTrue(ex.message?.contains("timed out") == true, "got: ${ex.message}")
+        assertTrue(ex.message?.contains("still-waiting-upstream") == true, "output tail missing: ${ex.message}")
+        assertTrue(elapsedSec < 15, "expected a single attempt, took ${elapsedSec}s")
+    }
+
+    @Test
     fun `non-zero exit surfaces a retryable IOException with stderr`() {
         val cmd = shim(
             winBody = "echo boom 1>&2\r\nexit /b 3",
