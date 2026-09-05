@@ -276,6 +276,54 @@ class DigestCycleTest {
     }
 
     @Test
+    fun `runIngest inserts fetched articles but never digests`() {
+        val serverA = serverRss(rssWithItems("https://example.com/a1", "https://example.com/a2"))
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val config = cfg(mapOf("a" to cat(urlOf(serverA))))
+            val processor = RecordingCategoryProcessor(config, db)
+
+            cycle(config, fetcher, processor).runIngest("a")
+
+            assertEquals(
+                setOf("https://example.com/a1", "https://example.com/a2"),
+                db.findExistingLinks(listOf("https://example.com/a1", "https://example.com/a2"))
+            )
+            assertTrue(processor.calls.isEmpty(), "ingest must not run Step 1/2")
+        } finally {
+            serverA.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `runDigest processes ready articles without fetching anything`() {
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            // A feed URL nothing listens on: a fetch would fail loudly, a digest never tries.
+            val config = cfg(mapOf("a" to cat("http://localhost:1/never-fetched")))
+            db.insertArticles(
+                listOf(
+                    Article(
+                        category = "a",
+                        title = "ingested earlier",
+                        link = "https://example.com/ready",
+                        description = "d",
+                        pubDate = LocalDateTime.now()
+                    )
+                )
+            )
+            val processor = RecordingCategoryProcessor(config, db)
+
+            cycle(config, fetcher, processor).runDigest("a")
+
+            assertEquals(listOf("https://example.com/ready"), processor.calls.single().second.map { it.link })
+        } finally {
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
     fun `runMaintenance posts a status snapshot without touching any category`() {
         val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
         try {

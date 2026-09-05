@@ -414,7 +414,16 @@ data class FetcherConfig(
     /** Fallback delay before a retryable feed re-enters the queue; a server Retry-After wins. */
     val retryDelaySeconds: Long = 15,
     /** Wall-clock budget for one cycle's whole fetch stage; stragglers are deferred to the next cycle. */
-    val fetchDeadlineSeconds: Long = 240
+    val fetchDeadlineSeconds: Long = 240,
+    /**
+     * Per-category mode only. When set, ingestion (RSS fetch → link-dedup → enrich → per-article
+     * summarize → insert → embedding dedup) runs on its own timer at this cadence for every
+     * category, and the category's digest run does only Step 1 + Step 2 on whatever is already
+     * in the DB. Null (default) keeps ingestion inside the digest run, as before. Override per
+     * category with `categories.<name>.fetchIntervalMinutes`. Decoupling lets an evening burst
+     * of articles be enriched and summarized as it arrives instead of in front of the digest.
+     */
+    val intervalMinutes: Long? = null
 )
 
 /**
@@ -480,6 +489,12 @@ data class CategoryConfig(
      * its interval simply delays the next one — runs of the same category never overlap.
      */
     val intervalMinutes: Long? = null,
+    /**
+     * Ingestion cadence for this category (fetch → enrich → summarize → insert), in minutes.
+     * Null falls back to `fetcher.intervalMinutes`; when that is null too, ingestion stays
+     * coupled to the digest run. Per-category mode only.
+     */
+    val fetchIntervalMinutes: Long? = null,
     /**
      * When true, each digest bullet is sent as a Telegram photo+caption (single post)
      * if its first linked article has an `imageUrl` extracted from RSS. Otherwise the
@@ -867,13 +882,22 @@ object ConfigLoader {
                 }
             }
         }
-        // Per-category cadence: positive, and long enough for the fetch stage to fit.
+        // Per-category cadences: positive, and long enough for the fetch stage to fit.
+        config.fetcher.intervalMinutes?.let { interval ->
+            require(interval >= 1) { "fetcher.intervalMinutes must be >= 1 (got $interval)" }
+        }
         for ((name, cat) in config.categories) {
-            val interval = cat.intervalMinutes ?: continue
-            require(interval >= 1) { "categories.$name.intervalMinutes must be >= 1 (got $interval)" }
-            if (config.scheduler.perCategory && config.fetcher.fetchDeadlineSeconds > interval * 60) {
+            cat.intervalMinutes?.let { interval ->
+                require(interval >= 1) { "categories.$name.intervalMinutes must be >= 1 (got $interval)" }
+            }
+            cat.fetchIntervalMinutes?.let { interval ->
+                require(interval >= 1) { "categories.$name.fetchIntervalMinutes must be >= 1 (got $interval)" }
+            }
+            if (!config.scheduler.perCategory) continue
+            val fetchInterval = cat.fetchIntervalMinutes ?: config.fetcher.intervalMinutes ?: cat.intervalMinutes
+            if (fetchInterval != null && config.fetcher.fetchDeadlineSeconds > fetchInterval * 60) {
                 logger.warn {
-                    "categories.$name.intervalMinutes (${interval}m) is below fetcher.fetchDeadlineSeconds " +
+                    "categories.$name: fetch cadence (${fetchInterval}m) is below fetcher.fetchDeadlineSeconds " +
                         "(${config.fetcher.fetchDeadlineSeconds}s) — runs will go back-to-back and the " +
                         "effective interval stretches"
                 }

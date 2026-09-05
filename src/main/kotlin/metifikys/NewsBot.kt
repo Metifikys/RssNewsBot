@@ -107,8 +107,11 @@ class NewsBot(
     /** Cycle-mode scheduler (`scheduler.perCategory=false`): one global cycle, never overlapping. */
     private val scheduler = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "digest-cycle") }
 
-    /** Per-category mode: one single-thread scheduler per category, so runs of a category never overlap. */
-    private val categorySchedulers = LinkedHashMap<String, ScheduledExecutorService>()
+    /**
+     * Per-category mode: one single-thread scheduler per category run type (digest, and ingest
+     * when decoupled), so runs of the same kind for a category never overlap.
+     */
+    private val categorySchedulers = mutableListOf<ScheduledExecutorService>()
 
     /** Per-category mode: retention cleanup, affinity rebuild and the status post, on their own clock. */
     private val maintenanceScheduler = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "maintenance") }
@@ -265,7 +268,7 @@ class NewsBot(
         // rows on interrupt, and the startup reclaim covers a worker killed mid-flight).
         Runtime.getRuntime().addShutdownHook(Thread({
             logger.info { "[Shutdown] Stopping schedulers..." }
-            val executors = listOf(scheduler, maintenanceScheduler) + categorySchedulers.values
+            val executors = listOf(scheduler, maintenanceScheduler) + categorySchedulers
             executors.forEach { it.shutdown() }
             weeklyScheduler?.shutdown()
             updatesPoller?.stop()
@@ -314,6 +317,11 @@ class NewsBot(
      * (`categories.<name>.intervalMinutes`, else `scheduler.intervalMinutes`), first run
      * immediately; housekeeping and the status post tick on the shared interval. No category
      * ever waits for another, and a run that outlasts its interval only delays its own next run.
+     *
+     * With an ingest cadence configured (`categories.<name>.fetchIntervalMinutes`, else
+     * `fetcher.intervalMinutes`) the category is split in two timers: ingestion (fetch → enrich →
+     * summarize → insert) on the fetch cadence and the digest (Step 1 + Step 2) on the digest
+     * cadence, so a burst of articles is prepared as it arrives and the digest run stays short.
      */
     private fun startPerCategorySchedulers() {
         val defaultInterval = config.scheduler.intervalMinutes
@@ -322,15 +330,15 @@ class NewsBot(
         guarded("[Maintenance]") { digestCycle.runMaintenance() }
         val cadence = config.categories.map { (name, cat) ->
             val interval = cat.intervalMinutes ?: defaultInterval
-            val executor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "digest-$name") }
-            categorySchedulers[name] = executor
-            executor.scheduleAtFixedRate(
-                { guarded("[Cycle:$name]") { digestCycle.runCategory(name) } },
-                0,
-                interval,
-                TimeUnit.MINUTES
-            )
-            "$name every ${interval}m"
+            val fetchInterval = cat.fetchIntervalMinutes ?: config.fetcher.intervalMinutes
+            if (fetchInterval == null) {
+                schedule("digest-$name", interval) { digestCycle.runCategory(name) }
+                "$name every ${interval}m"
+            } else {
+                schedule("ingest-$name", fetchInterval) { digestCycle.runIngest(name) }
+                schedule("digest-$name", interval) { digestCycle.runDigest(name) }
+                "$name ingest every ${fetchInterval}m + digest every ${interval}m"
+            }
         }
         maintenanceScheduler.scheduleAtFixedRate(
             { guarded("[Maintenance]") { digestCycle.runMaintenance() } },
@@ -342,6 +350,13 @@ class NewsBot(
             "[Scheduler] per-category mode: ${cadence.joinToString(", ")}; " +
                 "maintenance + status every ${defaultInterval}m."
         }
+    }
+
+    /** One named single-thread scheduler running [block] now and then every [intervalMinutes]. */
+    private fun schedule(threadName: String, intervalMinutes: Long, block: () -> Unit) {
+        val executor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, threadName) }
+        categorySchedulers += executor
+        executor.scheduleAtFixedRate({ guarded("[$threadName]") { block() } }, 0, intervalMinutes, TimeUnit.MINUTES)
     }
 
     /** Legacy mode (`scheduler.perCategory=false`): one global cycle at the shared interval. */

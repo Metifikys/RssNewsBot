@@ -61,6 +61,34 @@ class CategoryScheduleConfigTest {
     }
 
     @Test
+    fun `ingest cadence is parsed globally and per category`() {
+        val config = load(
+            yaml(techInterval = "fetchIntervalMinutes: 5", perCategory = "").replace(
+                "scheduler:",
+                "fetcher:\n          intervalMinutes: 10\n        scheduler:"
+            )
+        )
+
+        assertEquals(10L, config.fetcher.intervalMinutes)
+        assertEquals(5L, config.categories.getValue("tech").fetchIntervalMinutes)
+        assertNull(config.categories.getValue("science").fetchIntervalMinutes)
+    }
+
+    @Test
+    fun `ingest cadence is null by default so ingestion stays coupled to the digest run`() {
+        val config = load(yaml(techInterval = ""))
+
+        assertNull(config.fetcher.intervalMinutes)
+        assertNull(config.categories.getValue("tech").fetchIntervalMinutes)
+    }
+
+    @Test
+    fun `zero per-category ingest cadence is rejected`() {
+        val ex = assertThrows<IllegalArgumentException> { load(yaml(techInterval = "fetchIntervalMinutes: 0")) }
+        assertTrue(ex.message.orEmpty().contains("categories.tech.fetchIntervalMinutes"), "got: ${ex.message}")
+    }
+
+    @Test
     fun `zero or negative per-category interval is rejected`() {
         val ex = assertThrows<IllegalArgumentException> { load(yaml(techInterval = "intervalMinutes: 0")) }
         assertTrue(ex.message.orEmpty().contains("categories.tech.intervalMinutes"), "got: ${ex.message}")

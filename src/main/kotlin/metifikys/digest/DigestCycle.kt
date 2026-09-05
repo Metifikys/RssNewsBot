@@ -71,18 +71,54 @@ class DigestCycle(
      * throttle each other at the HTTP level, by design). Never throws for pipeline failures —
      * [runCategoryPipeline] records them in the error log — so the caller's schedule survives.
      */
-    fun runCategory(name: String) {
+    fun runCategory(name: String) = timed(name, "run") { catCfg ->
+        runCategoryPipeline(name, catCfg, fetcher.newFetchDeadline())
+    }
+
+    /**
+     * Ingestion half only (fetch → link-dedup → enrich → summarize → insert → embedding dedup),
+     * for a decoupled ingest timer (`fetcher.intervalMinutes`). Leaves the digest to [runDigest].
+     */
+    fun runIngest(name: String) = timed(name, "ingest") { catCfg ->
+        try {
+            ingestCategory(name, catCfg, fetcher.newFetchDeadline())
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn { "[Cycle:$name] ingest interrupted." }
+        } catch (e: Exception) {
+            errorLog.recordError(name, "[Ingest:$name]", e)
+            logger.error(e) { "[Cycle:$name] ingest failed — other categories unaffected." }
+        }
+    }
+
+    /**
+     * Digest half only (ready query → Step 1 → Step 2) on whatever ingestion has already put in
+     * the DB. Articles inserted while this runs simply wait for the next digest.
+     */
+    fun runDigest(name: String) = timed(name, "digest") { _ ->
+        try {
+            digestCategory(name)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn { "[Cycle:$name] digest interrupted." }
+        } catch (e: Exception) {
+            errorLog.recordError(name, "[Cycle:$name]", e)
+            logger.error(e) { "[Cycle:$name] digest failed — other categories unaffected." }
+        }
+    }
+
+    private inline fun timed(name: String, what: String, block: (metifikys.config.CategoryConfig) -> Unit) {
         val catCfg = config.categories[name] ?: run {
             logger.warn { "[Cycle:$name] unknown category — nothing to run." }
             return
         }
         val startedNanos = System.nanoTime()
-        logger.info { "[Cycle:$name] run started at ${LocalDateTime.now()}" }
+        logger.info { "[Cycle:$name] $what started at ${LocalDateTime.now()}" }
         try {
-            runCategoryPipeline(name, catCfg, fetcher.newFetchDeadline())
+            block(catCfg)
         } finally {
             val seconds = (System.nanoTime() - startedNanos) / 1_000_000_000
-            logger.info { "[Cycle:$name] run finished in ${seconds}s" }
+            logger.info { "[Cycle:$name] $what finished in ${seconds}s" }
         }
     }
 
@@ -182,60 +218,8 @@ class DigestCycle(
         fetchDeadlineNanos: Long
     ) {
         try {
-            val rawArticles = fetcher.fetchCategory(name, catCfg.feeds, fetchDeadlineNanos)
-            logger.info { "[Cycle:$name] Fetched ${rawArticles.size} article(s)." }
-
-            // The fetch stage swallows interrupts by design (returns what it got, flag restored).
-            // A cancelled worker stops here: nothing was inserted yet and the feed content is
-            // still in the RSS next cycle, so this costs a delay, never data.
-            if (Thread.currentThread().isInterrupted()) {
-                logger.warn { "[Cycle:$name] cancelled during fetch — deferring to the next cycle." }
-                return
-            }
-
-            // Dedup BEFORE enrichment: skip articles whose links are already in DB
-            val existingLinks = db.findExistingLinks(rawArticles.map { it.link })
-            val newRawArticles = rawArticles.filter { it.link !in existingLinks }
-            logger.info { "[Cycle:$name] After dedup: ${newRawArticles.size} new article(s) (${existingLinks.size} already in DB)." }
-
-            // Enrichment and preview-image lookup share one pass: both want the article's HTML,
-            // so an article needing text AND an og:image is fetched once instead of twice. The
-            // predicate keeps ArticleFetcher decoupled from config — we decide here which
-            // categories have images enabled. Runs before summarization; the summarizer only
-            // sets `summary`, so image filling is order-independent.
-            val imageCategories = config.categories.filterValues { it.enableImages }.keys
-            val enriched = articleFetcher.enrich(newRawArticles) { it.category in imageCategories }
-            if (imageCategories.isNotEmpty()) {
-                val eligible = newRawArticles.count { it.category in imageCategories && it.imageUrl == null }
-                if (eligible > 0) {
-                    val found = enriched.count { it.category in imageCategories && it.imageUrl != null }
-                    logger.info { "[PreviewImage:$name] $eligible eligible article(s), $found now carry a preview image." }
-                }
-            }
-            val articles = articleSummarizer.summarize(enriched)
-
-            val inserted = db.insertArticles(articles)
-            logger.info { "[Cycle:$name] Inserted $inserted new article(s) into DB." }
-
-            // enrich/summarize/preview are best-effort and swallow interrupts (partial results,
-            // flag restored). Keep the cheap DB insert above, but skip the embed + digest stages
-            // on a cancelled worker — inserted articles wait for the next cycle.
-            if (Thread.currentThread().isInterrupted()) {
-                logger.warn { "[Cycle:$name] cancelled — skipping dedup/digest; inserted articles wait for the next cycle." }
-                return
-            }
-
-            // Log-only embedding dedup detector. Mutates nothing; groups by category
-            // internally, so a per-category subset is fine.
-            semanticDedupDetector?.detectAndLog(articles)
-
-            val ready = db.fetchReadyForDigest(name, config.processing.staleTimeoutHours)
-            if (ready.isEmpty()) {
-                logger.info { "[Cycle:$name] No ready articles. Skipping digest." }
-                return
-            }
-
-            categoryProcessor.processSingle(name, ready)
+            if (!ingestCategory(name, catCfg, fetchDeadlineNanos)) return
+            digestCategory(name)
         } catch (e: InterruptedException) {
             // Barrier cancellation or shutdown: keep the flag; articles left PROCESSING are
             // reclaimed next cycle via the stale-timeout.
@@ -245,6 +229,75 @@ class DigestCycle(
             errorLog.recordError(name, "[Cycle:$name]", e)
             logger.error(e) { "[Cycle:$name] pipeline failed — other categories unaffected." }
         }
+    }
+
+    /**
+     * Ingestion half: fetch → link-dedup → enrich → summarize → insert → embedding dedup.
+     * Returns false when the worker was cancelled part-way (nothing lost: un-inserted feed
+     * content is still in the RSS next time, inserted rows wait for the next digest).
+     */
+    private fun ingestCategory(
+        name: String,
+        catCfg: metifikys.config.CategoryConfig,
+        fetchDeadlineNanos: Long
+    ): Boolean {
+        val rawArticles = fetcher.fetchCategory(name, catCfg.feeds, fetchDeadlineNanos)
+        logger.info { "[Cycle:$name] Fetched ${rawArticles.size} article(s)." }
+
+        // The fetch stage swallows interrupts by design (returns what it got, flag restored).
+        // A cancelled worker stops here: nothing was inserted yet and the feed content is
+        // still in the RSS next cycle, so this costs a delay, never data.
+        if (Thread.currentThread().isInterrupted()) {
+            logger.warn { "[Cycle:$name] cancelled during fetch — deferring to the next cycle." }
+            return false
+        }
+
+        // Dedup BEFORE enrichment: skip articles whose links are already in DB
+        val existingLinks = db.findExistingLinks(rawArticles.map { it.link })
+        val newRawArticles = rawArticles.filter { it.link !in existingLinks }
+        logger.info { "[Cycle:$name] After dedup: ${newRawArticles.size} new article(s) (${existingLinks.size} already in DB)." }
+
+        // Enrichment and preview-image lookup share one pass: both want the article's HTML,
+        // so an article needing text AND an og:image is fetched once instead of twice. The
+        // predicate keeps ArticleFetcher decoupled from config — we decide here which
+        // categories have images enabled. Runs before summarization; the summarizer only
+        // sets `summary`, so image filling is order-independent.
+        val imageCategories = config.categories.filterValues { it.enableImages }.keys
+        val enriched = articleFetcher.enrich(newRawArticles) { it.category in imageCategories }
+        if (imageCategories.isNotEmpty()) {
+            val eligible = newRawArticles.count { it.category in imageCategories && it.imageUrl == null }
+            if (eligible > 0) {
+                val found = enriched.count { it.category in imageCategories && it.imageUrl != null }
+                logger.info { "[PreviewImage:$name] $eligible eligible article(s), $found now carry a preview image." }
+            }
+        }
+        val articles = articleSummarizer.summarize(enriched)
+
+        val inserted = db.insertArticles(articles)
+        logger.info { "[Cycle:$name] Inserted $inserted new article(s) into DB." }
+
+        // enrich/summarize/preview are best-effort and swallow interrupts (partial results,
+        // flag restored). Keep the cheap DB insert above, but skip the embed + digest stages
+        // on a cancelled worker — inserted articles wait for the next cycle.
+        if (Thread.currentThread().isInterrupted()) {
+            logger.warn { "[Cycle:$name] cancelled — skipping dedup/digest; inserted articles wait for the next cycle." }
+            return false
+        }
+
+        // Log-only embedding dedup detector. Mutates nothing; groups by category
+        // internally, so a per-category subset is fine.
+        semanticDedupDetector?.detectAndLog(articles)
+        return true
+    }
+
+    /** Digest half: ready query → [CategoryProcessor.processSingle] (Step 1 + Step 2). */
+    private fun digestCategory(name: String) {
+        val ready = db.fetchReadyForDigest(name, config.processing.staleTimeoutHours)
+        if (ready.isEmpty()) {
+            logger.info { "[Cycle:$name] No ready articles. Skipping digest." }
+            return
+        }
+        categoryProcessor.processSingle(name, ready)
     }
 
     /**
