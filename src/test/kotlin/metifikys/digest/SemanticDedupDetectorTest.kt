@@ -383,6 +383,47 @@ class SemanticDedupDetectorTest {
     }
 
     @Test
+    fun `hard-filter anchors on the closest PROCESSED neighbour when top-1 is a DUPLICATE`() {
+        val cfg = appConfig("tech", SemanticDedupConfig(enabled = true, threshold = 0.7, hardThreshold = 0.85))
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+
+        every { db.fetchArticleIdsByLinks(any()) } returns mapOf("https://a.com/new" to 99)
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        every { db.saveEmbedding(any(), any(), any()) } just Runs
+        // Top-1 (sim 1.0) is a DUPLICATE row — previously it shadowed the PROCESSED canonical
+        // at #2 (sim ≈ 0.95), letting the rewrite through. Now #2 is the reject anchor.
+        every { db.fetchRecentEmbeddings(any(), any(), any()) } returns listOf(
+            pastRow(8, floatArrayOf(1f, 0f, 0f), status = ArticleStatus.DUPLICATE),
+            pastRow(7, floatArrayOf(0.95f, 0.31f, 0f), status = ArticleStatus.PROCESSED)
+        )
+
+        SemanticDedupDetector(cfg, db, embedder).detectAndLog(listOf(article("https://a.com/new")))
+
+        verify(exactly = 1) { db.markDuplicate(99, 7) }
+    }
+
+    @Test
+    fun `hard-filter does NOT reject when only non-PROCESSED neighbours clear hardThreshold`() {
+        val cfg = appConfig("tech", SemanticDedupConfig(enabled = true, threshold = 0.7, hardThreshold = 0.85))
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+
+        every { db.fetchArticleIdsByLinks(any()) } returns mapOf("https://a.com/new" to 99)
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        every { db.saveEmbedding(any(), any(), any()) } just Runs
+        every { db.fetchRecentEmbeddings(any(), any(), any()) } returns listOf(
+            pastRow(8, floatArrayOf(1f, 0f, 0f), status = ArticleStatus.DUPLICATE),
+            pastRow(9, floatArrayOf(0.99f, 0.14f, 0f), status = ArticleStatus.UNPROCESSED),
+            pastRow(7, floatArrayOf(0.6f, 0.8f, 0f), status = ArticleStatus.PROCESSED)   // sim 0.6 < 0.85
+        )
+
+        SemanticDedupDetector(cfg, db, embedder).detectAndLog(listOf(article("https://a.com/new")))
+
+        verify(exactly = 0) { db.markDuplicate(any(), any()) }
+    }
+
+    @Test
     fun `assertion sanity check on test helpers`() {
         // Sanity: encode/decode a normalized vector survives the round-trip we use elsewhere.
         val v = VectorMath.l2Normalize(floatArrayOf(1f, 1f, 1f))

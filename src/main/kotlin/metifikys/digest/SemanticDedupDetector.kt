@@ -138,10 +138,10 @@ class SemanticDedupDetector(
         }
 
         for ((articleId, link, vec) in newVectors) {
-            val ranked = recent
+            val sortedAll = recent
                 .map { (row, candidateVec) -> row to VectorMath.cosine(vec, candidateVec) }
                 .sortedByDescending { it.second }
-                .take(sd.topK)
+            val ranked = sortedAll.take(sd.topK)
 
             val top = ranked.firstOrNull()
             if (top == null) {
@@ -153,13 +153,18 @@ class SemanticDedupDetector(
 
             // Hard-filter: only rejects against PROCESSED neighbours so the LLM keeps
             // owning within-batch dedup against UNPROCESSED / PROCESSING peers.
+            // The anchor is the closest PROCESSED neighbour, not top-1: a DUPLICATE row that
+            // was itself rejected against the canonical article usually sits closer to the
+            // next rewrite than the canonical does, and used to shadow it (2026-09-02 audit:
+            // 2 of 3 DOOM crunch re-posts had a DUPLICATE at #1 and a PROCESSED ≥ hardThreshold at #2).
             val hardThr = sd.hardThreshold
-            val rejected = hardThr != null &&
-                topSim >= hardThr &&
-                topRow.status == ArticleStatus.PROCESSED.name
-            if (rejected) {
+            val anchor = if (hardThr != null) {
+                sortedAll.firstOrNull { (row, sim) -> row.status == ArticleStatus.PROCESSED.name && sim >= hardThr }
+            } else null
+            val rejected = anchor != null
+            if (anchor != null) {
                 try {
-                    db.markDuplicate(articleId, topRow.articleId)
+                    db.markDuplicate(articleId, anchor.first.articleId)
                 } catch (e: Exception) {
                     logger.warn(e) {
                         "[SemanticDedup] cat=$categoryName: failed to mark id=$articleId as DUPLICATE; cycle continues"
@@ -175,8 +180,12 @@ class SemanticDedupDetector(
             logger.info {
                 val simStr = "%.4f".format(topSim)
                 val thrTail = hardThr?.let { " hardThreshold=$it" } ?: ""
+                val anchorTail = anchor
+                    ?.takeIf { it.first.articleId != topRow.articleId }
+                    ?.let { (row, sim) -> " anchor=[id=${row.articleId} sim=${"%.4f".format(sim)} title='${row.title.take(80)}']" }
+                    ?: ""
                 "$marker cat=$categoryName new=$link (id=$articleId) " +
-                    "top=[id=${topRow.articleId} status=${topRow.status} sim=$simStr title='${topRow.title.take(80)}'] " +
+                    "top=[id=${topRow.articleId} status=${topRow.status} sim=$simStr title='${topRow.title.take(80)}']$anchorTail " +
                     "threshold=${sd.threshold}$thrTail"
             }
             if (ranked.size > 1) {

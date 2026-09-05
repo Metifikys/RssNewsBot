@@ -986,6 +986,40 @@ class NewsDatabase(dbPath: String) {
         }
     }
 
+    /**
+     * Covered events for [category] whose `event_key` is in [eventKeys] and `covered_at >= since`.
+     * Keyed lookup for the meaningful-update cooldown: unlike [fetchRecentEvents] it is not
+     * bounded by `maxContextEvents`, so an event that has already scrolled out of the Step 1
+     * prompt context can still be found for the cooldown check.
+     */
+    fun fetchCoveredEventsByKeys(category: String, eventKeys: Collection<String>, since: LocalDateTime): List<CoveredEventRow> {
+        if (eventKeys.isEmpty()) return emptyList()
+        return transaction {
+            CoveredEventsTable
+                .selectAll()
+                .where {
+                    (CoveredEventsTable.category eq category) and
+                        (CoveredEventsTable.eventKey inList eventKeys.toSet()) and
+                        (CoveredEventsTable.coveredAt greaterEq since)
+                }
+                .map {
+                    CoveredEventRow(
+                        category = it[CoveredEventsTable.category],
+                        eventKey = it[CoveredEventsTable.eventKey],
+                        subject = it[CoveredEventsTable.subject],
+                        franchise = it[CoveredEventsTable.franchise],
+                        eventType = it[CoveredEventsTable.eventType],
+                        coreFact = it[CoveredEventsTable.coreFact],
+                        importance = it[CoveredEventsTable.importance],
+                        newsworthiness = it[CoveredEventsTable.newsworthiness],
+                        digestFit = it[CoveredEventsTable.digestFit],
+                        url = it[CoveredEventsTable.url],
+                        coveredAt = it[CoveredEventsTable.coveredAt]
+                    )
+                }
+        }
+    }
+
     /** Deletes covered events older than [retentionDays]. */
     fun pruneOldCoveredEvents(retentionDays: Long) {
         val cutoff = LocalDateTime.now().minusDays(retentionDays)

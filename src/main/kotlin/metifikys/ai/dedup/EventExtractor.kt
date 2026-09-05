@@ -278,6 +278,7 @@ class EventExtractor(
         val digestConfig = cat.dedup?.digest
         val cooldownFilteredShortlist = if (digestConfig != null) {
             val (kept, droppedByCooldown) = applyMeaningfulUpdateCooldown(
+                category = category,
                 shortlist = urlFilteredShortlist,
                 coveredRows = effectiveCoveredRows,
                 config = digestConfig
@@ -403,7 +404,17 @@ class EventExtractor(
         }
     }
 
+    /**
+     * Drops `meaningful_update` items whose related event was covered less than
+     * `meaningfulUpdateCooldownMinutes` ago, unless the item clears `newsworthinessOverride`.
+     *
+     * The previous event is looked up in the prompt context first ([coveredRows]) and then, for
+     * keys missing there, directly in `covered_events` by key. The context list is capped by
+     * `maxContextEvents` (≈1–2 days of a busy category), which would otherwise silently cap a
+     * multi-day cooldown at the context depth; the keyed lookup costs no prompt tokens.
+     */
     private fun applyMeaningfulUpdateCooldown(
+        category: String,
         shortlist: List<ShortlistItem>,
         coveredRows: List<CoveredEventRow>,
         config: DigestConfig,
@@ -411,7 +422,24 @@ class EventExtractor(
     ): Pair<List<ShortlistItem>, List<CooldownDrop>> {
         if (config.meaningfulUpdateCooldownMinutes <= 0) return shortlist to emptyList()
 
-        val coveredByKey = coveredRows.associateBy { it.eventKey }
+        val coveredByKey = coveredRows.associateBy { it.eventKey }.toMutableMap()
+        val missingKeys = shortlist
+            .filter { it.status == "meaningful_update" }
+            .map { it.relatedPreviousEventKey ?: it.eventKey }
+            .filter { it !in coveredByKey }
+            .toSet()
+        if (missingKeys.isNotEmpty()) {
+            val since = now.minusMinutes(config.meaningfulUpdateCooldownMinutes)
+            try {
+                db.fetchCoveredEventsByKeys(category, missingKeys, since).forEach { coveredByKey.putIfAbsent(it.eventKey, it) }
+            } catch (e: Exception) {
+                logger.warn(e) {
+                    "[Category:$category][Dedup] cooldown lookup of ${missingKeys.size} key(s) outside the prompt context failed — " +
+                        "checking against the context only"
+                }
+            }
+        }
+
         val dropped = mutableListOf<CooldownDrop>()
         val kept = shortlist.filter { item ->
             if (item.status != "meaningful_update") return@filter true

@@ -397,4 +397,125 @@ class EventExtractorTest {
         assertEquals(1, ready.result.shortlist.size)
         assertEquals("genshin_big_follow_up", ready.result.shortlist.single().eventKey)
     }
+
+    @Test
+    fun `cooldown finds the prior event by key when it has scrolled out of the prompt context`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        // Prompt context (bounded by maxContextEvents) no longer holds the prior event…
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        // …but the keyed lookup still does: covered 20h ago, inside a 4-day cooldown.
+        every { db.fetchCoveredEventsByKeys("games", setOf("doom_crunch"), any()) } returns listOf(
+            CoveredEventRow(
+                category = "games",
+                eventKey = "doom_crunch",
+                subject = "DOOM",
+                franchise = "DOOM",
+                eventType = "industry_news",
+                coreFact = "кранч",
+                importance = 6,
+                newsworthiness = 6,
+                digestFit = 6,
+                url = "https://old.com/doom",
+                coveredAt = LocalDateTime.now().minusHours(20)
+            )
+        )
+        every { openAI.completeJson(any(), any(), any()) } returns """
+        {
+          "extractions": [],
+          "shortlist": [
+            {
+              "eventKey": "doom_crunch",
+              "coreFact": "нові деталі",
+              "importance": 6,
+              "newsworthiness": 6,
+              "digestFit": 6,
+              "relatedPreviousEventKey": null,
+              "url": "https://a.com/1",
+              "status": "meaningful_update",
+              "articleIndices": [0]
+            }
+          ]
+        }
+        """.trimIndent()
+
+        val result = extractor.extract(
+            "games",
+            cat(
+                DedupConfig(
+                    promptFile = "any.yaml",
+                    digest = DigestConfig(
+                        ranker = RankerConfig(enabled = false),
+                        meaningfulUpdateCooldownMinutes = 4 * 24 * 60,
+                        newsworthinessOverride = 8
+                    )
+                )
+            ),
+            listOf(article("https://a.com/1"))
+        )
+
+        val ready = assertIs<ExtractOutcome.Ready>(result)
+        assertTrue(ready.result.shortlist.isEmpty())
+        // The lookup window is the cooldown itself — older rows cannot trigger it anyway.
+        val since = slot<LocalDateTime>()
+        verify { db.fetchCoveredEventsByKeys("games", setOf("doom_crunch"), capture(since)) }
+        val expected = LocalDateTime.now().minusMinutes(4 * 24 * 60)
+        assertTrue(java.time.Duration.between(expected, since.captured).abs().toMinutes() < 5)
+    }
+
+    @Test
+    fun `cooldown skips the keyed lookup when every related key is already in the prompt context`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns listOf(
+            CoveredEventRow(
+                category = "games",
+                eventKey = "prior-key",
+                subject = "S",
+                franchise = "F",
+                eventType = "t",
+                coreFact = "c",
+                importance = 4,
+                url = "https://old.com/1",
+                coveredAt = LocalDateTime.now().minusDays(3)
+            )
+        )
+        every { openAI.completeJson(any(), any(), any()) } returns """
+        {
+          "extractions": [],
+          "shortlist": [
+            {
+              "eventKey": "follow_up",
+              "coreFact": "нові деталі",
+              "importance": 5,
+              "newsworthiness": 5,
+              "digestFit": 5,
+              "relatedPreviousEventKey": "prior-key",
+              "url": "https://a.com/1",
+              "status": "meaningful_update",
+              "articleIndices": [0]
+            }
+          ]
+        }
+        """.trimIndent()
+
+        val result = extractor.extract(
+            "games",
+            cat(
+                DedupConfig(
+                    promptFile = "any.yaml",
+                    digest = DigestConfig(
+                        ranker = RankerConfig(enabled = false),
+                        meaningfulUpdateCooldownMinutes = 90
+                    )
+                )
+            ),
+            listOf(article("https://a.com/1"))
+        )
+
+        // 3 days > 90 min cooldown → kept; and no DB round-trip was needed.
+        val ready = assertIs<ExtractOutcome.Ready>(result)
+        assertEquals(1, ready.result.shortlist.size)
+        verify(exactly = 0) { db.fetchCoveredEventsByKeys(any(), any(), any()) }
+    }
 }
