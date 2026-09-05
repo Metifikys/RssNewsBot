@@ -47,6 +47,11 @@ single **Unreleased** section.
   extraction yields nothing (paywall teasers, YouTube pages). Tracking variants of a link
   (`utm_*`, `fbclid`, host casing, trailing slash, fragment) are normalized to one row
   (`LinkNormalizer`).
+- **Site-chrome scrub rules are data** — the patterns removed from extracted article text
+  (login nudges, share bars, "follow us" plugs) live in `scrub-rules.yaml` (shipped in the jar)
+  instead of code; `fetcher.scrubRulesFile` swaps in an operator-maintained file of the same
+  shape (`rules: [{name, regex, host?, dotAll?}]`, host-scoped rules apply to that host and its
+  subdomains only). Invalid regexes and duplicate names fail at load with the rule name.
 - **Keyword mute** (`preferences.mute`, merged with a per-category `mute:` list) — whole-word,
   case-insensitive match on title + description; matching articles are marked `PROCESSED` before
   Step 1 so the LLM never sees them. `mute-suggestions.yaml` carries data-driven candidates.

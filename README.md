@@ -39,8 +39,9 @@ via a `/status` admin snapshot.
   retries on 408/429/5xx with `Retry-After`, a wall-clock deadline per fetch stage, and a
   self-tuning per-host throttle shared with the article fetcher.
 - **Ingestion hygiene** — tracking variants of a link are normalized to one row, feed HTML is
-  stripped from descriptions, known site chrome is scrubbed from extracted text, and reddit link
-  posts are repointed at the article they link to.
+  stripped from descriptions, known site chrome is scrubbed from extracted text (rules in
+  `scrub-rules.yaml`, overridable via `fetcher.scrubRulesFile`), and reddit link posts are
+  repointed at the article they link to.
 - **Keyword mute** (`preferences.mute` + per-category `mute:`) — whole-word blocklist applied
   before Step 1; matching articles never reach an LLM.
 - **SSRF guard** — RFC-1918 / loopback / link-local hosts are rejected before any network
@@ -707,7 +708,7 @@ first cycle.
 | `codexCli`        | no       | `codex exec` provider: same shape                           |
 | `database`        | yes      | SQLite file path (no `..`, must be readable)                |
 | `scheduler`       | yes      | `intervalMinutes` (default cadence + maintenance tick), `perCategory` (default `true`) |
-| `fetcher`         | no       | `maxConcurrentFetches`, `maxAttempts`, `retryDelaySeconds`, `fetchDeadlineSeconds`, `intervalMinutes` (decoupled ingestion) |
+| `fetcher`         | no       | `maxConcurrentFetches`, `maxAttempts`, `retryDelaySeconds`, `fetchDeadlineSeconds`, `intervalMinutes` (decoupled ingestion), `scrubRulesFile` |
 | `processing`      | no       | Stale timeout, min articles, batch thresholds, retention    |
 | `summaryHistory`  | no       | How many previous digests to inject as context, retention   |
 | `preferences`     | no       | Global `mute:` keyword blocklist                            |

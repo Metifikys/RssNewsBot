@@ -423,7 +423,13 @@ data class FetcherConfig(
      * category with `categories.<name>.fetchIntervalMinutes`. Decoupling lets an evening burst
      * of articles be enriched and summarized as it arrives instead of in front of the digest.
      */
-    val intervalMinutes: Long? = null
+    val intervalMinutes: Long? = null,
+    /**
+     * Optional path to a YAML file of site-chrome scrub rules (`rules: [{name, regex, host?,
+     * dotAll?}]`) applied to extracted article text before the length cut. Replaces the built-in
+     * list shipped as `scrub-rules.yaml` inside the jar. Must exist at load time.
+     */
+    val scrubRulesFile: String? = null
 )
 
 /**
@@ -864,6 +870,9 @@ object ConfigLoader {
         }
 
         config.fetcher.let { f ->
+            f.scrubRulesFile?.let { path ->
+                require(java.io.File(path).isFile) { "fetcher.scrubRulesFile '$path' does not exist or is not a file" }
+            }
             require(f.maxConcurrentFetches >= 1) {
                 "fetcher.maxConcurrentFetches must be >= 1 (got ${f.maxConcurrentFetches})"
             }

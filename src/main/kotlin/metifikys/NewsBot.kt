@@ -24,6 +24,7 @@ import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.HostThrottle
 import metifikys.fetch.RssFetcher
+import metifikys.fetch.TextScrubRules
 import metifikys.telegram.StatusCommand
 import metifikys.telegram.StatusPoster
 import metifikys.telegram.TelegramSender
@@ -64,7 +65,8 @@ class NewsBot(
     // Validation-only RssFetcher (validateFeedUrl); its lazy fetch pool never starts.
     articleFetcher: ArticleFetcher = ArticleFetcher(
         RssFetcher(allowPrivateHosts = true),
-        hostThrottle = SHARED_HOST_THROTTLE
+        hostThrottle = SHARED_HOST_THROTTLE,
+        scrubRules = TextScrubRules.load(config.fetcher.scrubRulesFile)
     ),
     private val db: NewsDatabase = NewsDatabase(config.database.path),
     sender: TelegramSender = TelegramSender(config.telegram.botToken),

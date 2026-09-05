@@ -109,6 +109,9 @@ scheduler:
 #                             # its own timer at this cadence and the digest run is only
 #                             # Step 1 + Step 2. Unset = ingestion inside the digest run.
 #                             # Per category: categories.<name>.fetchIntervalMinutes.
+#   scrubRulesFile: scrub-rules.yaml  # site-chrome patterns removed from extracted article text;
+#                             # REPLACES the built-in list (src/main/resources/scrub-rules.yaml —
+#                             # copy it as a starting point). Shape: rules: [{name, regex, host?, dotAll?}]
 
 # Optional: per-cycle processing knobs.
 processing:
