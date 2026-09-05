@@ -129,6 +129,7 @@ class DigestCycle(
      * exception-safe on its own so a failing status post cannot skip the next cleanup.
      */
     fun runMaintenance() {
+        val startedNanos = System.nanoTime()
         try {
             runCleanup()
         } catch (e: Exception) {
@@ -137,6 +138,11 @@ class DigestCycle(
         }
         affinityAggregator?.recomputeIfStale()
         statusPoster?.post()
+        val seconds = (System.nanoTime() - startedNanos) / 1_000_000_000
+        logger.info {
+            "[Maintenance] cleanup + affinity + status post done in ${seconds}s" +
+                (if (statusPoster == null) " (no status chat configured)" else "")
+        }
     }
 
     fun runCycle() {
