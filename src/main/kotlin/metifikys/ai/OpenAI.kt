@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import metifikys.model.Article
 import metifikys.model.CategoryInput
 import metifikys.model.ShortlistItem
@@ -91,13 +92,21 @@ class OpenAI(
     @Serializable
     private data class ApiErrorEnvelope(val error: ApiError? = null)
 
+    /**
+     * `code` is a [JsonPrimitive], not a String: OpenAI sends `"code":"model_not_found"` but
+     * OpenRouter sends a bare number (`"code":404`). With a String field the OpenRouter envelope
+     * failed to decode, the error fell through as a plain retryable [IOException], and a model
+     * withdrawn from the free tier was retried 5× a minute apart for every article.
+     */
     @Serializable
     private data class ApiError(
         val message: String? = null,
         val type: String? = null,
         val param: String? = null,
-        val code: String? = null
-    )
+        val code: JsonPrimitive? = null
+    ) {
+        val codeText: String? get() = code?.content
+    }
 
     private class OpenAIResponseException(
         message: String,
@@ -294,7 +303,7 @@ class OpenAI(
         val details = listOfNotNull(
             statusCode?.let { "status=$it" },
             apiError.type?.let { "type=$it" },
-            apiError.code?.let { "code=$it" },
+            apiError.codeText?.let { "code=$it" },
             apiError.param?.let { "param=$it" },
             apiError.message?.let { "message=$it" }
         ).joinToString(", ")
@@ -306,7 +315,7 @@ class OpenAI(
             return statusCode == 408 || statusCode == 409 || statusCode == 429 || statusCode >= 500
         }
 
-        val markers = listOfNotNull(apiError.type, apiError.code)
+        val markers = listOfNotNull(apiError.type, apiError.codeText)
             .map { it.lowercase() }
         return markers.any { marker ->
             marker.contains("rate_limit") ||

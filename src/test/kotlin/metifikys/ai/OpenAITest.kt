@@ -59,6 +59,29 @@ class OpenAITest {
         }
     }
 
+    @Test
+    fun `OpenRouter numeric error code on 404 is non-retryable and fails on the first attempt`() {
+        // Real OpenRouter body from 2026-09-02 when openai/gpt-oss-120b:free left the free tier.
+        // `code` is a bare number there; a String-typed field failed to decode and the 404 was
+        // retried 5× a minute apart per article.
+        withChatCompletionServer(
+            statusCode = 404,
+            responseBody = """
+                {"error":{"message":"This model is unavailable for free. The paid version is available now - use this slug instead: openai/gpt-oss-120b","code":404},"user_id":"user_x"}
+            """.trimIndent()
+        ) { baseUrl, requestCount ->
+            val client = OpenAI(LlmEndpoint(baseUrl = baseUrl, apiKey = "test-key", model = "openai/gpt-oss-120b:free"))
+
+            val error = assertFailsWith<IOException> {
+                client.completeJson(systemPrompt = "system", userPrompt = "user", maxRetry = 3)
+            }
+
+            assertContains(error.message.orEmpty(), "status=404")
+            assertContains(error.message.orEmpty(), "code=404")
+            assertEquals(1, requestCount.get())
+        }
+    }
+
     private fun withChatCompletionServer(
         statusCode: Int,
         responseBody: String,

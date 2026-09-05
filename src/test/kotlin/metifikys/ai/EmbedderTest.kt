@@ -125,6 +125,24 @@ class EmbedderTest {
     }
 
     @Test
+    fun `embed treats OpenRouter numeric error code on 404 as non-retryable`() {
+        // OpenRouter sends `"code":404` as a bare number; a String-typed field failed to decode
+        // and the error fell through as a retryable IOException.
+        val responseBody = """
+            {"error":{"message":"This model is unavailable for free.","code":404},"user_id":"user_x"}
+        """.trimIndent()
+        withEmbeddingsServer(statusCode = 404, responseBody = responseBody) { baseUrl, requests ->
+            val embedder = Embedder(LlmEndpoint(baseUrl = baseUrl, apiKey = "k", model = "chat-model"))
+
+            val ex = assertFailsWith<IOException> {
+                embedder.embed(listOf("x"), model = "gone-model", maxRetries = 2)
+            }
+            assertContains(ex.message.orEmpty(), "code=404")
+            assertEquals(1, requests.get())
+        }
+    }
+
+    @Test
     fun `embed returns empty list for empty input without hitting server`() {
         val embedder = Embedder(
             LlmEndpoint(baseUrl = "http://unused.invalid/v1", apiKey = "k", model = "chat-model")

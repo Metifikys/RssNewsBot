@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -56,12 +57,15 @@ class Embedder(
     @Serializable
     private data class ApiErrorEnvelope(val error: ApiError? = null)
 
+    /** `code` may be a string (OpenAI) or a bare number (OpenRouter) — see the note in [OpenAI]. */
     @Serializable
     private data class ApiError(
         val message: String? = null,
         val type: String? = null,
-        val code: String? = null
-    )
+        val code: JsonPrimitive? = null
+    ) {
+        val codeText: String? get() = code?.content
+    }
 
     /** Provider tag used for cost recording (`openai` / `openrouter` / `anthropic`). */
     private val provider: String get() = MeteredLlmClient.providerKeyOf(endpoint)
@@ -154,7 +158,7 @@ class Embedder(
             val details = listOfNotNull(
                 statusCode?.let { "status=$it" },
                 apiError.type?.let { "type=$it" },
-                apiError.code?.let { "code=$it" },
+                apiError.codeText?.let { "code=$it" },
                 apiError.message?.let { "message=$it" }
             ).joinToString(", ")
             throw NonRetryableEmbedException(
@@ -170,7 +174,7 @@ class Embedder(
         if (statusCode != null) {
             return statusCode == 408 || statusCode == 409 || statusCode == 429 || statusCode >= 500
         }
-        val markers = listOfNotNull(apiError.type, apiError.code).map { it.lowercase() }
+        val markers = listOfNotNull(apiError.type, apiError.codeText).map { it.lowercase() }
         return markers.any { m ->
             m.contains("rate_limit") ||
                 m.contains("server_error") ||
