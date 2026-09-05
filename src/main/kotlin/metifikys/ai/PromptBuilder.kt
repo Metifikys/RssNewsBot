@@ -145,6 +145,14 @@ object PromptBuilder {
         )
     }
 
+    /**
+     * Links of the batch articles a shortlist item was built from — its `articleIndices` under
+     * the same 0/1-based normalization the render prompt applies, falling back to its `url`.
+     * Used by the weak-shortlist hold-back to carry exactly those articles into the next cycle.
+     */
+    fun sourceLinksOf(item: ShortlistItem, articles: List<Article>): List<String> =
+        item.resolveSourceArticles(articles).map { (_, article) -> article.link }
+
     private fun ShortlistItem.resolveSourceArticles(articles: List<Article>): List<Pair<Int, Article>> {
         val resolvedIndices = normalizeArticleIndices(articles).ifEmpty {
             articles.indexOfFirst { it.link == url }

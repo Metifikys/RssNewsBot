@@ -425,8 +425,42 @@ class CategoryProcessorTest {
 
         p.process(mapOf("tech" to listOf(article(1), article(2), article(3))))
 
-        verify { db.markProcessed(any()) }
+        // The article behind the held-back shortlist item goes back to UNPROCESSED so the next
+        // cycle re-evaluates it with fresh articles; only the rejects are marked PROCESSED.
+        verify { db.markUnprocessed(listOf("https://example.com/1")) }
+        verify { db.markProcessed(match { it.toSet() == setOf("https://example.com/2", "https://example.com/3") }) }
+        verify(exactly = 0) { db.markProcessed(match { "https://example.com/1" in it }) }
         verify(exactly = 0) { factory.forBatch(any()) }
+    }
+
+    @Test
+    fun `weak shortlist hold-back resolves carried articles by url when indices are missing`() {
+        val cat = cat(
+            dedup = DedupConfig(
+                promptFile = "x.yaml",
+                digest = DigestConfig(
+                    ranker = RankerConfig(enabled = true),
+                    minStrongItems = 5,
+                    maxWaitHours = 4,
+                    minItemsOnForcePublish = 1
+                )
+            )
+        )
+        val extractor = mockk<EventExtractor>()
+        val (p, db, _, promptLoader) = deps(cfg(minArticles = 1, category = cat), eventExtractor = extractor)
+        every { promptLoader.resolve(any()) } returns resolvedDedup
+        every { extractor.extract(any(), any(), any()) } returns ExtractOutcome.Ready(ExtractionResult(
+            extractions = emptyList(),
+            shortlist = listOf(shortlistItem(2).copy(articleIndices = emptyList()))
+        ))
+        every { db.fetchRecentSummaries("tech", 1) } returns listOf(
+            SummaryRecord("tech", "recent", LocalDateTime.now().minusHours(1))
+        )
+
+        p.process(mapOf("tech" to listOf(article(1), article(2), article(3))))
+
+        verify { db.markUnprocessed(listOf("https://example.com/2")) }
+        verify { db.markProcessed(match { it.toSet() == setOf("https://example.com/1", "https://example.com/3") }) }
     }
 
     @Test

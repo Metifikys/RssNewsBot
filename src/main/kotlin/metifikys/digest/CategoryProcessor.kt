@@ -322,12 +322,25 @@ open class CategoryProcessor(
                             val pastMaxWait = hoursSince >= digestCfg.maxWaitHours
                             val meetsForceFloor = shortlistSize >= digestCfg.minItemsOnForcePublish
                             if (!(pastMaxWait && meetsForceFloor)) {
+                                // Carry the articles behind the shortlisted items into the next
+                                // cycle instead of discarding them with the rejects: Step 1 then
+                                // re-evaluates them alongside fresh articles, so a held-back theme
+                                // still reaches a digest once it has company (or maxWaitHours
+                                // elapses). With 15-minute digest ticks batches are small and
+                                // 2-item shortlists common — marking everything PROCESSED here
+                                // silently dropped several themes a day (2026-09-05).
+                                val carried = extraction.shortlist
+                                    .flatMap { metifikys.ai.PromptBuilder.sourceLinksOf(it, capped) }
+                                    .toSet()
+                                val done = cappedLinks.filterNot { it in carried }
                                 logger.info {
                                     "[Category:$name][Dedup] Weak shortlist: $shortlistSize < minStrongItems=${digestCfg.minStrongItems} " +
                                             "(hoursSinceLastDigest=$hoursSince, maxWaitHours=${digestCfg.maxWaitHours}). " +
-                                            "Holding back; marking ${cappedLinks.size} article(s) PROCESSED."
+                                            "Holding back; ${carried.size} article(s) behind the shortlist return to UNPROCESSED " +
+                                            "for the next cycle, ${done.size} marked PROCESSED."
                                 }
-                                db.markProcessed(cappedLinks)
+                                if (carried.isNotEmpty()) db.markUnprocessed(carried.toList())
+                                if (done.isNotEmpty()) db.markProcessed(done)
                                 return
                             }
                             logger.info {
