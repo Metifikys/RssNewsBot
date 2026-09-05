@@ -741,6 +741,25 @@ class NewsDatabase(dbPath: String) {
         }
     }
 
+    /**
+     * Startup recovery: a row still PROCESSING when a new JVM starts belongs to a worker that no
+     * longer exists — unless a pending Batch API job (whose links are passed as [keepLinks]) still
+     * references it. Such rows go straight back to UNPROCESSED instead of waiting out the
+     * stale-timeout: on 2026-09-03 a forced shutdown mid Step-1 orphaned ~100 tech rows and, with
+     * `staleTimeoutHours=26`, they resurfaced 26 h later as one ~135 KB extract prompt that timed
+     * out for 3 h. Returns the number of rows reclaimed.
+     */
+    fun reclaimOrphanedProcessing(keepLinks: Collection<String> = emptyList()): Int = transaction {
+        val keep = keepLinks.toSet()
+        ArticlesTable.update({
+            val orphaned = ArticlesTable.status eq ArticleStatus.PROCESSING.name
+            if (keep.isEmpty()) orphaned else orphaned and (ArticlesTable.link notInList keep)
+        }) {
+            it[status] = ArticleStatus.UNPROCESSED.name
+            it[processingStartedAt] = null
+        }
+    }
+
     fun markUnprocessed(links: List<String>) {
         if (links.isEmpty()) return
         transaction {

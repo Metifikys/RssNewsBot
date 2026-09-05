@@ -92,6 +92,33 @@ class NewsDatabaseTest {
     }
 
     @Test
+    fun `reclaimOrphanedProcessing resets PROCESSING rows except those still owned by a batch`() {
+        val a = article("https://example.com/1")
+        val b = article("https://example.com/2")
+        val c = article("https://example.com/3")
+        db.insertArticles(listOf(a, b, c))
+        db.markProcessing(listOf(a.link, b.link))
+
+        val reclaimed = db.reclaimOrphanedProcessing(keepLinks = listOf(b.link))
+
+        assertEquals(1, reclaimed)
+        val ready = db.fetchReadyForDigestByCategory(staleTimeoutHours = 3)["tech"].orEmpty().map { it.link }
+        assertEquals(listOf(a.link, c.link).sorted(), ready.sorted())
+        assertEquals(listOf(b.link), db.fetchProcessingByCategory("tech").map { it.link })
+    }
+
+    @Test
+    fun `reclaimOrphanedProcessing with no pending batches resets every PROCESSING row`() {
+        val a = article("https://example.com/1")
+        val b = article("https://example.com/2")
+        db.insertArticles(listOf(a, b))
+        db.markProcessing(listOf(a.link, b.link))
+
+        assertEquals(2, db.reclaimOrphanedProcessing())
+        assertEquals(2, db.fetchReadyForDigestByCategory(staleTimeoutHours = 3)["tech"]?.size)
+    }
+
+    @Test
     fun `markUnprocessed returns rows to ready pool`() {
         val a = article("https://example.com/1")
         db.insertArticles(listOf(a))

@@ -247,6 +247,24 @@ class DigestCycle(
      * Branches on `kind`: "render" → existing render path; "extract" → Step 1 resume
      * path (fires Step 2 via [CategoryProcessor.deliverShortlist]).
      */
+    /**
+     * Startup recovery, run once before [resumePendingBatches]: returns every article a previous
+     * JVM left PROCESSING to UNPROCESSED, except those a still-pending Batch API job owns (its
+     * callback marks them itself). Without this, rows orphaned by a forced shutdown sit until the
+     * stale-timeout and then land in one cycle as a single oversized Step-1 prompt.
+     */
+    fun reclaimOrphanedProcessing() {
+        val ownedByPendingBatches = db.fetchPendingBatches()
+            .flatMap { rec -> rec.articleLinks.lines().map { it.trim() }.filter { it.isNotEmpty() } }
+        val reclaimed = db.reclaimOrphanedProcessing(ownedByPendingBatches)
+        if (reclaimed > 0) {
+            logger.warn {
+                "[Startup] Reclaimed $reclaimed article(s) left PROCESSING by a previous run " +
+                    "(${ownedByPendingBatches.size} link(s) owned by pending batches kept)."
+            }
+        }
+    }
+
     fun resumePendingBatches() {
         val pending = db.fetchPendingBatches()
         if (pending.isEmpty()) return

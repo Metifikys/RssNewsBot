@@ -274,6 +274,7 @@ class NewsBot(
         // (or failing) digest run — reaction collection is independent of the digest pipeline.
         updatesPoller?.start()
 
+        digestCycle.reclaimOrphanedProcessing()
         digestCycle.resumePendingBatches()
         logger.info { "Running first digest cycle immediately." }
         runDigestCycleGuarded()
