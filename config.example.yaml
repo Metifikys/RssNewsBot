@@ -93,7 +93,22 @@ database:
   path: "news.db"
 
 scheduler:
-  intervalMinutes: 10
+  intervalMinutes: 10      # default digest cadence per category + the maintenance/status tick
+  # perCategory: true      # default. false = legacy single global cycle that waits for the
+  #                        # slowest category (processing.categoryDeadlineMinutes /
+  #                        # maxConcurrentCategories apply only there).
+  # Per category: categories.<name>.intervalMinutes overrides the default (e.g. tech 15, science 60).
+
+# Optional: RSS fetch stage tuning. All feeds go through one shared bounded queue.
+# fetcher:
+#   maxConcurrentFetches: 3   # simultaneous HTTP requests across ALL categories
+#   maxAttempts: 3            # tries per feed per run (retryable failures re-enter the queue)
+#   retryDelaySeconds: 15     # fallback delay before a retry; a server Retry-After wins
+#   fetchDeadlineSeconds: 240 # wall-clock budget for one run's fetch stage; stragglers defer
+#   intervalMinutes: 10       # DECOUPLED ingestion: fetch → enrich → summarize → insert runs on
+#                             # its own timer at this cadence and the digest run is only
+#                             # Step 1 + Step 2. Unset = ingestion inside the digest run.
+#                             # Per category: categories.<name>.fetchIntervalMinutes.
 
 # Optional: per-cycle processing knobs.
 processing:
@@ -281,6 +296,9 @@ categories:
       batchFallback:    { provider: anthropic,  model: claude-haiku-4-5-20251001 }
       # On-failure fallback (nested, sync slots). E.g. primary Claude CLI, fall back to Codex CLI:
       #   render: { provider: claudecli, model: "", fallback: { provider: codexcli, model: "" } }
+    # Optional: this category's own cadences (per-category scheduler mode).
+    # intervalMinutes: 15        # digest run every 15 min (default: scheduler.intervalMinutes)
+    # fetchIntervalMinutes: 10   # ingestion every 10 min (default: fetcher.intervalMinutes)
     # Optional: two-step dedup pipeline. Step 1 (sync JSON-mode) extracts structured events
     # and shortlists only new/updated ones; Step 2 (Batch API) renders only the shortlist.
     # Remove this block to fall back to the legacy single-step flow.
@@ -292,6 +310,12 @@ categories:
       contextDays: 7
       # Maximum number of covered-event rows embedded in Step 1. Keep under ~150 for cost.
       maxContextEvents: 200
+      # Bounds on one Step-1 extract call: the newest articles by pubDate within both budgets go
+      # in, the rest stay UNPROCESSED for the next run. Defaults 100 / 80000. For a CLI-backed
+      # extract (codex exec / claude -p) ~40 articles keeps the call in the low minutes; prompts
+      # above ~110 KB total ran 10–60 min or hit the CLI timeout.
+      # extractMaxArticles: 40
+      # extractMaxPromptChars: 80000
       # Optional: editorial-quality gate applied AFTER Step 1 and BEFORE Step 2 render.
       # See telegram_posting_improvement_plan.md §4 for rationale. Leave ranker.enabled=false
       # to keep the legacy behaviour (Step 1's raw shortlist is passed straight to render).

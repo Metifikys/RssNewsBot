@@ -35,7 +35,14 @@ via a `/status` admin snapshot.
 ## Feature overview
 
 ### News intake
-- **RSS / Atom fetching** via Rome with HTTP retry-on-502 (configurable attempts and delay).
+- **RSS / Atom fetching** via Rome through one shared bounded queue (`fetcher:` block):
+  retries on 408/429/5xx with `Retry-After`, a wall-clock deadline per fetch stage, and a
+  self-tuning per-host throttle shared with the article fetcher.
+- **Ingestion hygiene** — tracking variants of a link are normalized to one row, feed HTML is
+  stripped from descriptions, known site chrome is scrubbed from extracted text, and reddit link
+  posts are repointed at the article they link to.
+- **Keyword mute** (`preferences.mute` + per-category `mute:`) — whole-word blocklist applied
+  before Step 1; matching articles never reach an LLM.
 - **SSRF guard** — RFC-1918 / loopback / link-local hosts are rejected before any network
   call; only `http`/`https` schemes are allowed.
 - **No-redirect HTTP** — Telegram client refuses redirects so the bot token cannot leak to a
@@ -56,8 +63,16 @@ via a `/status` admin snapshot.
    caps per franchise/subject, weak-shortlist hold-back, meaningful-update cooldown.
 
 ### LLM rendering & routing (see [§4](#llm-routing--multi-provider-support))
-- **Multi-provider**: OpenAI / Anthropic / OpenRouter mixable per category and per use case
+- **Multi-provider**: OpenAI / Anthropic / OpenRouter plus the subscription-billed Claude CLI
+  (`claude -p`) and Codex CLI (`codex exec`), mixable per category and per use case
   (`extract`, `extractAlternate`, `render`, `batch`, `summarize`, `batchFallback`).
+- **OpenRouter model ladder** — `openrouter.models` is a priority list walked on failure, so a
+  withdrawn free-tier model fails over to the next instead of taking the use case down.
+- **Bounded Step-1 prompt** — `dedup.extractMaxArticles` / `extractMaxPromptChars` keep the
+  extract call inside a CLI timeout; overflow waits for the next run.
+- **Audience feedback loop** (`feedback:` block) — channel reactions aggregate into an affinity
+  table that can re-rank the shortlist (`ranker.reactionWeight`) and brief the extract prompt
+  (`{{AUDIENCE_SIGNALS}}`), log-only until switched on.
 - **A/B alternation on Step 1** — when both `extract` and `extractAlternate` are set, every
   second extract request goes to the "B" side.
 - **On-failure fallback** — any sync slot can carry a nested `fallback` provider+model; when the
@@ -77,11 +92,20 @@ via a `/status` admin snapshot.
   crash/restart.
 
 ### Scheduling & concurrency
-- Single-threaded `ScheduledExecutorService`; first cycle on startup, then every
-  `scheduler.intervalMinutes`.
-- Independent per-category submission — a fast category delivers immediately without
-  waiting for slow ones to finish.
-- Graceful 30-second shutdown that flushes the scheduler before exit.
+- **One scheduler per category** (`scheduler.perCategory`, default) — each category runs on its
+  own thread at `categories.<name>.intervalMinutes` (default `scheduler.intervalMinutes`), first
+  run at startup. Runs of one category never overlap; a slow or stuck category never delays the
+  others.
+- **Optional decoupled ingestion** — with `fetcher.intervalMinutes` (or a per-category
+  `fetchIntervalMinutes`) the fetch → enrich → summarize → insert half runs on its own timer, and
+  the digest run is only Step 1 + Step 2 on what is already in the DB.
+- **Maintenance tick** on the shared interval: retention cleanup, affinity rebuild, `/status`
+  post.
+- **Legacy global cycle** (`perCategory: false`) still available: all categories fanned out in
+  parallel, cycle ends when the slowest finishes (`processing.categoryDeadlineMinutes` opts back
+  into an interrupting barrier).
+- Graceful 30-second shutdown that stops every scheduler and interrupts in-flight runs; rows a
+  killed worker left `PROCESSING` are reclaimed at the next startup.
 
 ### Telegram delivery
 - Direct HTTP via OkHttp (no `telegrambots` library).
@@ -121,6 +145,11 @@ via a `/status` admin snapshot.
 ---
 
 ## End-to-end pipeline
+
+One category's path, top to bottom. In per-category mode each category runs this on its own
+scheduler thread; with `fetcher.intervalMinutes` set, the upper half (fetch → insert →
+SemanticDedupDetector) ticks on the ingest timer and the lower half (CategoryProcessor onward)
+on the digest timer. The trailing cleanup and status post run on the separate maintenance tick.
 
 ```
 config.yaml ──► AppConfig (env overrides + validation)
@@ -171,9 +200,8 @@ DigestDeliverer ─► TopicFormatter ─► Telegram  │
 status reconciliation + CoveredEvent persist   │
        │                                       │
        ▼                                       │
-deleteOlderThan / pruneOldCoveredEvents / …    │
-       │                                       │
-       └──► StatusPoster.post() (admin chat)
+ ─ ─ maintenance tick (every scheduler.intervalMinutes) ─ ─
+retention cleanup ─► affinity rebuild ─► StatusPoster.post() (admin chat)
 ```
 
 ---
@@ -492,8 +520,12 @@ Additional protections:
 - `markProcessing` does **not** downgrade `PROCESSED` rows (idempotent).
 - `markUnprocessed` and `markDuplicate` similarly refuse to demote `PROCESSED`/`PROCESSING`.
 - Stale `PROCESSING` rows older than `processing.staleTimeoutHours` are reclaimed by
-  `fetchReadyForDigestByCategory` for the next cycle — protects against crashes that left
-  rows orphaned mid-flight.
+  `fetchReadyForDigestByCategory` for the next cycle — protects against a worker that died
+  mid-flight while the process kept running.
+- At startup every `PROCESSING` row not owned by a pending batch job is returned to
+  `UNPROCESSED` immediately (`reclaimOrphanedProcessing`), so a forced shutdown does not park
+  a batch of articles for the whole stale window and then dump it into one oversized Step-1
+  prompt.
 
 ---
 
@@ -671,22 +703,33 @@ first cycle.
 | `openai`          | yes      | API key + default sync/batch model                          |
 | `openrouter`      | no       | When present, enables OpenRouter as alt sync + Step 1 "B"   |
 | `anthropic`       | no       | When present, enables Anthropic for any LLM use case        |
+| `claudeCli`       | no       | `claude -p` provider: `command`, `model`, `timeoutSeconds`  |
+| `codexCli`        | no       | `codex exec` provider: same shape                           |
 | `database`        | yes      | SQLite file path (no `..`, must be readable)                |
-| `scheduler`       | yes      | `intervalMinutes`                                           |
-| `processing`      | no       | Stale timeout, min articles, batch thresholds               |
+| `scheduler`       | yes      | `intervalMinutes` (default cadence + maintenance tick), `perCategory` (default `true`) |
+| `fetcher`         | no       | `maxConcurrentFetches`, `maxAttempts`, `retryDelaySeconds`, `fetchDeadlineSeconds`, `intervalMinutes` (decoupled ingestion) |
+| `processing`      | no       | Stale timeout, min articles, batch thresholds, retention    |
 | `summaryHistory`  | no       | How many previous digests to inject as context, retention   |
+| `preferences`     | no       | Global `mute:` keyword blocklist                            |
+| `feedback`        | no       | Reaction-feedback aggregation (off by default)              |
+| `weekly`          | no       | Weekly top-story roundup (off by default)                   |
 | `admin`           | no       | `statusChatId` enables the `/status` poster                 |
 | `pricing`         | no       | USD/1M tokens per (provider, model)                          |
 | `categories`      | yes      | Map of category name → `CategoryConfig`                     |
 
 ### `processing` knobs (all optional)
 
-| Field                  | Default | Purpose                                          |
-|------------------------|---------|--------------------------------------------------|
-| `staleTimeoutHours`    | 3       | Reclaim `PROCESSING` rows older than this        |
-| `minArticles`          | 8       | Skip a category with fewer than N new articles   |
-| `primaryMaxPending`    | 2       | Promote to `batchFallback` at this many pending; `0` disables primary batch |
-| `secondaryMaxPending`  | 1       | Drop to sync render at primary + secondary       |
+| Field                     | Default | Purpose                                          |
+|---------------------------|---------|--------------------------------------------------|
+| `staleTimeoutHours`       | 3       | Reclaim `PROCESSING` rows older than this        |
+| `minArticles`             | 8       | Skip a category with fewer than N ready articles |
+| `primaryMaxPending`       | 2       | Promote to `batchFallback` at this many pending; `0` disables primary batch |
+| `secondaryMaxPending`     | 1       | Drop to sync render at primary + secondary       |
+| `articleRetentionDays`    | 1500    | Delete article rows older than this (validated against weekly lookback / dedup window) |
+| `llmCallRetentionDays`    | 30      | Prune the `llm_calls` ledger                     |
+| `embeddingRetentionDays`  | 30      | Prune `article_embeddings`                       |
+| `maxConcurrentCategories` | 12      | Legacy cycle mode only: fan-out pool size        |
+| `categoryDeadlineMinutes` | 0       | Legacy cycle mode only: `0` waits for every category, `>0` interrupts stragglers |
 
 ### `CategoryConfig`
 
@@ -694,6 +737,9 @@ first cycle.
 emoji: "💻"
 channelId: "@my_channel" # or "-1001234567890"
 enableImages: false       # photo+caption mode
+intervalMinutes: 15       # digest cadence (default: scheduler.intervalMinutes)
+fetchIntervalMinutes: 10  # ingestion cadence (default: fetcher.intervalMinutes; unset = inside the digest run)
+mute: [ "cod", "giveaway" ] # category-scoped keyword blocklist, merged with preferences.mute
 feeds:                    # plain string OR object form
   - https://example.com/feed
   - url: https://other.com/feed
@@ -721,10 +767,15 @@ dedup:                    # two-step pipeline opt-in
     renderUser: …
   contextDays: 7
   maxContextEvents: 200
+  extractMaxArticles: 40  # newest-by-pubDate cap per Step-1 call (default 100); overflow waits
+  extractMaxPromptChars: 80000 # char budget for the serialized article batch
   digest:                 # editorial ranker
     ranker:
       enabled: true
       newsworthinessWeight: 0.6
+      reactionWeight: 0.15  # audience-affinity term (0 = off; needs feedback.enabled)
+      reactionLogOnly: true # log the would-be diff instead of applying it
+      maxAffinityBoost: 1.0
     minStrongItems: 4
     maxDigestItems: 6
     maxWaitHours: 4
@@ -784,14 +835,19 @@ providers.
 | `reaction_counts`    | Current aggregated reaction counts per `(chat_id, message_id, emoji)` from `message_reaction_count` updates (replace-all per message) |
 | `bot_state`          | Key/value store for restart-surviving runtime state (currently the Telegram `getUpdates` offset) |
 
-Pruning runs at the tail of every cycle:
+| `audience_affinity`  | Reaction-feedback scores per `(category, dimension, key)` with `n_tone` evidence counts, rebuilt on the maintenance tick |
 
-- `deleteOlderThan(1500)` — articles older than 1500 days (long retention for dedup pointers).
-- `deleteOldSummaries(retentionDays)` and `pruneOldCoveredEvents(retentionDays)` —
-  `summaryHistory.retentionDays`.
+Pruning runs on the maintenance tick (or at the start of a legacy cycle), skipped while any
+batch is pending:
+
+- `deleteOlderThan(processing.articleRetentionDays)` — article rows (default 1500 days, long
+  retention for dedup pointers).
+- `deleteOldSummaries(retentionDays)` — `summaryHistory.retentionDays`;
+  `pruneOldCoveredEvents` keeps `max(summaryHistory.retentionDays, feedback.lookbackDays)`.
 - `deleteOldRejectedEvents(30)` — rejected events log.
 - `deleteOldBatches(2)` — completed/failed batch records.
 - `deleteOldDigestMessages(90)` / `deleteOldReactionCounts(90)` — reaction-tracking retention.
+- `deleteOldLlmCalls(llmCallRetentionDays)` / `pruneOldEmbeddings(embeddingRetentionDays)`.
 
 ---
 
@@ -807,13 +863,18 @@ src/main/kotlin/metifikys/
 │                   summaries, covered/rejected events, llm_calls, embeddings
 ├── digest/         CategoryProcessor, DigestCycle, SemanticDedupDetector,
 │                   DigestDeliverer, VectorMath, CycleErrorLog
-├── fetch/          RssFetcher (Rome + SSRF), ArticleFetcher (Jsoup),
-│                   ArticleSummarizer (per-article LLM)
+├── feedback/       Reaction valence, affinity math + aggregator, ranker term
+├── fetch/          RssFetcher (Rome + SSRF + queue), ArticleFetcher (Jsoup),
+│                   ArticleSummarizer (per-article LLM), HostThrottle,
+│                   RedditLinkExtractor, LinkNormalizer, HtmlText
 ├── format/         TopicFormatter (Telegram message formatting)
 ├── model/          Article, ArticleStatus, CategoryInput, Dedup DTOs
-├── telegram/       TelegramSender, StatusCommand, StatusPoster
+├── telegram/       TelegramSender, StatusCommand, StatusPoster, updates poller
 ├── Main.kt         Entry point (reads config path, builds NewsBot)
-└── NewsBot.kt      Composition root + scheduler loop
+└── NewsBot.kt      Composition root + per-category / maintenance schedulers
+
+bench/              Free-LLM benchmark harness + DB audits (Node, no deps)
+deploy/             systemd unit, backup / vacuum / restart scripts
 ```
 
 ---

@@ -8,6 +8,82 @@ single **Unreleased** section.
 ## [Unreleased]
 
 ### Added
+- **Independent per-category schedulers** (`scheduler.perCategory`, default `true`) — every
+  category runs on its own single-thread scheduler at `categories.<name>.intervalMinutes`
+  (default `scheduler.intervalMinutes`), first run at startup. Runs of one category never
+  overlap and a run that outlasts its interval only delays its own next run; no category ever
+  waits for the slowest one, so the cycle barrier and its knobs
+  (`processing.categoryDeadlineMinutes`, `maxConcurrentCategories`) only matter in the legacy
+  global cycle (`perCategory: false`). Housekeeping that used to open and close a cycle —
+  retention cleanup, affinity rebuild, the admin status post — runs on a separate maintenance
+  tick at the shared interval (`DigestCycle.runMaintenance`), logged per tick. Shutdown stops
+  every scheduler under one 30 s budget and interrupts whatever is still running.
+- **Decoupled ingestion timer** (`fetcher.intervalMinutes`, per category
+  `categories.<name>.fetchIntervalMinutes`) — when set, a category runs on two timers: ingestion
+  (RSS fetch → link-dedup → enrich → per-article summarize → insert → embedding dedup) on the
+  fetch cadence, and the digest (Step 1 + Step 2 on whatever is already in the DB) on the digest
+  cadence. An evening burst of articles is enriched and summarized as it arrives instead of in
+  front of the digest, so a digest run is only the two LLM steps. Unset keeps ingestion inside
+  the digest run.
+- **Startup reclaim of orphaned `PROCESSING` rows** — every row a previous JVM left
+  `PROCESSING` and no pending Batch API job owns goes straight back to `UNPROCESSED` at startup
+  (`NewsDatabase.reclaimOrphanedProcessing`), instead of waiting out `staleTimeoutHours` and then
+  landing in one cycle as a single oversized Step-1 prompt (a forced shutdown mid Step 1 had
+  parked ~100 rows for 26 h and produced a 134 KB prompt that timed out for 3 h).
+- **Queue-model RSS fetcher + `fetcher:` config block** — all feeds go through one shared
+  bounded pool (`maxConcurrentFetches`), one HTTP attempt per pass, retryable failures re-enter
+  the queue after `retryDelaySeconds` (a server `Retry-After` wins) up to `maxAttempts`, and the
+  whole stage is capped by `fetchDeadlineSeconds`; stragglers defer to the next run, link-dedup
+  makes that a delay, never a loss. Retries cover the whole transient family (408/429/5xx), not
+  just 502.
+- **Shared self-tuning per-host throttle** (`HostThrottle`) used by both `RssFetcher` and
+  `ArticleFetcher`, so a 429 earned by either slows both down for that host.
+- **Reddit link-post rewrite** — reddit feed items that are link posts are repointed at the
+  article their `[link]` anchor targets (boilerplate card dropped, full-content fetch forced).
+- **Ingestion text hygiene** — feed HTML is stripped from descriptions at ingestion
+  (`HtmlText.strip`; t.me mirrors and reddit shipped 40–60 % markup in the prompt budget), known
+  site chrome is scrubbed from extracted article text before the length cut, and
+  `og:description` / `twitter:description` / meta description serve as the text when body
+  extraction yields nothing (paywall teasers, YouTube pages). Tracking variants of a link
+  (`utm_*`, `fbclid`, host casing, trailing slash, fragment) are normalized to one row
+  (`LinkNormalizer`).
+- **Keyword mute** (`preferences.mute`, merged with a per-category `mute:` list) — whole-word,
+  case-insensitive match on title + description; matching articles are marked `PROCESSED` before
+  Step 1 so the LLM never sees them. `mute-suggestions.yaml` carries data-driven candidates.
+- **OpenRouter model ladder** (`openrouter.models`, up to 4 distinct entries) — the global
+  default sync paths (summarize, render, extract-alternate) walk the list on failure via a
+  `FallbackLlmClient` chain, so a withdrawn free-tier model fails over to the next instead of
+  taking the use case down. Each link is metered separately for `/status`. Per-category `llm.*`
+  overrides still pin one model and bypass the ladder.
+- **Step-1 prompt bounds** (`dedup.extractMaxArticles`, default 100; `dedup.extractMaxPromptChars`,
+  default 80 000) — `capForExtract` keeps the newest articles by `pubDate` within both budgets,
+  always admitting at least one; overflow stays `UNPROCESSED` for the next run. For a CLI-backed
+  extract (`codex exec` with gpt-5.4-mini) prompts above ~110 KB total took 10–60 min or timed
+  out, so ~40 articles is the practical ceiling there.
+- **Reaction feedback loop** (`feedback:` block, off by default) — channel reactions are
+  aggregated into `audience_affinity` (cohort z-score with a zero-reaction baseline,
+  winsorization, half-life decay, empirical-Bayes shrinkage toward the category prior, `n_tone`
+  evidence counts) on a throttled rebuild. Phase 2 feeds it back into selection behind config:
+  `ranker.reactionWeight` adds an affinity term to the shortlist ranker (log-only by default,
+  `reactionLogOnly: false` to apply; `maxAffinityBoost` clamps it, an epsilon floor keeps
+  one-emoji categories on their deterministic tiebreak chain), and an `{{AUDIENCE_SIGNALS}}`
+  placeholder in extract prompts injects top liked/disliked franchises and event types once a key
+  has ≥ 3 tone samples. `/status` shows the ranked affinity table; `[AffinityRank]` logs the exact
+  selection diff each run. Env-gated prod replay harness (`REPLAY_DB`) for what-if runs.
+- **Bench harness** (`bench/`, Node, no deps) — builds real summarize/digest tasks from a DB
+  snapshot, runs the OpenRouter model matrix, and computes language/link/format metrics; the
+  2026-08-28 run that produced the current ladder is frozen under `bench/results/`.
+- **Server deploy kit** (`deploy/`) — systemd unit (`Restart=always`, `-Xmx512m`,
+  `+ExitOnOutOfMemoryError`), daily online SQLite backup with rotation, one-shot `VACUUM INTO`
+  compaction, env-file example, and a deploy README. CI workflow (`./gradlew build` with JaCoCo
+  on push/PR), committed Gradle wrapper, `.gitattributes` keeping scripts at LF, and a real
+  `gradle.lockfile`.
+- **Configurable retention** — `processing.articleRetentionDays` (replaces the hard-coded 1500),
+  `llmCallRetentionDays`, `embeddingRetentionDays`; `llm_calls` and article embeddings are now
+  actually pruned (they were only pruned from tests, and `news.db` had reached 700+ MB). Validated
+  at load against `weekly.lookbackDays` and `semanticDedup.windowDays`. `covered_events` are kept
+  for `max(summaryHistory.retentionDays, feedback.lookbackDays)` so the affinity join never loses
+  reactions.
 - **Event-level dedup hard filter (`semanticDedup.eventHardThreshold`)** — graduates the
   log-only `EventSemanticAnalyzer` (Layer 3.5) to an optional hard filter. When set, a shortlist
   event with `status == "new"` whose top covered-event cosine ≥ the threshold is dropped before
@@ -84,6 +160,43 @@ single **Unreleased** section.
   `extractOgImage`, reusing the existing fetch path and SSRF URL validation; no new deps).
 
 ### Fixed
+- **A CLI timeout is terminal for both retry loops.** A `codex exec` / `claude -p` call that hit
+  its `timeoutSeconds` ceiling was retried by the inner per-call loop and again by
+  `completeJson(maxRetry)`: 3 × 4 = 12 × 20 min ≈ 4 h for one oversized Step-1 prompt, and with
+  the old cycle barrier the whole bot. `CliTimeoutException` now fails on the first timeout so
+  Step 1 falls back to the legacy chunked path and the next run retries with fresh input; the
+  message carries the tail of stdout/stderr, the model and the prompt size.
+- **OpenRouter numeric error codes are decoded.** OpenRouter sends `"code":404` as a bare number;
+  the String-typed field failed to decode, the envelope fell through as a retryable `IOException`
+  and a model withdrawn from the free tier was retried 5× a minute apart for every article.
+  `code` is a `JsonPrimitive` for the chat and embeddings clients, so 4xx fails on the first
+  attempt and the ladder takes over.
+- **Cancellation is cancellation, not an LLM failure.** A cycle-barrier / shutdown interrupt was
+  retried by the CLI `completeJson` loops, turned into a legacy fallback by `EventExtractor`,
+  spawned a second CLI call from the sync fallback, and left both interrupted `claude -p` children
+  running. CLI `runOnce` now `destroyForcibly()`s the child on interrupt, every retry loop
+  (shared `RetryPolicy`) propagates `InterruptedException` with the flag restored and refuses to
+  retry on an already-interrupted thread (okhttp's `InterruptedIOException` included),
+  `CategoryProcessor` reverts articles to `UNPROCESSED` on every interrupt branch, and the
+  pipeline skips embed/digest on a cancelled worker.
+- **Semantic dedup hard filter anchors on the closest `PROCESSED` neighbour, not top-1** — a
+  `DUPLICATE` row sitting at #1 used to shadow the canonical article and let a re-post through.
+- **Meaningful-update cooldown looks the previous event up by key** in `covered_events` when it
+  has scrolled out of the `maxContextEvents` prompt context, so a multi-day cooldown is no longer
+  silently capped at ~1–2 days of context.
+- **Topics that failed to send no longer persist `covered_events`** — their articles stayed
+  `UNPROCESSED` for retry, but the covered row made Step 1 classify the retry as a duplicate and
+  the story silently never reached the channel.
+- **BUG-003/006/007/009/010/011/012/015/016/019/020/021/023/025** — linkless topics are dropped
+  and an all-invalid digest reverts to `UNPROCESSED`; feed fetch retries 408/429/5xx with
+  `Retry-After`; Telegram 429 `retry_after` is honored and only a 400 falls back to plain text;
+  caption truncation never splits a surrogate pair or a link; bare non-markdown URLs are rejected
+  by the whitelist; retention cleanup runs at cycle start and skips while batches are pending;
+  deterministic `ORDER BY` for the ready query; `markProcessing` claims only `UNPROCESSED` rows;
+  pending-batch count matches CSV list membership; link normalization at ingestion; enrich /
+  preview fetches run on a bounded pool with a time cap; OpenAI `Retry-After` header preferred
+  over the regex scrape; the startup migration only clears stray `processing_started_at` and logs
+  the count; `stream=false` on the sync chat request.
 - **CLI providers (`claude -p` / `codex exec`) now surface the real failure and stop retry
   storms.** On a non-zero exit these CLIs print the actual error — expired login, usage
   limit, unknown model — to **stdout**, but the providers inspected only stderr, so failures
@@ -96,6 +209,13 @@ single **Unreleased** section.
   lowered 5→2.
 
 ### Changed
+- **The global digest cycle is legacy.** `scheduler.perCategory: false` restores it; its
+  `processing.categoryDeadlineMinutes` barrier now defaults to `0` (wait for every category — each
+  stage is internally bounded, so nothing hangs forever) after a positive value kept cancelling
+  healthy hour-long CLI Step-1 chains. `processing.maxConcurrentCategories` bounds its fan-out.
+- **Step-1 legacy chunk size 100 → 50.**
+- **Full LLM prompts and responses are logged at DEBUG only**; INFO keeps model id and lengths
+  (BUG-022 log bloat).
 - **`/status` metrics overhauled** — the non-actionable token in/out estimates and (inaccurate)
   USD cost figure are replaced with operational signals: per-provider average + nearest-rank p95
   LLM latency over 24h/7d (captured in `MeteredLlmClient` for synchronous calls; batch jobs leave
