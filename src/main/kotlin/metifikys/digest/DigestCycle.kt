@@ -22,8 +22,15 @@ import java.util.concurrent.TimeUnit
 private val logger = KotlinLogging.logger {}
 
 /**
- * One end-to-end digest cycle: RSS fetch → link-dedup → enrich → summarize per feed →
- * insert → fetch ready batches → delegate to [CategoryProcessor].
+ * The digest pipeline: RSS fetch → link-dedup → enrich → summarize per feed → insert → fetch
+ * ready batches → delegate to [CategoryProcessor].
+ *
+ * Two entry points drive it:
+ *  - [runCategory] + [runMaintenance] — per-category scheduler mode (default): every category
+ *    runs on its own thread at its own interval, the housekeeping that used to open a cycle
+ *    (retention cleanup, affinity rebuild, status post) runs on a separate maintenance tick.
+ *  - [runCycle] — the legacy global cycle: housekeeping, then every category fanned out in
+ *    parallel, then the status post once the slowest category is done.
  *
  * Also owns batch resumption from previous runs: on startup, polls any DB-recorded
  * pending batches and routes their results through [DigestDeliverer].
@@ -57,6 +64,44 @@ class DigestCycle(
 ) {
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    /**
+     * One run of a single category's pipeline, for the per-category scheduler. Gets its own
+     * fetch deadline (the fetcher's bounded pool is still shared, so concurrent categories
+     * throttle each other at the HTTP level, by design). Never throws for pipeline failures —
+     * [runCategoryPipeline] records them in the error log — so the caller's schedule survives.
+     */
+    fun runCategory(name: String) {
+        val catCfg = config.categories[name] ?: run {
+            logger.warn { "[Cycle:$name] unknown category — nothing to run." }
+            return
+        }
+        val startedNanos = System.nanoTime()
+        logger.info { "[Cycle:$name] run started at ${LocalDateTime.now()}" }
+        try {
+            runCategoryPipeline(name, catCfg, fetcher.newFetchDeadline())
+        } finally {
+            val seconds = (System.nanoTime() - startedNanos) / 1_000_000_000
+            logger.info { "[Cycle:$name] run finished in ${seconds}s" }
+        }
+    }
+
+    /**
+     * Shared housekeeping for per-category mode — what a global cycle did before and after its
+     * fan-out: retention cleanup, the throttled affinity rebuild, and one status snapshot to the
+     * admin chat. Runs on its own timer, independent of any category's progress. Each part is
+     * exception-safe on its own so a failing status post cannot skip the next cleanup.
+     */
+    fun runMaintenance() {
+        try {
+            runCleanup()
+        } catch (e: Exception) {
+            errorLog.recordError(null, "[Cleanup]", e)
+            logger.error(e) { "[Maintenance] retention cleanup failed" }
+        }
+        affinityAggregator?.recomputeIfStale()
+        statusPoster?.post()
+    }
 
     fun runCycle() {
         logger.info { "=== Digest cycle started at ${LocalDateTime.now()} ===" }

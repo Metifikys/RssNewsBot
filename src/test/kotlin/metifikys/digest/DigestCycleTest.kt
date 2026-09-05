@@ -3,6 +3,8 @@ package metifikys.digest
 import com.sun.net.httpserver.HttpServer
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
+import metifikys.telegram.StatusPoster
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
 import metifikys.config.DatabaseConfig
@@ -76,8 +78,10 @@ class DigestCycleTest {
         fetcher: RssFetcher,
         processor: CategoryProcessor,
         errorLog: CycleErrorLog = CycleErrorLog(),
-        articleFetcher: ArticleFetcher = ArticleFetcher(RssFetcher(enforceUrlValidation = false))
+        articleFetcher: ArticleFetcher = ArticleFetcher(RssFetcher(enforceUrlValidation = false)),
+        statusPoster: StatusPoster? = null
     ) = DigestCycle(
+        statusPoster = statusPoster,
         config = config,
         fetcher = fetcher,
         articleFetcher = articleFetcher,
@@ -227,6 +231,63 @@ class DigestCycleTest {
             assertEquals(listOf("https://example.com/old"), techCall!!.second.map { it.link })
         } finally {
             emptyFeed.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `runCategory runs only the named category's pipeline`() {
+        val serverA = serverRss(rssWithItems("https://example.com/a1"))
+        val serverB = serverRss(rssWithItems("https://example.com/b1"))
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val config = cfg(mapOf("a" to cat(urlOf(serverA)), "b" to cat(urlOf(serverB))))
+            val processor = RecordingCategoryProcessor(config, db)
+
+            cycle(config, fetcher, processor).runCategory("a")
+
+            assertEquals(listOf("a"), processor.calls.map { it.first })
+            assertEquals(listOf("https://example.com/a1"), processor.calls.single().second.map { it.link })
+            // b's feed was never fetched: nothing of it reached the DB.
+            assertTrue(db.findExistingLinks(listOf("https://example.com/b1")).isEmpty())
+        } finally {
+            serverA.stop(0)
+            serverB.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `runCategory does not throw for a failing pipeline and records the error`() {
+        val serverA = serverRss(rssWithItems("https://example.com/a1"))
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val config = cfg(mapOf("boom" to cat(urlOf(serverA))))
+            val errorLog = CycleErrorLog()
+            val processor = RecordingCategoryProcessor(config, db, throwFor = "boom")
+
+            cycle(config, fetcher, processor, errorLog).runCategory("boom") // must not throw
+
+            assertTrue(errorLog.list().any { it.category == "boom" }, "pipeline failure should be recorded")
+        } finally {
+            serverA.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `runMaintenance posts a status snapshot without touching any category`() {
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val config = cfg(mapOf("tech" to cat("http://localhost:1/never-fetched")))
+            val processor = RecordingCategoryProcessor(config, db)
+            val statusPoster = mockk<StatusPoster>(relaxed = true)
+
+            cycle(config, fetcher, processor, statusPoster = statusPoster).runMaintenance()
+
+            verify(exactly = 1) { statusPoster.post() }
+            assertTrue(processor.calls.isEmpty(), "maintenance must not run a category pipeline")
+        } finally {
             fetcher.shutdown()
         }
     }

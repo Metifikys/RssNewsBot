@@ -29,6 +29,7 @@ import metifikys.telegram.StatusPoster
 import metifikys.telegram.TelegramSender
 import metifikys.telegram.TelegramUpdatesPoller
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
@@ -103,7 +104,14 @@ class NewsBot(
         if (config.feedback.enabled) AffinityAggregator(config.feedback, db) else null
 ) {
 
-    private val scheduler = Executors.newSingleThreadScheduledExecutor()
+    /** Cycle-mode scheduler (`scheduler.perCategory=false`): one global cycle, never overlapping. */
+    private val scheduler = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "digest-cycle") }
+
+    /** Per-category mode: one single-thread scheduler per category, so runs of a category never overlap. */
+    private val categorySchedulers = LinkedHashMap<String, ScheduledExecutorService>()
+
+    /** Per-category mode: retention cleanup, affinity rebuild and the status post, on their own clock. */
+    private val maintenanceScheduler = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "maintenance") }
 
     private val errorLog = CycleErrorLog()
 
@@ -252,19 +260,27 @@ class NewsBot(
             logger.info { "[LLM] per-category overrides: $overrides" }
         }
 
-        // Graceful shutdown: flush the scheduler and wait up to 30s for in-flight tasks
+        // Graceful shutdown: stop every scheduler and wait up to 30s in total for in-flight
+        // runs; whatever is still running is interrupted (pipelines revert their PROCESSING
+        // rows on interrupt, and the startup reclaim covers a worker killed mid-flight).
         Runtime.getRuntime().addShutdownHook(Thread({
-            logger.info { "[Shutdown] Stopping scheduler..." }
-            scheduler.shutdown()
+            logger.info { "[Shutdown] Stopping schedulers..." }
+            val executors = listOf(scheduler, maintenanceScheduler) + categorySchedulers.values
+            executors.forEach { it.shutdown() }
             weeklyScheduler?.shutdown()
             updatesPoller?.stop()
+            val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             try {
-                if (!scheduler.awaitTermination(30, TimeUnit.SECONDS)) {
-                    logger.warn { "[Shutdown] Scheduler did not terminate in 30s; forcing." }
-                    scheduler.shutdownNow()
+                for (executor in executors) {
+                    val remaining = (deadlineNanos - System.nanoTime()).coerceAtLeast(0)
+                    if (!executor.awaitTermination(remaining, TimeUnit.NANOSECONDS)) {
+                        logger.warn { "[Shutdown] A scheduler did not terminate in 30s; forcing." }
+                        executor.shutdownNow()
+                    }
                 }
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
+                executors.forEach { it.shutdownNow() }
             }
             fetcher.shutdown()
             logger.info { "[Shutdown] Done." }
@@ -276,16 +292,7 @@ class NewsBot(
 
         digestCycle.reclaimOrphanedProcessing()
         digestCycle.resumePendingBatches()
-        logger.info { "Running first digest cycle immediately." }
-        runDigestCycleGuarded()
-        val intervalMinutes = config.scheduler.intervalMinutes
-        scheduler.scheduleAtFixedRate(
-            { runDigestCycleGuarded() },
-            intervalMinutes,
-            intervalMinutes,
-            TimeUnit.MINUTES
-        )
-        logger.info { "Next cycle in $intervalMinutes minute(s)." }
+        if (config.scheduler.perCategory) startPerCategorySchedulers() else startCycleScheduler()
 
         weeklyScheduler?.let {
             val w = config.weekly!!
@@ -299,20 +306,71 @@ class NewsBot(
 
     fun runDigestCycle() = digestCycle.runCycle()
 
+    /** Per-category mode: one run of [name]'s pipeline (fetch → digest), for tests and manual triggers. */
+    fun runCategory(name: String) = digestCycle.runCategory(name)
+
+    /**
+     * Default mode. Every category gets its own single-thread scheduler at its own interval
+     * (`categories.<name>.intervalMinutes`, else `scheduler.intervalMinutes`), first run
+     * immediately; housekeeping and the status post tick on the shared interval. No category
+     * ever waits for another, and a run that outlasts its interval only delays its own next run.
+     */
+    private fun startPerCategorySchedulers() {
+        val defaultInterval = config.scheduler.intervalMinutes
+        // Cleanup + affinity + first status snapshot before the first pipelines start, as a
+        // global cycle used to do at its start.
+        guarded("[Maintenance]") { digestCycle.runMaintenance() }
+        val cadence = config.categories.map { (name, cat) ->
+            val interval = cat.intervalMinutes ?: defaultInterval
+            val executor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "digest-$name") }
+            categorySchedulers[name] = executor
+            executor.scheduleAtFixedRate(
+                { guarded("[Cycle:$name]") { digestCycle.runCategory(name) } },
+                0,
+                interval,
+                TimeUnit.MINUTES
+            )
+            "$name every ${interval}m"
+        }
+        maintenanceScheduler.scheduleAtFixedRate(
+            { guarded("[Maintenance]") { digestCycle.runMaintenance() } },
+            defaultInterval,
+            defaultInterval,
+            TimeUnit.MINUTES
+        )
+        logger.info {
+            "[Scheduler] per-category mode: ${cadence.joinToString(", ")}; " +
+                "maintenance + status every ${defaultInterval}m."
+        }
+    }
+
+    /** Legacy mode (`scheduler.perCategory=false`): one global cycle at the shared interval. */
+    private fun startCycleScheduler() {
+        logger.info { "Running first digest cycle immediately." }
+        guarded("[Scheduler]") { runDigestCycle() }
+        val intervalMinutes = config.scheduler.intervalMinutes
+        scheduler.scheduleAtFixedRate(
+            { guarded("[Scheduler]") { runDigestCycle() } },
+            intervalMinutes,
+            intervalMinutes,
+            TimeUnit.MINUTES
+        )
+        logger.info { "Next cycle in $intervalMinutes minute(s)." }
+    }
+
     /**
      * Scheduler-facing wrapper. [java.util.concurrent.ScheduledExecutorService] silently cancels
-     * ALL future executions when a task throws, so anything escaping [runCycle] — which guards
+     * ALL future executions when a task throws, so anything escaping a run — the pipeline guards
      * `Exception` but not `Error` (OOM, StackOverflowError, NoClassDefFoundError) — would leave
-     * the process alive with the digest loop permanently dead and nothing in the log to say so.
+     * the process alive with that schedule permanently dead and nothing in the log to say so.
      * Catching [Throwable] here keeps the schedule alive and makes the failure loud.
      */
-    private fun runDigestCycleGuarded() {
+    private fun guarded(label: String, block: () -> Unit) {
         try {
-            runDigestCycle()
+            block()
         } catch (t: Throwable) {
             logger.error(t) {
-                "[Scheduler] Digest cycle threw ${t.javaClass.simpleName} — schedule kept alive, " +
-                    "next cycle runs as planned."
+                "$label run threw ${t.javaClass.simpleName} — schedule kept alive, next run as planned."
             }
         }
     }

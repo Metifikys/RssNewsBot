@@ -48,6 +48,9 @@ data class ProcessingConfig(
      */
     val secondaryMaxPending: Int = 1,
     /**
+     * Cycle mode only (`scheduler.perCategory=false`); in per-category mode every category has
+     * its own thread and this is ignored.
+     *
      * Upper bound on how many categories are processed concurrently within a single digest
      * cycle. Each cycle the per-category worker pool is sized to `min(readyCategories, this)`,
      * so the default gives every ready category its own worker — full isolation, so one slow or
@@ -56,6 +59,10 @@ data class ProcessingConfig(
      */
     val maxConcurrentCategories: Int = 12,
     /**
+     * Cycle mode only (`scheduler.perCategory=false`); ignored in per-category mode, where each
+     * stage is bounded on its own (fetch deadline, HTTP timeouts, CLI force-kill, fail-fast
+     * on a CLI timeout) and a run that outlasts its interval just delays the next one.
+     *
      * Optional hard ceiling (minutes) on one cycle's category fan-out. `0` (default) means NO
      * ceiling: the cycle simply ends when the slowest category finishes — categories still run
      * in parallel, and every stage is internally bounded anyway (fetch deadline, HTTP timeouts,
@@ -376,7 +383,20 @@ data class DatabaseConfig(
 )
 
 data class SchedulerConfig(
-    val intervalMinutes: Long
+    /**
+     * Default digest cadence. In per-category mode ([perCategory] = true) it is the interval of
+     * every category that does not set its own [CategoryConfig.intervalMinutes], and also the
+     * cadence of the shared maintenance tick (retention cleanup, affinity rebuild, status post).
+     * In cycle mode it is the period of the single global cycle.
+     */
+    val intervalMinutes: Long,
+    /**
+     * `true` (default): every category runs on its own scheduler thread at its own interval —
+     * a slow or stuck category never delays the others, and there is no cycle barrier to tune.
+     * `false`: the legacy single global cycle that fans the categories out and waits for the
+     * slowest one (`processing.categoryDeadlineMinutes` / `maxConcurrentCategories` apply only here).
+     */
+    val perCategory: Boolean = true
 )
 
 /**
@@ -453,6 +473,13 @@ data class CategoryConfig(
     val systemPrompt: String? = null,
     val userPrompt: String? = null,
     val channelId: String,
+    /**
+     * How often this category's fetch → digest pipeline runs, in minutes. Null falls back to
+     * `scheduler.intervalMinutes`. Only honored in per-category scheduler mode (the default);
+     * the legacy global cycle runs every category at the shared interval. A run that outlasts
+     * its interval simply delays the next one — runs of the same category never overlap.
+     */
+    val intervalMinutes: Long? = null,
     /**
      * When true, each digest bullet is sent as a Telegram photo+caption (single post)
      * if its first linked article has an `imageUrl` extracted from RSS. Otherwise the
@@ -837,6 +864,18 @@ object ConfigLoader {
                     "fetcher.fetchDeadlineSeconds (${f.fetchDeadlineSeconds}s) exceeds scheduler.intervalMinutes " +
                         "(${config.scheduler.intervalMinutes}m) — cycles will run back-to-back (never overlapping, " +
                         "the scheduler is single-threaded), but the effective interval stretches"
+                }
+            }
+        }
+        // Per-category cadence: positive, and long enough for the fetch stage to fit.
+        for ((name, cat) in config.categories) {
+            val interval = cat.intervalMinutes ?: continue
+            require(interval >= 1) { "categories.$name.intervalMinutes must be >= 1 (got $interval)" }
+            if (config.scheduler.perCategory && config.fetcher.fetchDeadlineSeconds > interval * 60) {
+                logger.warn {
+                    "categories.$name.intervalMinutes (${interval}m) is below fetcher.fetchDeadlineSeconds " +
+                        "(${config.fetcher.fetchDeadlineSeconds}s) — runs will go back-to-back and the " +
+                        "effective interval stretches"
                 }
             }
         }
