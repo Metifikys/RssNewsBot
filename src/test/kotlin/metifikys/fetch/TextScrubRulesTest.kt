@@ -9,13 +9,23 @@ import kotlin.test.assertTrue
 class TextScrubRulesTest {
 
     @Test
-    fun `built-in rules load from the classpath and scrub known chrome`() {
-        val rules = TextScrubRules.DEFAULT
-        assertTrue(rules.rules.isNotEmpty(), "default resource should carry rules")
-        assertEquals(
-            "Ayush Pande is a PC hardware writer. Proxmox is great.",
-            rules.clean("Ayush Pande is a PC hardware writer. Sign in to your XDA account Proxmox is great.")
+    fun `rules scrub their matches and collapse the whitespace left behind`() {
+        val rules = TextScrubRules.parse(
+            """
+            rules:
+              - name: sign-in
+                regex: 'Sign in to your ACME account\s*'
+              - name: prefix
+                regex: '(?:Save story\s*)+'
+            """.trimIndent(),
+            "inline"
         )
+
+        assertEquals(
+            "A writer. The body is great.",
+            rules.clean("Save story Save story A writer. Sign in to your ACME account The body is great.")
+        )
+        assertEquals("Untouched text.", rules.clean("Untouched text."))
     }
 
     @Test
@@ -34,7 +44,7 @@ class TextScrubRulesTest {
         assertEquals("Real content.", rules.clean(text, "https://www.example.com/story"))
         assertEquals("Real content.", rules.clean(text, "https://example.com/story"))
         assertEquals("Follow us on X Real content.", rules.clean(text, "https://other.org/story"))
-        // No URL known → every rule applies (the pre-file behaviour).
+        // No URL known → every rule applies.
         assertEquals("Real content.", rules.clean(text))
     }
 
@@ -69,7 +79,7 @@ class TextScrubRulesTest {
     }
 
     @Test
-    fun `load reads a file and null falls back to the built-in list`() {
+    fun `load reads a file and null means nothing is scrubbed`() {
         val file = File.createTempFile("scrub-rules", ".yaml")
         try {
             file.writeText("rules:\n  - name: only\n    regex: 'REMOVE ME\\s*'\n", Charsets.UTF_8)
@@ -77,11 +87,17 @@ class TextScrubRulesTest {
 
             assertEquals(1, fromFile.rules.size)
             assertEquals("kept", fromFile.clean("REMOVE ME kept"))
-            // The file replaces the built-in list: the XDA rule is gone.
-            assertEquals("Sign in to your XDA account kept", fromFile.clean("Sign in to your XDA account kept"))
-            assertTrue(TextScrubRules.load(null).rules.size > 1)
+            assertTrue(TextScrubRules.load(null).rules.isEmpty())
+            assertEquals("REMOVE ME kept", TextScrubRules.load(null).clean("REMOVE ME kept"))
         } finally {
             file.delete()
         }
+    }
+
+    @Test
+    fun `the example file in the repo parses`() {
+        val example = File("scrub-rules.example.yaml")
+        assertTrue(example.isFile, "scrub-rules.example.yaml must ship with the repo")
+        TextScrubRules.load(example.path) // must not throw
     }
 }

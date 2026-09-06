@@ -68,49 +68,6 @@ class ArticleFetcherTest {
         assertNull(fetcher.extractOgImage(html, base))
     }
 
-    // ── cleanExtractedText: site chrome scrubbing ────────────────────────────
-
-    @Test
-    fun `cleanExtractedText scrubs wired save-story prefix`() {
-        val text = "Comment Loader Save StorySave this story Comment Loader Save StorySave this story " +
-            "“Look, I'm not trying to do a conspiracy here,” wrote the commentator."
-        val cleaned = fetcher.cleanExtractedText(text)
-        assertFalse(cleaned.contains("Save Story"))
-        assertTrue(cleaned.startsWith("“Look, I'm not trying"))
-    }
-
-    @Test
-    fun `cleanExtractedText scrubs xda sign-in nudge mid-text`() {
-        val text = "Ayush Pande is a PC hardware writer. Sign in to your XDA account Proxmox’s lightweight design is great."
-        assertEquals(
-            "Ayush Pande is a PC hardware writer. Proxmox’s lightweight design is great.",
-            fetcher.cleanExtractedText(text)
-        )
-    }
-
-    @Test
-    fun `cleanExtractedText scrubs sciencenews share bar`() {
-        val text = "By Jake Buehler 3 minutes ago Share this: Share Share via email (Opens in new window) " +
-            "Email Share on Facebook (Opens in new window) Facebook Share on Reddit (Opens in new window) " +
-            "Reddit Share on X (Opens in new window) X Print (Opens in new window) Print " +
-            "When the fruit runs low, monkeys hunt."
-        assertEquals("By Jake Buehler 3 minutes ago When the fruit runs low, monkeys hunt.", fetcher.cleanExtractedText(text))
-    }
-
-    @Test
-    fun `cleanExtractedText scrubs pravda and sud chrome`() {
-        val text = "У Норвегії заступила установка. Реклама: Підписуйся на \"Європейську правду\"! " +
-            "Якщо ви помітили помилку, виділіть необхідний текст і натисніть Ctrl + Enter, щоб повідомити про це редакцію. " +
-            "Слідкуйте за актуальними новинами у соцмережах SUD.UA Тільки актуальне: читайте SUD.UA у Telegram Кінець."
-        assertEquals("У Норвегії заступила установка. Кінець.", fetcher.cleanExtractedText(text))
-    }
-
-    @Test
-    fun `cleanExtractedText leaves ordinary article text alone`() {
-        val text = "Установка розрахована для прикриття об’єктів від безпілотників вагою до 150 кг."
-        assertEquals(text, fetcher.cleanExtractedText(text))
-    }
-
     // ── extractMetaDescription: og-description fallback ──────────────────────
 
     @Test

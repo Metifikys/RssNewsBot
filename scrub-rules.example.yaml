@@ -1,0 +1,34 @@
+# Site-chrome scrub rules — patterns removed from extracted article text (markdown.new and
+# jsoup paths alike) BEFORE the maxContentLength cut, so the budget goes to article content,
+# not page shell: login nudges, share bars, "follow us" plugs, ad markers.
+#
+# Copy to scrub-rules.yaml (git-ignored), fill in the boilerplate of the sites you read, and
+# point `fetcher.scrubRulesFile: scrub-rules.yaml` at it. Without the key nothing is scrubbed.
+#
+# Each rule:
+#   name:   label used in errors and logs (must be unique)
+#   regex:  Java regex, removed wherever it matches. Single-quote it in YAML so backslashes
+#           survive. Matches are replaced by a space; whitespace runs are collapsed afterwards.
+#   host:   optional; apply only when the article URL's host is this host or a subdomain of
+#           it. Omitted = every host. Prefer literal, unambiguous patterns; when in doubt,
+#           leave the text alone.
+#   dotAll: optional (default false); let `.` match newlines for multi-line chrome.
+#
+# Finding candidates: look for the same phrase at the START of many stored descriptions from
+# one host (e.g. `SELECT substr(description,1,60), count(*) FROM articles WHERE link LIKE
+# '%example.com%' GROUP BY 1 ORDER BY 2 DESC`) — a repeated prefix is almost always chrome.
+rules:
+  # A login nudge injected mid-text on every page of one site.
+  - name: example-sign-in
+    host: example.com
+    regex: 'Sign in to your Example account\s*'
+
+  # A share bar: "Share this: … (Opens in new window) … Print", possibly spanning lines.
+  - name: example-share-bar
+    host: example.com
+    regex: 'Share this:.{0,400}?\(Opens in new window\)\s*Print\b'
+    dotAll: true
+
+  # A "subscribe to our channel" plug up to the end of its sentence, on any host.
+  - name: subscribe-plug
+    regex: 'Subscribe to our Telegram channel[^.!?]{0,120}'

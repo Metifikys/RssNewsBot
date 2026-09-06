@@ -74,8 +74,9 @@ smdedup.txt
 tmp.md
 docs/*
 
-### Personal preference data (derived from the operator's own reaction history) ###
+### Operator data: personal preferences and the sites actually read ###
 mute-suggestions.yaml
+scrub-rules.yaml
 
 ### Personal ops scripts (deploy to your own host) ###
 deploy_rssbot.*

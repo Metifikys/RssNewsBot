@@ -39,8 +39,8 @@ via a `/status` admin snapshot.
   retries on 408/429/5xx with `Retry-After`, a wall-clock deadline per fetch stage, and a
   self-tuning per-host throttle shared with the article fetcher.
 - **Ingestion hygiene** — tracking variants of a link are normalized to one row, feed HTML is
-  stripped from descriptions, known site chrome is scrubbed from extracted text (rules in
-  `scrub-rules.yaml`, overridable via `fetcher.scrubRulesFile`), and reddit link posts are
+  stripped from descriptions, site chrome is scrubbed from extracted text by the operator's
+  rules (`fetcher.scrubRulesFile`, see `scrub-rules.example.yaml`), and reddit link posts are
   repointed at the article they link to.
 - **Keyword mute** (`preferences.mute` + per-category `mute:`) — whole-word blocklist applied
   before Step 1; matching articles never reach an LLM.

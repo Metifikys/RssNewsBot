@@ -43,10 +43,9 @@ class ArticleFetcher(
     private val hostThrottle: HostThrottle = HostThrottle(),
     /**
      * Site-chrome patterns scrubbed from extracted text before the [maxContentLength] cut.
-     * Defaults to the built-in `scrub-rules.yaml`; production passes the operator's file when
-     * `fetcher.scrubRulesFile` is set.
+     * Empty by default; production passes the operator's `fetcher.scrubRulesFile`.
      */
-    private val scrubRules: TextScrubRules = TextScrubRules.DEFAULT
+    private val scrubRules: TextScrubRules = TextScrubRules.EMPTY
 ) {
 
     companion object {
@@ -409,7 +408,7 @@ class ArticleFetcher(
     }
 
     /**
-     * Scrubs known site chrome (the [scrubRules], see `scrub-rules.yaml`) out of extracted
+     * Scrubs known site chrome (the [scrubRules], see `scrub-rules.example.yaml`) out of extracted
      * article text and collapses the whitespace the removals leave behind. Applied to BOTH
      * extraction paths (markdown.new and jsoup) before the [maxContentLength] cut, so the
      * budget goes to article content rather than page shell. [url] lets host-scoped rules

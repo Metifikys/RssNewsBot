@@ -24,10 +24,10 @@ data class ScrubRule(val name: String, val regex: Regex, val host: String? = nul
 }
 
 /**
- * The set of site-chrome patterns scrubbed from extracted article text before the length cut
- * (see `scrub-rules.yaml`). Data, not code: the built-in list ships as a classpath resource and
- * `fetcher.scrubRulesFile` swaps in an operator-maintained file of the same shape, so a new
- * host's login nudge or share bar is a YAML edit and a restart, not a release.
+ * The set of site-chrome patterns scrubbed from extracted article text before the length cut.
+ * Data, not code: the list is an operator-maintained YAML file (`fetcher.scrubRulesFile`, see
+ * `scrub-rules.example.yaml`), so a host's login nudge or share bar is a YAML edit and a
+ * restart, not a release. Without a file nothing is scrubbed.
  */
 class TextScrubRules(val rules: List<ScrubRule>) {
 
@@ -42,23 +42,17 @@ class TextScrubRules(val rules: List<ScrubRule>) {
     }
 
     companion object {
-        const val DEFAULT_RESOURCE = "/scrub-rules.yaml"
         private val WHITESPACE_RUNS = Regex("""\s{2,}""")
         private val mapper = ObjectMapper(YAMLFactory()).registerKotlinModule()
 
         val EMPTY = TextScrubRules(emptyList())
 
-        /** The built-in list from the classpath resource, parsed once. */
-        val DEFAULT: TextScrubRules by lazy {
-            val text = TextScrubRules::class.java.getResourceAsStream(DEFAULT_RESOURCE)
-                ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-                ?: error("Missing classpath resource $DEFAULT_RESOURCE")
-            parse(text, "classpath:$DEFAULT_RESOURCE")
-        }
-
-        /** [path] null → [DEFAULT]; otherwise the file replaces the built-in list entirely. */
+        /** [path] null → [EMPTY] (nothing scrubbed); otherwise the file's rules. */
         fun load(path: String?): TextScrubRules {
-            if (path == null) return DEFAULT
+            if (path == null) {
+                logger.info { "[Scrub] fetcher.scrubRulesFile not set — extracted article text is stored as is" }
+                return EMPTY
+            }
             val rules = parse(File(path).readText(Charsets.UTF_8), path)
             logger.info { "[Scrub] loaded ${rules.rules.size} site-chrome rule(s) from $path" }
             return rules
