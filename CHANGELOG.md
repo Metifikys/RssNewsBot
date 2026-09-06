@@ -54,7 +54,7 @@ single **Unreleased** section.
   subdomains only). Invalid regexes and duplicate names fail at load with the rule name.
 - **Keyword mute** (`preferences.mute`, merged with a per-category `mute:` list) — whole-word,
   case-insensitive match on title + description; matching articles are marked `PROCESSED` before
-  Step 1 so the LLM never sees them. `mute-suggestions.yaml` carries data-driven candidates.
+  Step 1 so the LLM never sees them.
 - **OpenRouter model ladder** (`openrouter.models`, up to 4 distinct entries) — the global
   default sync paths (summarize, render, extract-alternate) walk the list on failure via a
   `FallbackLlmClient` chain, so a withdrawn free-tier model fails over to the next instead of

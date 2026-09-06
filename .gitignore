@@ -74,6 +74,9 @@ smdedup.txt
 tmp.md
 docs/*
 
+### Personal preference data (derived from the operator's own reaction history) ###
+mute-suggestions.yaml
+
 ### Personal ops scripts (deploy to your own host) ###
 deploy_rssbot.*
 start_rssbot.*
