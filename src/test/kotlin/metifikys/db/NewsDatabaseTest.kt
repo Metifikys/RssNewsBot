@@ -412,6 +412,23 @@ class NewsDatabaseTest {
     }
 
     @Test
+    fun `countDigestPostsByEventKeys counts deliveries, not chunks, within the window`() {
+        val d1 = LocalDateTime.now().minusDays(5)
+        val d2 = LocalDateTime.now().minusDays(1)
+        db.insertDigestMessages(listOf(
+            DigestMessageRow(-100L, 1L, "tech", "evt-a", "", d1),
+            DigestMessageRow(-100L, 2L, "tech", "evt-a", "", d1),    // second chunk, same delivery
+            DigestMessageRow(-100L, 3L, "tech", "evt-a", "", d2),
+            DigestMessageRow(-100L, 4L, "tech", "evt-b", "", d2),
+            DigestMessageRow(-100L, 5L, "gaming", "evt-a", "", d2)   // other category
+        ))
+        val counts = db.countDigestPostsByEventKeys("tech", setOf("evt-a", "evt-b", "evt-c"), LocalDateTime.now().minusDays(7))
+        assertEquals(mapOf("evt-a" to 2, "evt-b" to 1), counts)
+        assertEquals(mapOf("evt-a" to 1, "evt-b" to 1), db.countDigestPostsByEventKeys("tech", setOf("evt-a", "evt-b"), LocalDateTime.now().minusDays(2)))
+        assertTrue(db.countDigestPostsByEventKeys("tech", emptyList(), d1).isEmpty())
+    }
+
+    @Test
     fun `entity intros upsert, read back and prune by age`() {
         assertEquals(null, db.getEntityIntro("gaming", "team_cherry"))
         val row = EntityIntroRow("gaming", "team_cherry", "Team Cherry", "line", "https://uk.wikipedia.org/wiki/Team_Cherry", "uk", LocalDateTime.now())

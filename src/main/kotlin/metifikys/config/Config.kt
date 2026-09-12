@@ -788,7 +788,18 @@ data class DigestConfig(
      * item past the digestFit floor and the cooldown; 9–10 is what Step 1 reserves for the
      * genuinely big announcements.
      */
-    val breakingNewsworthiness: Int? = null
+    val breakingNewsworthiness: Int? = null,
+    /**
+     * Hard cap on posts about one story: a `meaningful_update` is dropped when the channel
+     * already carries this many posts (original + updates, counted in `digest_messages` by the
+     * item's own AND related event key) within [updateWindowDays]. Deliberately NOT subject to
+     * [newsworthinessOverride] — the repeats this exists for (four DOOM crunch posts, tech
+     * follow-ups scored 8–9) all cleared the override, so the cooldown never held them. Null
+     * (default) = no cap.
+     */
+    val maxPostsPerEvent: Int? = null,
+    /** Window for [maxPostsPerEvent], days. */
+    val updateWindowDays: Long = 7
 )
 
 data class RankerConfig(
@@ -1169,6 +1180,12 @@ object ConfigLoader {
                 require(b in 1..10) {
                     "Category '$name' digest.breakingNewsworthiness must be in 1..10 (got $b); null disables the breaking lane"
                 }
+            }
+            category.dedup?.digest?.let { d ->
+                d.maxPostsPerEvent?.let { m ->
+                    require(m >= 1) { "Category '$name' digest.maxPostsPerEvent must be >= 1 (got $m); null disables the cap" }
+                }
+                require(d.updateWindowDays >= 1) { "Category '$name' digest.updateWindowDays must be >= 1 (got ${d.updateWindowDays})" }
             }
             category.minArticles?.let { m ->
                 require(m >= 1) { "Category '$name' minArticles must be >= 1 (got $m)" }

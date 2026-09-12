@@ -59,6 +59,18 @@ class DigestConfigTest {
     }
 
     @Test
+    fun `maxPostsPerEvent is off by default and range-checked with its window`() {
+        val digest = load(yaml()).categories.getValue("gaming").dedup!!.digest!!
+        assertNull(digest.maxPostsPerEvent)
+        assertEquals(7L, digest.updateWindowDays)
+        val set = load(yaml("maxPostsPerEvent: 2\nupdateWindowDays: 14")).categories.getValue("gaming").dedup!!.digest!!
+        assertEquals(2, set.maxPostsPerEvent)
+        assertEquals(14L, set.updateWindowDays)
+        assertThrows<IllegalArgumentException> { load(yaml("maxPostsPerEvent: 0")) }
+        assertThrows<IllegalArgumentException> { load(yaml("updateWindowDays: 0")) }
+    }
+
+    @Test
     fun `per-category minArticles is parsed and must be positive`() {
         assertNull(load(yaml()).categories.getValue("gaming").minArticles)
         assertEquals(2, load(yaml(categoryExtra = "minArticles: 2")).categories.getValue("gaming").minArticles)

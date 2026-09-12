@@ -1513,6 +1513,33 @@ class NewsDatabase(dbPath: String) {
     }
 
     /**
+     * How many posts the channel already carries per event key: rows of [category] whose
+     * `event_key` is in [eventKeys] and `sent_at >= since`, counted as distinct deliveries
+     * (a chunked topic writes several rows with one `sent_at` and counts once). Keys with no
+     * posts are absent. Backs `digest.maxPostsPerEvent`.
+     */
+    fun countDigestPostsByEventKeys(
+        category: String,
+        eventKeys: Collection<String>,
+        since: LocalDateTime
+    ): Map<String, Int> {
+        if (eventKeys.isEmpty()) return emptyMap()
+        return transaction {
+            DigestMessagesTable
+                .select(DigestMessagesTable.eventKey, DigestMessagesTable.sentAt)
+                .where {
+                    (DigestMessagesTable.category eq category) and
+                        (DigestMessagesTable.eventKey inList eventKeys.toSet()) and
+                        (DigestMessagesTable.sentAt greaterEq since)
+                }
+                .mapNotNull { row -> row[DigestMessagesTable.eventKey]?.let { it to row[DigestMessagesTable.sentAt] } }
+                .distinct()
+                .groupingBy { it.first }
+                .eachCount()
+        }
+    }
+
+    /**
      * The latest delivered message per event key: rows of [category] whose `event_key` is in
      * [eventKeys] and `sent_at >= since`. The newest digest wins; within one digest the lowest
      * message id (the first chunk of a chunked topic). Backs the reply threading in

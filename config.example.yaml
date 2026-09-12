@@ -400,6 +400,12 @@ categories:
         # Raw Step 1 score, 1..10; omit to disable. Note the pre-Step-1 `minArticles` gate
         # still applies — lower it per category (`minArticles: 2` next to `emoji:`) if needed.
         # breakingNewsworthiness: 9
+        # Hard cap on posts about one story: a meaningful_update is dropped once the channel
+        # carries this many posts (original + updates, by the item's own and related event key)
+        # within updateWindowDays. No newsworthiness override — the repeats this targets all
+        # scored above it. Omit to disable.
+        # maxPostsPerEvent: 2
+        # updateWindowDays: 7
       # Optional: inline prompt overrides — any non-null field takes priority over the file.
       # prompts:
       #   extractSystem: "..."

@@ -340,6 +340,93 @@ class EventExtractorTest {
         assertTrue(ready.result.shortlist.isEmpty())
     }
 
+    private fun updateShortlistJson(nw: Int = 9) = """
+        {
+          "extractions": [],
+          "shortlist": [
+            {
+              "eventKey": "doom_crunch_update",
+              "coreFact": "ще одна цитата",
+              "newsworthiness": $nw,
+              "digestFit": 7,
+              "relatedPreviousEventKey": "doom_crunch",
+              "url": "https://a.com/1",
+              "status": "meaningful_update",
+              "articleIndices": [0]
+            },
+            {
+              "eventKey": "fresh",
+              "coreFact": "нова подія",
+              "newsworthiness": 6,
+              "digestFit": 7,
+              "url": "https://a.com/2",
+              "status": "new",
+              "articleIndices": [1]
+            }
+          ]
+        }
+    """.trimIndent()
+
+    private fun capCat(maxPosts: Int?) = cat(
+        DedupConfig(
+            promptFile = "any.yaml",
+            digest = DigestConfig(
+                ranker = RankerConfig(enabled = false),
+                meaningfulUpdateCooldownMinutes = 0,
+                maxPostsPerEvent = maxPosts,
+                updateWindowDays = 7
+            )
+        )
+    )
+
+    @Test
+    fun `maxPostsPerEvent drops an update once the story has that many posts, override or not`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { openAI.completeJson(any(), any(), any()) } returns updateShortlistJson(nw = 10)
+        every { db.countDigestPostsByEventKeys("games", setOf("doom_crunch_update", "doom_crunch"), any()) } returns
+            mapOf("doom_crunch" to 2)
+
+        val result = extractor.extract("games", capCat(maxPosts = 2), listOf(article("https://a.com/1"), article("https://a.com/2")))
+
+        val ready = assertIs<ExtractOutcome.Ready>(result)
+        assertEquals(listOf("fresh"), ready.result.shortlist.map { it.eventKey })
+    }
+
+    @Test
+    fun `maxPostsPerEvent keeps an update below the cap and sums own plus related key`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { openAI.completeJson(any(), any(), any()) } returns updateShortlistJson()
+        every { db.countDigestPostsByEventKeys(any(), any(), any()) } returns mapOf("doom_crunch" to 1, "doom_crunch_update" to 1)
+
+        val kept = assertIs<ExtractOutcome.Ready>(
+            extractor.extract("games", capCat(maxPosts = 3), listOf(article("https://a.com/1"), article("https://a.com/2")))
+        )
+        assertEquals(listOf("doom_crunch_update", "fresh"), kept.result.shortlist.map { it.eventKey })
+
+        val dropped = assertIs<ExtractOutcome.Ready>(
+            extractor.extract("games", capCat(maxPosts = 2), listOf(article("https://a.com/1"), article("https://a.com/2")))
+        )
+        assertEquals(listOf("fresh"), dropped.result.shortlist.map { it.eventKey })
+    }
+
+    @Test
+    fun `without maxPostsPerEvent there is no post-count lookup`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { openAI.completeJson(any(), any(), any()) } returns updateShortlistJson()
+
+        val ready = assertIs<ExtractOutcome.Ready>(
+            extractor.extract("games", capCat(maxPosts = null), listOf(article("https://a.com/1"), article("https://a.com/2")))
+        )
+        assertEquals(2, ready.result.shortlist.size)
+        verify(exactly = 0) { db.countDigestPostsByEventKeys(any(), any(), any()) }
+    }
+
     @Test
     fun `extract keeps recent meaningful update when it clears override threshold`() {
         every { promptLoader.resolve(any()) } returns okResolved

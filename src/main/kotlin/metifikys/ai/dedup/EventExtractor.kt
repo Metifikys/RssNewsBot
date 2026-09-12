@@ -297,8 +297,14 @@ class EventExtractor(
             urlFilteredShortlist
         }
 
+        val cappedShortlist = if (digestConfig?.maxPostsPerEvent != null) {
+            applyPostsPerEventCap(category, cooldownFilteredShortlist, digestConfig)
+        } else {
+            cooldownFilteredShortlist
+        }
+
         val finalShortlist = if (digestConfig != null && digestConfig.ranker.enabled) {
-            val ranked = ShortlistRanker.rank(cooldownFilteredShortlist, digestConfig)
+            val ranked = ShortlistRanker.rank(cappedShortlist, digestConfig)
             if (ranked.dropped.isNotEmpty()) {
                 val byReason = ranked.dropped.groupingBy { it.reason.substringBefore(" ") }.eachCount()
                 logger.info {
@@ -315,9 +321,9 @@ class EventExtractor(
                         "franchiseConcentration=${"%.2f".format(ranked.franchiseConcentration())}"
                 }
             }
-            applyAffinity(category, cooldownFilteredShortlist, ranked, digestConfig)
+            applyAffinity(category, cappedShortlist, ranked, digestConfig)
         } else {
-            cooldownFilteredShortlist
+            cappedShortlist
         }
 
         val statuses = parsed.extractions.groupingBy { it.status }.eachCount()
@@ -402,6 +408,43 @@ class EventExtractor(
                 providerLabel = "primary-openai",
                 requestNumber = requestNumber
             )
+        }
+    }
+
+    /**
+     * `digest.maxPostsPerEvent`: drops a `meaningful_update` when the channel already carries
+     * that many posts about the story within `updateWindowDays` — counted in `digest_messages`
+     * under the item's own key AND its `relatedPreviousEventKey` (Step 1 sometimes reuses the
+     * key for an update, sometimes mints a new one). No newsworthiness override on purpose: the
+     * repeats this exists for all cleared it. A DB failure keeps the shortlist unchanged.
+     */
+    private fun applyPostsPerEventCap(
+        category: String,
+        shortlist: List<ShortlistItem>,
+        config: DigestConfig,
+        now: LocalDateTime = LocalDateTime.now()
+    ): List<ShortlistItem> {
+        val cap = config.maxPostsPerEvent ?: return shortlist
+        val updates = shortlist.filter { it.status == "meaningful_update" }
+        if (updates.isEmpty()) return shortlist
+        val keys = updates.flatMap { listOfNotNull(it.eventKey, it.relatedPreviousEventKey) }.toSet()
+        val counts = try {
+            db.countDigestPostsByEventKeys(category, keys, now.minusDays(config.updateWindowDays))
+        } catch (e: Exception) {
+            logger.warn(e) { "[Category:$category][Ranker] maxPostsPerEvent lookup failed — cap not applied this run" }
+            return shortlist
+        }
+        return shortlist.filter { item ->
+            if (item.status != "meaningful_update") return@filter true
+            val posts = listOfNotNull(item.eventKey, item.relatedPreviousEventKey).distinct().sumOf { counts[it] ?: 0 }
+            val keep = posts < cap
+            if (!keep) {
+                logger.info {
+                    "[Category:$category][Ranker] drop ${item.eventKey}: maxPostsPerEvent=$cap reached " +
+                        "($posts posts in ${config.updateWindowDays} days)"
+                }
+            }
+            keep
         }
     }
 
