@@ -8,6 +8,45 @@ single **Unreleased** section.
 ## [Unreleased]
 
 ### Added
+- **Post presentation block (`categories.<name>.post`)** — deterministic additions to the
+  outgoing bullet only; `summaries`, `digest_messages` and the event-key matching keep the clean
+  text, so no non-article URL can leak into the previous-digest URL set. Four optional parts:
+  - `threads` — a `meaningful_update` bullet is sent as a Telegram reply (`reply_parameters`
+    with `allow_sending_without_reply`) to the latest post about the same story, found in
+    `digest_messages` by the item's related AND own event key (Step 1 sometimes reuses the key),
+    newest wins, same chat only, bounded by `maxAgeDays`. New index on
+    `digest_messages(category, event_key)`.
+  - `hashtags` — static category tags plus tags derived from Step 1's franchise / event type /
+    subject; Latin diacritics folded, Cyrillic left intact (NFD would turn `й` into `и`). The
+    normalizer doubles as the shared entity key for intros and trackers.
+  - `badges` — live-data lines from public APIs, no keys: Steam (`🎮 Steam: 719₴ (−20%) · 93%
+    позитивних (12 345) · реліз …`, strict title match), Hacker News (`🔥 HN: 512 · 340
+    коментарів`, from the id/points/comments hnrss puts in the description — kept in the new
+    `articles.meta_json` column — refreshed via the Firebase item API), GitHub (`⭐ GitHub: 12.3k ·
+    Rust · оновлено …`, optional `GITHUB_TOKEN`). `BadgeResolver` runs providers under
+    `badges.timeoutSeconds` / `maxTotalSeconds`; results (negatives too) are cached in the new
+    `badge_cache` table with per-provider TTLs. Footer order: badges, intro, hashtags — dropped
+    from the end when the 1024-char caption / 4096-char message budget is tight.
+  - `intro` — the first time a franchise (else subject) appears in a category, one Wikipedia
+    line: the page's short description or the first sentence of the summary, languages tried in
+    order (`[uk]` by default). New `entity_intros` table remembers hits and misses so a name is
+    introduced once per `repeatAfterDays`.
+- **Living trackers (`categories.<name>.trackers`)** — a pinned message per tracker (e.g. an
+  upcoming releases calendar fed by `release_date` / `delay`) that the bot upserts and edits in
+  place after every digest; unchanged bodies cost no Telegram call (hash in `bot_state`), a
+  deleted message is posted and pinned again, a moved date shows `⏳ було <old>`, past dates sit
+  in a "released this week" section, far dates hide behind `horizonDays`. Backed by the new
+  `tracker_entries` table and a new optional Step 1 field `eventDate` (`YYYY-MM-DD` / `YYYY-MM` /
+  `YYYY-Qn` / `YYYY`) whose year must appear in the source article text or it is dropped.
+  `TelegramSender` gains `editMessageText`, `pinChatMessage`, `unpinChatMessage`.
+- **Breaking lane** (`dedup.digest.breakingNewsworthiness`, off by default) — when a post-ranker
+  item scores at least this (raw Step 1 newsworthiness, never the affinity-adjusted composite)
+  the weak-shortlist hold-back is skipped and the whole shortlist is rendered now; a lone top
+  story no longer waits for company. Per-category `minArticles` overrides the pre-Step-1 gate.
+- **Posts-per-story cap** (`dedup.digest.maxPostsPerEvent` + `updateWindowDays`, off by
+  default) — a `meaningful_update` is dropped once the channel carries that many posts about the
+  story (own + related event key, distinct deliveries). Deliberately not subject to
+  `newsworthinessOverride`: the repeats this targets all cleared it.
 - **Independent per-category schedulers** (`scheduler.perCategory`, default `true`) — every
   category runs on its own single-thread scheduler at `categories.<name>.intervalMinutes`
   (default `scheduler.intervalMinutes`), first run at startup. Runs of one category never

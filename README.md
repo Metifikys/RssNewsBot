@@ -117,6 +117,26 @@ via a `/status` admin snapshot.
   graceful degradation when the LLM emits unexpected shapes.
 - **At-least-once with rollback** — partial-send failures revert just the affected articles to
   `UNPROCESSED`, success wins on overlap.
+- **Post presentation** (`post:` per category, every sub-block optional; only the text that goes
+  to Telegram changes — the stored summary and the reaction rows keep the clean bullet):
+  - **threads** — a `meaningful_update` bullet is sent as a Telegram *reply* to the latest post
+    about the same story (looked up in `digest_messages` by the item's related/own event key),
+    so the channel shows a quote header that jumps to it.
+  - **hashtags** — static category tags plus tags from Step 1's franchise / event type /
+    subject (`#gaming #silksong`), Latin diacritics folded, Cyrillic kept.
+  - **badges** — deterministic live-data lines from public APIs, cached with a hard time
+    budget: Steam price / review score / release date, Hacker News points and comments,
+    GitHub stars.
+  - **intro** — the first time a franchise appears in the category, one Wikipedia line
+    (`📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`), remembered in `entity_intros`.
+- **Living trackers** (`trackers:` per category) — e.g. a pinned "📅 Найближчі релізи" message
+  the bot edits after every digest from `release_date` / `delay` events and their `eventDate`
+  (year cross-checked against the article), with `⏳ було <old date>` on a delay, a
+  "released this week" section, and a link to the latest post per story.
+- **Breaking lane** (`dedup.digest.breakingNewsworthiness`) — one post-ranker item at or above
+  the threshold skips the weak-shortlist hold-back, so a lone top story goes out at once; and a
+  **posts-per-story cap** (`dedup.digest.maxPostsPerEvent`) that no newsworthiness score can
+  override.
 
 ### Observability
 - **Logback** with day-rolling, gzipped archive; structured `[Category:foo]` /
@@ -297,7 +317,8 @@ The LLM returns:
       "url": "...",
       "status": "new|meaningful_update|duplicate|rejected",
       "related_previous_event_key": "...",
-      "article_index": 0
+      "article_index": 0,
+      "eventDate": "2026-10-14 | 2026-10 | 2027-Q1 | 2027 | null"
     }
   ],
   "shortlist": [ /* subset of extractions, with status in {new, meaningful_update} */ ]
@@ -834,9 +855,11 @@ providers.
 | `event_embeddings`   | One vector per `(category, event_key)` for the log-only event-level analyzer (Float32 LE blob) |
 | `digest_messages`    | One row per delivered Telegram message linking `(chat_id, message_id)` → category + `event_key` + article links, for reaction attribution |
 | `reaction_counts`    | Current aggregated reaction counts per `(chat_id, message_id, emoji)` from `message_reaction_count` updates (replace-all per message) |
-| `bot_state`          | Key/value store for restart-surviving runtime state (currently the Telegram `getUpdates` offset) |
-
+| `bot_state`          | Key/value store for restart-surviving runtime state (the Telegram `getUpdates` offset, tracker message ids + body hashes) |
 | `audience_affinity`  | Reaction-feedback scores per `(category, dimension, key)` with `n_tone` evidence counts, rebuilt on the maintenance tick |
+| `badge_cache`        | Rendered footer badges per `(provider, key)` with a per-provider TTL; `""` caches a negative lookup |
+| `entity_intros`      | First-mention memory for the Wikipedia intro: one row per `(category, entity key)`, hits and misses |
+| `tracker_entries`    | Living-tracker state per `(category, tracker, entity)`: event date, previous date, status, latest post |
 
 Pruning runs on the maintenance tick (or at the start of a legacy cycle), skipped while any
 batch is pending:
@@ -849,6 +872,8 @@ batch is pending:
 - `deleteOldBatches(2)` — completed/failed batch records.
 - `deleteOldDigestMessages(90)` / `deleteOldReactionCounts(90)` — reaction-tracking retention.
 - `deleteOldLlmCalls(llmCallRetentionDays)` / `pruneOldEmbeddings(embeddingRetentionDays)`.
+- `deleteOldBadgeCache(7)` / `deleteOldEntityIntros(730)` / `deleteOldTrackerEntries(365)` — footer
+  badge cache, first-mention memory, tracker rows not touched by any digest.
 
 ---
 
@@ -868,7 +893,10 @@ src/main/kotlin/metifikys/
 ├── fetch/          RssFetcher (Rome + SSRF + queue), ArticleFetcher (Jsoup),
 │                   ArticleSummarizer (per-article LLM), HostThrottle,
 │                   RedditLinkExtractor, LinkNormalizer, HtmlText
-├── format/         TopicFormatter (Telegram message formatting)
+├── enrich/         Footer badges (Steam / HN / GitHub providers, resolver, cache),
+│                   Wikipedia first-mention intro
+├── format/         TopicFormatter (Telegram message formatting), TopicDecorator
+│                   (footer lines under a bullet), Hashtags (entity-key normalizer)
 ├── model/          Article, ArticleStatus, CategoryInput, Dedup DTOs
 ├── telegram/       TelegramSender, StatusCommand, StatusPoster, updates poller
 ├── Main.kt         Entry point (reads config path, builds NewsBot)
