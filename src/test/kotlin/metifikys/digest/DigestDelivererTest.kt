@@ -243,6 +243,39 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `intro line sits between badges and hashtags and is capped per digest`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sent = mutableListOf<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+
+        val intro = mockk<metifikys.enrich.WikipediaIntroProvider>()
+        every { intro.intro("tech", any(), any(), any()) } answers {
+            val item = secondArg<ShortlistItem>()
+            "📚 ${item.franchise}: студія · [Вікіпедія](https://uk.wikipedia.org/wiki/${item.franchise})"
+        }
+        val post = PostConfig(
+            hashtags = HashtagsConfig(category = "#tech"),
+            intro = metifikys.config.IntroConfig(maxPerDigest = 1)
+        )
+        val articles = listOf(article(1), article(2))
+        val shortlist = listOf(
+            shortlistItem("evt-1", article(1).link).copy(franchise = "Alpha"),
+            shortlistItem("evt-2", article(2).link).copy(franchise = "Beta")
+        )
+        val summary = "• **One.**\n\n[Title 1](https://example.com/1)\n• **Two.**\n\n[Title 2](https://example.com/2)"
+
+        DigestDeliverer(configWithPost(post), db, sender, null, intro).deliver("tech", summary, articles, shortlist)
+
+        assertEquals(2, sent.size)
+        assertEquals("**One.**\n\n[Title 1](https://example.com/1)\n📚 Alpha: студія · [Вікіпедія](https://uk.wikipedia.org/wiki/Alpha)\n#tech #alpha", sent[0])
+        assertEquals("**Two.**\n\n[Title 2](https://example.com/2)\n#tech #beta", sent[1])   // cap of 1 per digest
+        verify(exactly = 1) { intro.intro("tech", any(), any(), any()) }
+        verify { db.saveSummary("tech", match { "Вікіпедія" !in it }, 2) }
+    }
+
+    @Test
     fun `legacy bullet gets only the static category tag`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

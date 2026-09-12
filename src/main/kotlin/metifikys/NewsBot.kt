@@ -19,8 +19,11 @@ import metifikys.digest.EventSemanticAnalyzer
 import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.WeeklyDigest
 import metifikys.digest.WeeklyScheduler
+import metifikys.enrich.BadgeHttp
 import metifikys.enrich.BadgeProviders
 import metifikys.enrich.BadgeResolver
+import metifikys.enrich.DbIntroStore
+import metifikys.enrich.WikipediaIntroProvider
 import metifikys.feedback.AffinityAggregator
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
@@ -110,7 +113,12 @@ class NewsBot(
      * Optional live-data footer badges (Steam / HN / GitHub). Built only when some category
      * enables one via `post.badges`; null otherwise so no HTTP client is created.
      */
-    badgeResolver: BadgeResolver? = BadgeProviders.resolverFor(config, db)
+    badgeResolver: BadgeResolver? = BadgeProviders.resolverFor(config, db),
+    /** Optional first-mention Wikipedia intro; built only when some category enables `post.intro`. */
+    introProvider: WikipediaIntroProvider? =
+        if (config.categories.values.any { it.post?.intro?.enabled == true }) {
+            WikipediaIntroProvider(BadgeHttp(timeoutSeconds = config.badges.timeoutSeconds), DbIntroStore(db))
+        } else null
 ) {
 
     /** Cycle-mode scheduler (`scheduler.perCategory=false`): one global cycle, never overlapping. */
@@ -138,7 +146,7 @@ class NewsBot(
     private val updatesPoller: TelegramUpdatesPoller? =
         if (config.telegram.updatesPolling) TelegramUpdatesPoller(config.telegram.botToken, db) else null
 
-    internal val deliverer = DigestDeliverer(config, db, sender, badgeResolver)
+    internal val deliverer = DigestDeliverer(config, db, sender, badgeResolver, introProvider)
 
     private val categoryProcessor = CategoryProcessor(
         config = config,

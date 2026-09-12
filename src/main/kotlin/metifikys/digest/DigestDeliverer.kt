@@ -8,6 +8,7 @@ import metifikys.db.CoveredEventRow
 import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
 import metifikys.enrich.BadgeResolver
+import metifikys.enrich.WikipediaIntroProvider
 import metifikys.format.Hashtags
 import metifikys.format.TopicDecorator
 import metifikys.format.TopicFormatter
@@ -37,7 +38,9 @@ class DigestDeliverer(
     private val db: NewsDatabase,
     private val sender: TelegramSender,
     /** Live-data footer badges; null when no category enables any (`post.badges`). */
-    private val badgeResolver: BadgeResolver? = null
+    private val badgeResolver: BadgeResolver? = null,
+    /** First-mention Wikipedia intro; null when no category enables it (`post.intro`). */
+    private val introProvider: WikipediaIntroProvider? = null
 ) {
 
     /**
@@ -145,8 +148,9 @@ class DigestDeliverer(
         val eventKeyByUrl: Map<String, String> = itemByUrl.mapValues { (_, item) -> item.eventKey }
         val postCfg = categoryConfig.post
         val replyTargets = resolveReplyTargets(categoryName, channelId, shortlist, postCfg?.threads)
-        // One badge time budget per delivered digest, shared by all its bullets.
+        // One badge time budget per delivered digest, shared by all its bullets; one intro cap too.
         val badgeDeadline = badgeResolver?.newDeadline() ?: 0L
+        val introBudget = IntroBudget(postCfg?.intro?.maxPerDigest ?: 0)
 
         val sentTopics = mutableListOf<String>()
         val failedTopicIdx = mutableListOf<Int>()
@@ -179,7 +183,7 @@ class DigestDeliverer(
             val replyTo = eventKey?.let { replyTargets[it] }
             val budget = if (image != null) TopicDecorator.CAPTION_BUDGET else TopicDecorator.TEXT_BUDGET
             val topicArticles = topicUrls[idx].mapNotNull { articleByLink[it] }
-            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline)
+            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget)
             val outgoing = TopicDecorator.decorate(topic, footer, budget)
             val refs: List<SentRef> = if (image != null) {
                 // Single post: photo + caption. Caption is truncated to Telegram's 1024-char
@@ -266,23 +270,40 @@ class DigestDeliverer(
         }
     }
 
+    /** Per-delivery counter for the intro cap (`post.intro.maxPerDigest`). */
+    private class IntroBudget(var remaining: Int)
+
     /**
      * Footer lines for one bullet, in display order (most valuable first — [TopicDecorator]
-     * drops from the end when the message budget is tight): live-data badges, then the hashtag
-     * line. Badge lookups run under the resolver's time budget and never throw.
+     * drops from the end when the message budget is tight): live-data badges, the first-mention
+     * intro, then the hashtag line. Lookups run under their time budgets and never throw.
      */
     private fun buildFooter(
         categoryName: String,
         item: ShortlistItem?,
         topicArticles: List<Article>,
         post: PostConfig?,
-        badgeDeadline: Long
+        badgeDeadline: Long,
+        introBudget: IntroBudget
     ): List<String> {
         if (post == null) return emptyList()
         val lines = mutableListOf<String>()
         val enabledBadges = post.badges?.enabledIds.orEmpty()
         if (badgeResolver != null && enabledBadges.isNotEmpty()) {
             lines += badgeResolver.resolve(enabledBadges, item, topicArticles, badgeDeadline, "[Category:$categoryName]")
+        }
+        val introCfg = post.intro
+        if (introProvider != null && introCfg != null && introCfg.enabled && item != null && introBudget.remaining > 0) {
+            val line = try {
+                introProvider.intro(categoryName, item, introCfg)
+            } catch (e: Exception) {
+                logger.warn(e) { "[Category:$categoryName][Intro] failed — sending without the intro" }
+                null
+            }
+            if (line != null) {
+                lines += line
+                introBudget.remaining--
+            }
         }
         val tags = Hashtags.forItem(item, post.hashtags)
         if (tags.isNotEmpty()) lines += tags.joinToString(" ")

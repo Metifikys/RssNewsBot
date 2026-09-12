@@ -292,6 +292,16 @@ categories:
         steam: true
         hn: false
         github: false
+      # One Wikipedia line the FIRST time a franchise (else subject) appears in this category:
+      #   📚 Team Cherry: австралійська студія відеоігор · Вікіпедія
+      # The page's short description when it has one, else the first sentence of the summary —
+      # an encyclopedia fact, not the LLM. Remembered in entity_intros (misses too), so a name is
+      # introduced once per repeatAfterDays and an unknown name is not searched every digest.
+      intro:
+        enabled: true
+        languages: [uk]           # Wikipedia languages to try, in order; text is printed as found
+        maxPerDigest: 2
+        repeatAfterDays: 365
     feeds:
       - https://kotaku.com/feed
     # Optional: per-use-case provider+model overrides. The provider name points at one of

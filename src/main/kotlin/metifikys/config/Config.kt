@@ -579,7 +579,25 @@ data class PostConfig(
     /** Hashtag line under each bullet (static category tags + tags from Step 1's franchise/subject/eventType). */
     val hashtags: HashtagsConfig? = null,
     /** Live-data badge lines (Steam / HN / GitHub) under each bullet; see [BadgesConfig]. */
-    val badges: BadgesConfig? = null
+    val badges: BadgesConfig? = null,
+    /** One Wikipedia line the first time a franchise / subject appears in the category; see [IntroConfig]. */
+    val intro: IntroConfig? = null
+)
+
+/**
+ * First-mention intro: `📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`. The
+ * entity is the Step 1 franchise (else the subject); its first appearance in the category is
+ * remembered in `entity_intros`, so the line shows once per [repeatAfterDays]. Wikipedia's short
+ * description is used when present, else the first sentence of the summary — never the LLM.
+ */
+data class IntroConfig(
+    val enabled: Boolean = true,
+    /** Wikipedia languages to try, in order; the text is printed as found. */
+    val languages: List<String> = listOf("uk"),
+    /** Cap on intro lines per delivered digest. */
+    val maxPerDigest: Int = 2,
+    /** A name introduced less than this many days ago is not introduced again. */
+    val repeatAfterDays: Long = 365
 )
 
 /**
@@ -1115,6 +1133,16 @@ object ConfigLoader {
             category.post?.let { post ->
                 post.threads?.let { t ->
                     require(t.maxAgeDays >= 1) { "Category '$name' post.threads.maxAgeDays must be >= 1 (got ${t.maxAgeDays})" }
+                }
+                post.intro?.let { i ->
+                    require(i.languages.isNotEmpty()) { "Category '$name' post.intro.languages must not be empty" }
+                    for (lang in i.languages) {
+                        require(Regex("""[a-z]{2,3}(-[a-z]+)?""").matches(lang)) {
+                            "Category '$name' post.intro.languages: '$lang' is not a Wikipedia language code (e.g. uk, en)"
+                        }
+                    }
+                    require(i.maxPerDigest >= 1) { "Category '$name' post.intro.maxPerDigest must be >= 1 (got ${i.maxPerDigest})" }
+                    require(i.repeatAfterDays >= 1) { "Category '$name' post.intro.repeatAfterDays must be >= 1 (got ${i.repeatAfterDays})" }
                 }
                 post.hashtags?.let { h ->
                     require(h.max >= 0) { "Category '$name' post.hashtags.max must be >= 0 (got ${h.max})" }

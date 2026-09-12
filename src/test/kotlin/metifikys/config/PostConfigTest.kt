@@ -85,6 +85,21 @@ class PostConfigTest {
     }
 
     @Test
+    fun `intro block is parsed with defaults and validated`() {
+        val config = load(yaml("post:\n  intro:\n    languages: [uk, en]\n    maxPerDigest: 1"))
+        val intro = config.categories.getValue("gaming").post!!.intro!!
+        assertTrue(intro.enabled)
+        assertEquals(listOf("uk", "en"), intro.languages)
+        assertEquals(1, intro.maxPerDigest)
+        assertEquals(365L, intro.repeatAfterDays)
+
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  intro:\n    languages: []")) }
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  intro:\n    languages: [Ukrainian]")) }
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  intro:\n    maxPerDigest: 0")) }
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  intro:\n    repeatAfterDays: 0")) }
+    }
+
+    @Test
     fun `absent post block leaves posts unchanged`() {
         val config = load(yaml(""))
         assertNull(config.categories.getValue("gaming").post)

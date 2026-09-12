@@ -327,6 +327,7 @@ class DigestCycle(
         db.deleteOldLlmCalls(config.processing.llmCallRetentionDays)
         db.pruneOldEmbeddings(config.processing.embeddingRetentionDays)
         db.deleteOldBadgeCache()
+        db.deleteOldEntityIntros()
     }
 
     /**

@@ -57,6 +57,25 @@ object BadgeCacheTable : Table("badge_cache") {
 }
 
 /**
+ * First-mention memory for the Wikipedia intro line: one row per (category, entity key) —
+ * the normalized franchise / subject — recorded whether the lookup found an article
+ * (`extract` set) or not (`extract` null), so a name is neither introduced twice nor searched
+ * again every digest. Long-lived on purpose: `covered_events` retention (~90 days) would make
+ * "first mention" a quarterly event.
+ */
+object EntityIntrosTable : Table("entity_intros") {
+    val category = varchar("category", 100)
+    val entityKey = varchar("entity_key", 200)
+    val title = text("title").nullable()
+    val extract = text("extract").nullable()
+    val url = text("url").nullable()
+    val lang = varchar("lang", 8).nullable()
+    val introducedAt = datetime("introduced_at").index()
+
+    override val primaryKey = PrimaryKey(category, entityKey)
+}
+
+/**
  * Persists in-flight OpenAI batch jobs so they can be resumed after a restart.
  *
  * status values:
@@ -453,6 +472,17 @@ data class AudienceAffinityRow(
     val updatedAt: LocalDateTime
 )
 
+/** One (category, entity) first-mention record; `extract == null` means "looked up, nothing found". */
+data class EntityIntroRow(
+    val category: String,
+    val entityKey: String,
+    val title: String?,
+    val extract: String?,
+    val url: String?,
+    val lang: String?,
+    val introducedAt: LocalDateTime
+)
+
 data class CoveredEventRow(
     val category: String,
     val eventKey: String,
@@ -496,7 +526,7 @@ class NewsDatabase(dbPath: String) {
                 ArticlesTable, PendingBatchesTable, SummariesTable, CoveredEventsTable, RejectedEventsTable,
                 LlmCallsTable, ArticleEmbeddingsTable, EventEmbeddingsTable,
                 DigestMessagesTable, ReactionCountsTable, AudienceAffinityTable, BotStateTable,
-                BadgeCacheTable
+                BadgeCacheTable, EntityIntrosTable
             )
         }
         migrateArticleStatuses(jdbcUrl)
@@ -1776,6 +1806,59 @@ class NewsDatabase(dbPath: String) {
         val cutoff = LocalDateTime.now().minusDays(days)
         transaction {
             BadgeCacheTable.deleteWhere { fetchedAt less cutoff }
+        }
+    }
+
+    // ── Entity intros (first mention) ─────────────────────────────────────────
+
+    fun getEntityIntro(category: String, entityKey: String): EntityIntroRow? = transaction {
+        EntityIntrosTable
+            .selectAll()
+            .where { (EntityIntrosTable.category eq category) and (EntityIntrosTable.entityKey eq entityKey) }
+            .firstOrNull()
+            ?.let {
+                EntityIntroRow(
+                    category = it[EntityIntrosTable.category],
+                    entityKey = it[EntityIntrosTable.entityKey],
+                    title = it[EntityIntrosTable.title],
+                    extract = it[EntityIntrosTable.extract],
+                    url = it[EntityIntrosTable.url],
+                    lang = it[EntityIntrosTable.lang],
+                    introducedAt = it[EntityIntrosTable.introducedAt]
+                )
+            }
+    }
+
+    /** Upserts the record for (category, entity key). */
+    fun putEntityIntro(row: EntityIntroRow) {
+        transaction {
+            val updated = EntityIntrosTable.update(
+                { (EntityIntrosTable.category eq row.category) and (EntityIntrosTable.entityKey eq row.entityKey) }
+            ) {
+                it[title] = row.title
+                it[extract] = row.extract
+                it[url] = row.url
+                it[lang] = row.lang
+                it[introducedAt] = row.introducedAt
+            }
+            if (updated == 0) {
+                EntityIntrosTable.insertIgnore {
+                    it[category] = row.category
+                    it[entityKey] = row.entityKey
+                    it[title] = row.title
+                    it[extract] = row.extract
+                    it[url] = row.url
+                    it[lang] = row.lang
+                    it[introducedAt] = row.introducedAt
+                }
+            }
+        }
+    }
+
+    fun deleteOldEntityIntros(days: Long = 730) {
+        val cutoff = LocalDateTime.now().minusDays(days)
+        transaction {
+            EntityIntrosTable.deleteWhere { introducedAt less cutoff }
         }
     }
 

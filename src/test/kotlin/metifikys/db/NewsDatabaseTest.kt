@@ -412,6 +412,23 @@ class NewsDatabaseTest {
     }
 
     @Test
+    fun `entity intros upsert, read back and prune by age`() {
+        assertEquals(null, db.getEntityIntro("gaming", "team_cherry"))
+        val row = EntityIntroRow("gaming", "team_cherry", "Team Cherry", "line", "https://uk.wikipedia.org/wiki/Team_Cherry", "uk", LocalDateTime.now())
+        db.putEntityIntro(row)
+        assertEquals(row.copy(introducedAt = db.getEntityIntro("gaming", "team_cherry")!!.introducedAt), db.getEntityIntro("gaming", "team_cherry"))
+        assertEquals(null, db.getEntityIntro("tech", "team_cherry"), "scoped by category")
+
+        db.putEntityIntro(row.copy(extract = null, title = null, url = null, lang = null))   // a later miss overwrites
+        assertEquals(null, db.getEntityIntro("gaming", "team_cherry")!!.extract)
+
+        db.putEntityIntro(row.copy(entityKey = "old", introducedAt = LocalDateTime.now().minusDays(800)))
+        db.deleteOldEntityIntros(730)
+        assertEquals(null, db.getEntityIntro("gaming", "old"))
+        assertTrue(db.getEntityIntro("gaming", "team_cherry") != null)
+    }
+
+    @Test
     fun `article meta_json is persisted and read back`() {
         val meta = metifikys.model.ArticleMeta(hn = metifikys.model.HnMeta(41234567, 512, 340)).toJson()
         db.insertArticles(listOf(article("https://example.com/hn").copy(metaJson = meta), article("https://example.com/plain")))
