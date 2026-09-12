@@ -68,8 +68,14 @@ object TopicFormatter {
         return if (body.isEmpty()) "$titleLine\n\n$link" else "$titleLine\n\n$body\n\n$link"
     }
 
+    // Topic delimiters: the `•` bullet the render/weekly prompts ask for, and a standalone
+    // `---` rule — the separator the legacy single-step prompt asks for. Without the second a
+    // legacy digest (Step 1 fallback) arrives as ONE topic, and applyStrictLayout then flattens
+    // its `---` lines into an inline ` --- ` (2026-09-09 science digests).
+    private val TOPIC_DELIMITER = Regex("""(?m)•|^[ \t]*-{3,}[ \t]*$""")
+
     fun splitTopics(summary: String): List<String> =
-        summary.split("•")
+        summary.split(TOPIC_DELIMITER)
             .map { it.trim() }
             .filter { it.isNotEmpty() }
 

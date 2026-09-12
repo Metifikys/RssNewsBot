@@ -267,10 +267,15 @@ class CodexCli(
         if (exit != 0) {
             // Mirror ClaudeCli: a CLI may print its error to stdout, not stderr — classify and
             // report on the combined output rather than logging a useless "<no stderr>".
-            val stdout = stdoutBuf.toString().trim()
+            // But `codex exec` first echoes the WHOLE user prompt to stdout (tens of KB of article
+            // text under a `user` header), so classify/report on what follows the echo: with the
+            // prompt left in, "login … run" / "model … not found" in article text turned transient
+            // failures into NonRetryable auth/model verdicts, and the 2000-char detail was all
+            // prompt — the real error never reached the log (2026-09-08/09).
+            val stdout = stripPromptEcho(stdoutBuf.toString(), prompt).trim()
             val stderr = stderrBuf.toString().trim()
             val combined = listOf(stdout, stderr).filter { it.isNotBlank() }.joinToString("\n").trim()
-            val detail = combined.ifBlank { "<no output>" }.take(2000)
+            val detail = combined.ifBlank { "<no output>" }.takeLast(2000)
             when {
                 isBillingError(combined) ->
                     throw BillingException("Codex CLI usage/credit limit reached (exit $exit): $detail")
@@ -294,6 +299,18 @@ class CodexCli(
             ""
         }
         return lastMessage.ifBlank { stdoutBuf.toString().trim() }
+    }
+
+    /**
+     * Drops everything up to and including the prompt that `codex exec` echoes to stdout, so
+     * error classification and the logged detail see only the CLI's own output. Matches on the
+     * prompt's tail (the echo is verbatim); if the tail is not found, stdout is returned as is.
+     */
+    private fun stripPromptEcho(stdout: String, prompt: String): String {
+        val marker = prompt.trim().takeLast(200)
+        if (marker.isBlank()) return stdout
+        val idx = stdout.lastIndexOf(marker)
+        return if (idx >= 0) stdout.substring(idx + marker.length) else stdout
     }
 
     /** Last [limit] chars of the combined stdout/stderr, for the timeout message. */

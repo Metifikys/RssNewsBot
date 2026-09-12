@@ -134,6 +134,35 @@ class CodexCliTest {
     }
 
     @Test
+    fun `echoed prompt is ignored when classifying a non-zero exit`() {
+        // `codex exec` echoes the user prompt to stdout before its own error. Trigger words in
+        // the prompt ("login … run", "model … not found") must not turn a transient failure
+        // into a NonRetryable auth/model verdict, and the detail must carry the real error.
+        val prompt = "please login and run the tool because the model was not found"
+        val cmd = shim(
+            winBody = "echo user\r\necho $prompt\r\necho ERROR: stream disconnected before completion\r\nexit /b 1",
+            shBody = "echo user\necho '$prompt'\necho 'ERROR: stream disconnected before completion'\nexit 1"
+        )
+        val cli = CodexCli(endpoint(), command = cmd, timeoutSeconds = 30, maxRetries = 0)
+        // A plain IOException is the retryable verdict; NonRetryableCliException is not an IOException.
+        val ex = assertThrows<IOException> { cli.complete("sys", prompt) }
+        assertTrue(ex.message?.contains("stream disconnected") == true, "real error missing: ${ex.message}")
+        assertTrue(ex.message?.contains("please login") != true, "prompt echo leaked into detail: ${ex.message}")
+    }
+
+    @Test
+    fun `auth error after the echoed prompt is still non-retryable`() {
+        val prompt = "summarize these articles"
+        val cmd = shim(
+            winBody = "echo user\r\necho $prompt\r\necho ERROR: not logged in, run codex login\r\nexit /b 1",
+            shBody = "echo user\necho '$prompt'\necho 'ERROR: not logged in, run codex login'\nexit 1"
+        )
+        val cli = CodexCli(endpoint(), command = cmd, timeoutSeconds = 30, maxRetries = 0)
+        val ex = assertThrows<NonRetryableCliException> { cli.complete("sys", prompt) }
+        assertTrue(ex.message?.contains("auth/login") == true, "got: ${ex.message}")
+    }
+
+    @Test
     fun `batch methods are unsupported`() {
         val cli = CodexCli(endpoint(), command = "codex", timeoutSeconds = 30)
         assertThrows<UnsupportedOperationException> { cli.resumeBatch("x") }

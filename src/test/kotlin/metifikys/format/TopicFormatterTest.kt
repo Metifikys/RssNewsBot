@@ -35,6 +35,37 @@ class TopicFormatterTest {
         assertEquals("Topic 2", topics[1])
     }
 
+    @Test
+    fun `splitTopics splits on a standalone --- rule (legacy prompt separator)`() {
+        val summary = "**Topic 1.** body one [A](https://a/1)\n---\n**Topic 2.** body two [B](https://b/2)\n\n --- \n**Topic 3.** [C](https://c/3)"
+        val topics = TopicFormatter.splitTopics(summary)
+        assertEquals(3, topics.size)
+        assertEquals("**Topic 1.** body one [A](https://a/1)", topics[0])
+        assertEquals("**Topic 2.** body two [B](https://b/2)", topics[1])
+        assertEquals("**Topic 3.** [C](https://c/3)", topics[2])
+    }
+
+    @Test
+    fun `splitTopics keeps an inline --- inside a topic`() {
+        val summary = "•**A.** range 1 --- 2 [A](https://a/1)\n•**B.** [B](https://b/2)"
+        val topics = TopicFormatter.splitTopics(summary)
+        assertEquals(2, topics.size)
+        assertEquals("**A.** range 1 --- 2 [A](https://a/1)", topics[0])
+    }
+
+    @Test
+    fun `legacy digest does not collapse into one topic with inline --- separators`() {
+        // 2026-09-09: a legacy (Step 1 fallback) digest was delivered as ONE topic whose
+        // `---` lines applyStrictLayout had flattened into ` --- `.
+        val summary = "**Перша тема.**\n\nОпис першої теми. [Nature](https://nature/1)\n---\n" +
+            "**Друга тема.**\n\nОпис другої теми. [Quanta](https://quanta/2)"
+        val topics = TopicFormatter.splitTopics(summary).map { TopicFormatter.applyStrictLayout(it) }
+        assertEquals(2, topics.size)
+        assertEquals("**Перша тема.**\n\nОпис першої теми.\n\n[Nature](https://nature/1)", topics[0])
+        assertEquals("**Друга тема.**\n\nОпис другої теми.\n\n[Quanta](https://quanta/2)", topics[1])
+        assertTrue(topics.none { " --- " in it })
+    }
+
     // ── Strict topic layout tests ─────────────────────────────────────────────
 
     @Test
