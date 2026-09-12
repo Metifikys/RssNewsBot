@@ -2,17 +2,24 @@ package metifikys.digest
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.AppConfig
+import metifikys.config.PostConfig
+import metifikys.config.ThreadsConfig
 import metifikys.db.CoveredEventRow
 import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
+import metifikys.format.Hashtags
+import metifikys.format.TopicDecorator
 import metifikys.format.TopicFormatter
 import metifikys.model.Article
 import metifikys.model.ShortlistItem
 import metifikys.telegram.SentRef
 import metifikys.telegram.TelegramSender
 import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 private val logger = KotlinLogging.logger {}
+
+private val THREAD_TS: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM HH:mm")
 
 /** A Markdown `[label](url)` link — stripped out before scanning a topic for bare URLs. */
 private val MARKDOWN_LINK = Regex("""\[[^\[\]]*]\([^()]*\)""")
@@ -131,7 +138,10 @@ class DigestDeliverer(
         // Maps a topic's article URL back to the Step 1 event it rendered, so each delivered
         // message can be tagged with its event_key for later reaction attribution. Empty for
         // legacy single-step categories (no shortlist).
-        val eventKeyByUrl: Map<String, String> = shortlist?.associate { it.url to it.eventKey } ?: emptyMap()
+        val itemByUrl: Map<String, ShortlistItem> = shortlist?.associateBy { it.url } ?: emptyMap()
+        val eventKeyByUrl: Map<String, String> = itemByUrl.mapValues { (_, item) -> item.eventKey }
+        val postCfg = categoryConfig.post
+        val replyTargets = resolveReplyTargets(categoryName, channelId, shortlist, postCfg?.threads)
 
         val sentTopics = mutableListOf<String>()
         val failedTopicIdx = mutableListOf<Int>()
@@ -157,17 +167,23 @@ class DigestDeliverer(
                 }
                 firstImage
             } else null
+            // The Step 1 item this topic rendered (null on the legacy path). Drives the reply
+            // target and the footer; the clean `topic` is what gets persisted below.
+            val item = topicUrls[idx].firstNotNullOfOrNull { itemByUrl[it] }
+            val eventKey = item?.eventKey
+            val replyTo = eventKey?.let { replyTargets[it] }
+            val budget = if (image != null) TopicDecorator.CAPTION_BUDGET else TopicDecorator.TEXT_BUDGET
+            val outgoing = TopicDecorator.decorate(topic, buildFooter(item, postCfg), budget)
             val refs: List<SentRef> = if (image != null) {
                 // Single post: photo + caption. Caption is truncated to Telegram's 1024-char
                 // limit inside TelegramSender (with markdown→plain-text fallback on parse errors).
-                listOfNotNull(sender.sendPhotoToChannel(channelId, image, caption = topic))
+                listOfNotNull(sender.sendPhotoToChannel(channelId, image, caption = outgoing, replyToMessageId = replyTo))
             } else {
-                sender.sendToChannel(channelId, topic, disablePreview = true)
+                sender.sendToChannel(channelId, outgoing, disablePreview = true, replyToMessageId = replyTo)
             }
             if (refs.isNotEmpty()) {
                 sentTopics += topic
                 val topicLinks = (topicUrls[idx] intersect allArticleLinks)
-                val eventKey = topicUrls[idx].firstNotNullOfOrNull { eventKeyByUrl[it] }
                 val linksJson = topicLinks.joinToString("\n")
                 // One digest_messages row per Telegram message (a chunked topic yields several,
                 // all sharing the same event and article links).
@@ -241,6 +257,61 @@ class DigestDeliverer(
                 }
             }
         }
+    }
+
+    /**
+     * Footer lines for one bullet, in display order (most valuable first — [TopicDecorator]
+     * drops from the end when the message budget is tight). Today: the hashtag line.
+     */
+    private fun buildFooter(item: ShortlistItem?, post: PostConfig?): List<String> {
+        if (post == null) return emptyList()
+        val tags = Hashtags.forItem(item, post.hashtags)
+        return if (tags.isEmpty()) emptyList() else listOf(tags.joinToString(" "))
+    }
+
+    /**
+     * Reply threading: for every `meaningful_update` item, the message id of the latest post in
+     * this channel about the same story — looked up in `digest_messages` by the item's
+     * `relatedPreviousEventKey` AND its own `eventKey` (Step 1 sometimes reuses the key for an
+     * update, sometimes mints a new one and points `related` at the old). One query per digest;
+     * any DB failure logs and yields no replies (fail-open, like Layer 3.5). Returns eventKey →
+     * message id.
+     */
+    private fun resolveReplyTargets(
+        category: String,
+        channelId: String,
+        shortlist: List<ShortlistItem>?,
+        threads: ThreadsConfig?
+    ): Map<String, Long> {
+        if (threads == null || !threads.enabled || shortlist.isNullOrEmpty()) return emptyMap()
+        val updates = shortlist.filter { it.status == "meaningful_update" }
+        if (updates.isEmpty()) return emptyMap()
+        val keys = updates.flatMap { listOfNotNull(it.relatedPreviousEventKey, it.eventKey) }.toSet()
+        val since = LocalDateTime.now().minusDays(threads.maxAgeDays)
+        val rows = try {
+            db.fetchLatestDigestMessagesByEventKeys(category, keys, since)
+        } catch (e: Exception) {
+            logger.warn(e) { "[Category:$category][Thread] previous-post lookup failed — sending without replies" }
+            return emptyMap()
+        }
+        val channelNumeric = channelId.toLongOrNull()
+        val out = LinkedHashMap<String, Long>()
+        for (item in updates) {
+            val previous = listOfNotNull(item.relatedPreviousEventKey, item.eventKey)
+                .mapNotNull { rows[it] }
+                .filter { channelNumeric == null || it.chatId == channelNumeric }
+                .maxByOrNull { it.sentAt }
+            if (previous == null) {
+                logger.debug { "[Category:$category][Thread] no previous post for ${item.eventKey} (keys: $keys)" }
+                continue
+            }
+            out[item.eventKey] = previous.messageId
+            logger.info {
+                "[Category:$category][Thread] ${item.eventKey} → reply to msg ${previous.messageId} " +
+                    "(sent ${previous.sentAt.format(THREAD_TS)})"
+            }
+        }
+        return out
     }
 
     private fun persistCoveredEvents(categoryName: String, shortlist: List<ShortlistItem>?) {

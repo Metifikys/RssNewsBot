@@ -209,6 +209,11 @@ object DigestMessagesTable : Table("digest_messages") {
     val sentAt = datetime("sent_at").index()
 
     override val primaryKey = PrimaryKey(chatId, messageId)
+
+    init {
+        // Reply threading looks up "the last post about this event" by (category, event_key).
+        index("idx_digest_messages_cat_event", false, category, eventKey)
+    }
 }
 
 /**
@@ -1493,6 +1498,46 @@ class NewsDatabase(dbPath: String) {
                     it[sentAt] = r.sentAt
                 }
             }
+        }
+    }
+
+    /**
+     * The latest delivered message per event key: rows of [category] whose `event_key` is in
+     * [eventKeys] and `sent_at >= since`. The newest digest wins; within one digest the lowest
+     * message id (the first chunk of a chunked topic). Backs the reply threading in
+     * [metifikys.digest.DigestDeliverer] — "the previous post about this story".
+     */
+    fun fetchLatestDigestMessagesByEventKeys(
+        category: String,
+        eventKeys: Collection<String>,
+        since: LocalDateTime
+    ): Map<String, DigestMessageRow> {
+        if (eventKeys.isEmpty()) return emptyMap()
+        return transaction {
+            val out = LinkedHashMap<String, DigestMessageRow>()
+            DigestMessagesTable
+                .selectAll()
+                .where {
+                    (DigestMessagesTable.category eq category) and
+                        (DigestMessagesTable.eventKey inList eventKeys.toSet()) and
+                        (DigestMessagesTable.sentAt greaterEq since)
+                }
+                .orderBy(DigestMessagesTable.sentAt to SortOrder.DESC, DigestMessagesTable.messageId to SortOrder.ASC)
+                .forEach { row ->
+                    val key = row[DigestMessagesTable.eventKey] ?: return@forEach
+                    out.putIfAbsent(
+                        key,
+                        DigestMessageRow(
+                            chatId = row[DigestMessagesTable.chatId],
+                            messageId = row[DigestMessagesTable.messageId],
+                            category = row[DigestMessagesTable.category],
+                            eventKey = key,
+                            articleLinks = row[DigestMessagesTable.articleLinks],
+                            sentAt = row[DigestMessagesTable.sentAt]
+                        )
+                    )
+                }
+            out
         }
     }
 

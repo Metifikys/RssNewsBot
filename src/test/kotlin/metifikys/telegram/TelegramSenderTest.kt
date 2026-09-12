@@ -1,5 +1,7 @@
 package metifikys.telegram
 
+import com.sun.net.httpserver.HttpServer
+import java.net.InetSocketAddress
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -8,6 +10,55 @@ import kotlin.test.assertTrue
 class TelegramSenderTest {
 
     private val sender = TelegramSender("token")
+
+    /** A fake Bot API that records every request body and answers a fixed `ok` envelope. */
+    private fun withFakeApi(block: (sender: TelegramSender, bodies: MutableList<String>) -> Unit) {
+        val bodies = mutableListOf<String>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { ex ->
+            bodies += ex.requestBody.readBytes().toString(Charsets.UTF_8)
+            val resp = """{"ok":true,"result":{"message_id":42,"chat":{"id":-100123}}}""".toByteArray()
+            ex.responseHeaders.add("Content-Type", "application/json")
+            ex.sendResponseHeaders(200, resp.size.toLong())
+            ex.responseBody.use { it.write(resp) }
+        }
+        server.start()
+        try {
+            block(TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}"), bodies)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    private val replyJson = """"reply_parameters":{"message_id":11,"allow_sending_without_reply":true}"""
+
+    @Test
+    fun `reply target is sent as reply_parameters with allow_sending_without_reply`() = withFakeApi { s, bodies ->
+        val refs = s.sendToChannel("@ch", "hello", disablePreview = true, replyToMessageId = 11L)
+        assertEquals(listOf(SentRef(-100123L, 42L)), refs)
+        assertEquals(1, bodies.size)
+        assertTrue(replyJson in bodies[0], bodies[0])
+
+        bodies.clear()
+        s.sendToChannel("@ch", "hello")
+        assertFalse("reply_parameters" in bodies[0], bodies[0])
+    }
+
+    @Test
+    fun `only the first chunk of a long message carries the reply`() = withFakeApi { s, bodies ->
+        val text = "a".repeat(3000) + "\n" + "b".repeat(3000)
+        s.sendToChannel("@ch", text, replyToMessageId = 11L)
+        assertEquals(2, bodies.size)
+        assertTrue(replyJson in bodies[0])
+        assertFalse("reply_parameters" in bodies[1])
+    }
+
+    @Test
+    fun `photo posts reply too`() = withFakeApi { s, bodies ->
+        val ref = s.sendPhotoToChannel("@ch", "https://img.example/1.jpg", caption = "cap", replyToMessageId = 11L)
+        assertEquals(SentRef(-100123L, 42L), ref)
+        assertTrue(replyJson in bodies.single(), bodies.single())
+    }
 
     @Test
     fun `chunkMessage returns single chunk when under limit`() {

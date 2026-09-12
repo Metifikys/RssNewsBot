@@ -549,7 +549,51 @@ data class CategoryConfig(
      * it for keys you only want gone from one channel — e.g. mute "cod" here without risking the
      * fish in a science category. Empty (default) = only the global list applies.
      */
-    val mute: List<String> = emptyList()
+    val mute: List<String> = emptyList(),
+    /**
+     * Presentation of this category's outgoing posts: threading of follow-ups and the
+     * deterministic footer lines (badges, first-mention intro, hashtags) appended to each bullet
+     * right before it is sent. Touches ONLY the text that goes to Telegram — the stored summary
+     * and the reaction-attribution rows keep the clean bullet. Null = posts are unchanged.
+     */
+    val post: PostConfig? = null
+)
+
+/**
+ * Per-category post presentation. Every sub-block is optional; a missing block leaves that
+ * aspect exactly as before. See `.claude/plans/2026-09-chains-hashtags-breaking.md`.
+ */
+data class PostConfig(
+    /** Send a `meaningful_update` bullet as a Telegram reply to the previous post about the same event. */
+    val threads: ThreadsConfig? = null,
+    /** Hashtag line under each bullet (static category tags + tags from Step 1's franchise/subject/eventType). */
+    val hashtags: HashtagsConfig? = null
+)
+
+data class ThreadsConfig(
+    val enabled: Boolean = true,
+    /**
+     * A previous post older than this is not replied to — a "continuation" of a month-old post
+     * reads oddly, and `digest_messages` keeps 90 days anyway.
+     */
+    val maxAgeDays: Long = 30
+)
+
+data class HashtagsConfig(
+    /**
+     * Static tags appended to every post of the category, space-separated, e.g. `"#gaming"` or
+     * `"#tech #ai"`. Each must be a well-formed hashtag (`#` + letters/digits/underscore).
+     * The only tag source for categories without a `dedup:` block (no Step 1 fields).
+     */
+    val category: String? = null,
+    /** Tag from the Step 1 `franchise` field (`#silksong`). */
+    val fromFranchise: Boolean = true,
+    /** Tag from the Step 1 `event_type` enum (`#release_date`) — the most stable of the three. */
+    val fromEventType: Boolean = false,
+    /** Tag from the Step 1 `subject` field. Off by default: tech subjects are free-text prose that changes every cycle. */
+    val fromSubject: Boolean = false,
+    /** Cap on generated (non-static) tags per post. */
+    val max: Int = 3
 )
 
 /**
@@ -996,6 +1040,19 @@ object ConfigLoader {
             }
             category.mute.forEachIndexed { i, kw ->
                 require(kw.isNotBlank()) { "Category '$name' mute[$i] must not be blank" }
+            }
+            category.post?.let { post ->
+                post.threads?.let { t ->
+                    require(t.maxAgeDays >= 1) { "Category '$name' post.threads.maxAgeDays must be >= 1 (got ${t.maxAgeDays})" }
+                }
+                post.hashtags?.let { h ->
+                    require(h.max >= 0) { "Category '$name' post.hashtags.max must be >= 0 (got ${h.max})" }
+                    for (tag in metifikys.format.Hashtags.splitStatic(h.category)) {
+                        require(metifikys.format.Hashtags.isWellFormed(tag)) {
+                            "Category '$name' post.hashtags.category: '$tag' is not a valid hashtag — use '#' followed by letters, digits or '_' (at least one letter)"
+                        }
+                    }
+                }
             }
             category.dedup?.digest?.ranker?.let { r ->
                 require(r.reactionWeight in 0.0..1.0) {

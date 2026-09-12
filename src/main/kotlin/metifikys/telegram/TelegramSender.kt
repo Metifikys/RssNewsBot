@@ -20,7 +20,11 @@ private val logger = KotlinLogging.logger {}
  */
 data class SentRef(val chatId: Long, val messageId: Long)
 
-class TelegramSender(private val botToken: String) {
+class TelegramSender(
+    private val botToken: String,
+    /** Bot API origin; overridable so tests can point the sender at a local HTTP server. */
+    private val apiBaseUrl: String = "https://api.telegram.org"
+) {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -37,7 +41,8 @@ class TelegramSender(private val botToken: String) {
         val chat_id: String,
         val text: String,
         val parse_mode: String? = null,
-        val disable_web_page_preview: Boolean? = null
+        val disable_web_page_preview: Boolean? = null,
+        val reply_parameters: ReplyParameters? = null
     )
 
     @Serializable
@@ -45,7 +50,19 @@ class TelegramSender(private val botToken: String) {
         val chat_id: String,
         val photo: String,
         val caption: String? = null,
-        val parse_mode: String? = null
+        val parse_mode: String? = null,
+        val reply_parameters: ReplyParameters? = null
+    )
+
+    /**
+     * Bot API 7.0 `ReplyParameters`. `allow_sending_without_reply` has no default on purpose:
+     * the JSON encoder skips defaults, and the flag MUST reach Telegram — with it, a deleted
+     * target just drops the quote header instead of failing the whole send with a 400.
+     */
+    @Serializable
+    private data class ReplyParameters(
+        val message_id: Long,
+        val allow_sending_without_reply: Boolean
     )
 
     @Serializable
@@ -108,17 +125,27 @@ class TelegramSender(private val botToken: String) {
      * actually delivered (usually one; long text may chunk into several). An empty list means
      * nothing was sent — the caller treats that as the old `false`. Non-empty refs feed the
      * reaction-tracking join in [metifikys.digest.DigestDeliverer].
+     *
+     * [replyToMessageId] makes the (first chunk of the) message a reply to that message in the
+     * same chat — Telegram shows a quote header that jumps to it. Sent with
+     * `allow_sending_without_reply`, so a deleted target never fails the send.
      */
-    fun sendToChannel(channelId: String, text: String, disablePreview: Boolean = false): List<SentRef> {
+    fun sendToChannel(
+        channelId: String,
+        text: String,
+        disablePreview: Boolean = false,
+        replyToMessageId: Long? = null
+    ): List<SentRef> {
         val chunks = chunkMessage(text)
         val refs = ArrayList<SentRef>(chunks.size)
-        for (chunk in chunks) {
+        for ((index, chunk) in chunks.withIndex()) {
+            val replyTo = if (index == 0) replyToMessageId else null
             val html = TopicFormatter.toHtml(chunk)
-            val ref = when (val res = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview)) {
+            val ref = when (val res = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview, replyTo = replyTo)) {
                 is SendResult.Ok -> res.ref
                 // BUG-007: fall back to plain text only on a 400 markup error.
                 is SendResult.BadRequest ->
-                    (sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview) as? SendResult.Ok)?.ref
+                    (sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview, replyTo = replyTo) as? SendResult.Ok)?.ref
                 is SendResult.Transient -> null
             }
             if (ref != null) refs += ref
@@ -130,21 +157,30 @@ class TelegramSender(private val botToken: String) {
      * Sends a photo with optional caption. Tries HTML parse mode first, falls back to plain text
      * (mirroring [sendToChannel]). Caption is truncated to [MAX_CAPTION_LEN] with an ellipsis if needed.
      * Returns the delivered message's [SentRef], or null if both attempts fail.
+     * [replyToMessageId] as in [sendToChannel].
      */
-    fun sendPhotoToChannel(channelId: String, photoUrl: String, caption: String? = null): SentRef? {
+    fun sendPhotoToChannel(
+        channelId: String,
+        photoUrl: String,
+        caption: String? = null,
+        replyToMessageId: Long? = null
+    ): SentRef? {
         // Truncate the Markdown caption first (so we never cut inside an <a> tag), then render HTML.
         val htmlCaption = caption?.let { TopicFormatter.toHtml(truncateForCaption(it)) }
-        return when (val res = sendPhoto(channelId, photoUrl, htmlCaption, parseMode = "HTML")) {
+        return when (val res = sendPhoto(channelId, photoUrl, htmlCaption, parseMode = "HTML", replyTo = replyToMessageId)) {
             is SendResult.Ok -> res.ref
             // BUG-007: fall back to plain text only on a 400 markup error.
             is SendResult.BadRequest ->
-                (sendPhoto(channelId, photoUrl, htmlCaption?.htmlToPlainText(), parseMode = null) as? SendResult.Ok)?.ref
+                (sendPhoto(channelId, photoUrl, htmlCaption?.htmlToPlainText(), parseMode = null, replyTo = replyToMessageId) as? SendResult.Ok)?.ref
             is SendResult.Transient -> null
         }
     }
 
-    private fun sendPhoto(chatId: String, photoUrl: String, caption: String?, parseMode: String?): SendResult {
-        val payload = json.encodeToString(SendPhotoRequest(chatId, photoUrl, caption, parseMode))
+    private fun replyParams(replyTo: Long?): ReplyParameters? =
+        replyTo?.let { ReplyParameters(message_id = it, allow_sending_without_reply = true) }
+
+    private fun sendPhoto(chatId: String, photoUrl: String, caption: String?, parseMode: String?, replyTo: Long? = null): SendResult {
+        val payload = json.encodeToString(SendPhotoRequest(chatId, photoUrl, caption, parseMode, replyParams(replyTo)))
         return post("sendPhoto", payload, chatId)
     }
 
@@ -161,9 +197,15 @@ class TelegramSender(private val botToken: String) {
         return text.substring(0, end).trimEnd() + "…"
     }
 
-    private fun sendMessage(chatId: String, text: String, parseMode: String?, disablePreview: Boolean = false): SendResult {
+    private fun sendMessage(
+        chatId: String,
+        text: String,
+        parseMode: String?,
+        disablePreview: Boolean = false,
+        replyTo: Long? = null
+    ): SendResult {
         val payload = json.encodeToString(
-            SendMessageRequest(chatId, text, parseMode, if (disablePreview) true else null)
+            SendMessageRequest(chatId, text, parseMode, if (disablePreview) true else null, replyParams(replyTo))
         )
         return post("sendMessage", payload, chatId)
     }
@@ -181,7 +223,7 @@ class TelegramSender(private val botToken: String) {
     private fun post(endpoint: String, payload: String, chatId: String, retryOn429: Boolean = true): SendResult {
         val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
         val request = Request.Builder()
-            .url("https://api.telegram.org/bot$botToken/$endpoint")
+            .url("$apiBaseUrl/bot$botToken/$endpoint")
             .post(body)
             .build()
         return try {
@@ -253,7 +295,7 @@ class TelegramSender(private val botToken: String) {
         val payload = json.encodeToString(DeleteMessageRequest(chatId, messageId))
         val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
         val request = Request.Builder()
-            .url("https://api.telegram.org/bot$botToken/deleteMessage")
+            .url("$apiBaseUrl/bot$botToken/deleteMessage")
             .post(body)
             .build()
         return try {

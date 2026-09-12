@@ -385,4 +385,29 @@ class NewsDatabaseTest {
         db.deleteOldReactionCounts(90)
         assertEquals(1L, db.fetchReactionSummary(24).getValue("tech").totalReactions)
     }
+
+    @Test
+    fun `fetchLatestDigestMessagesByEventKeys returns the newest post per key, first chunk of it`() {
+        val older = LocalDateTime.now().minusDays(3)
+        val newer = LocalDateTime.now().minusDays(1)
+        db.insertDigestMessages(listOf(
+            DigestMessageRow(-100L, 10L, "tech", "evt-a", "", older),
+            DigestMessageRow(-100L, 21L, "tech", "evt-a", "", newer),   // chunk 2 of the newer digest
+            DigestMessageRow(-100L, 20L, "tech", "evt-a", "", newer),   // chunk 1 of the newer digest
+            DigestMessageRow(-100L, 30L, "tech", "evt-b", "", older),
+            DigestMessageRow(-100L, 40L, "gaming", "evt-a", "", newer), // other category
+            DigestMessageRow(-100L, 50L, "tech", null, "", newer)       // legacy post, no event
+        ))
+
+        val rows = db.fetchLatestDigestMessagesByEventKeys("tech", setOf("evt-a", "evt-b", "evt-c"), LocalDateTime.now().minusDays(7))
+        assertEquals(setOf("evt-a", "evt-b"), rows.keys)
+        assertEquals(20L, rows.getValue("evt-a").messageId)
+        assertEquals(-100L, rows.getValue("evt-a").chatId)
+        assertEquals(30L, rows.getValue("evt-b").messageId)
+
+        val recent = db.fetchLatestDigestMessagesByEventKeys("tech", setOf("evt-a", "evt-b"), LocalDateTime.now().minusDays(2))
+        assertEquals(setOf("evt-a"), recent.keys)
+
+        assertTrue(db.fetchLatestDigestMessagesByEventKeys("tech", emptyList(), older).isEmpty())
+    }
 }

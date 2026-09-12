@@ -2,15 +2,20 @@ package metifikys.digest
 
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
 import metifikys.config.DatabaseConfig
 import metifikys.config.FeedConfig
+import metifikys.config.HashtagsConfig
 import metifikys.config.OpenAIConfig
+import metifikys.config.PostConfig
 import metifikys.config.SchedulerConfig
 import metifikys.config.SummaryHistoryConfig
 import metifikys.config.TelegramConfig
+import metifikys.config.ThreadsConfig
+import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
 import metifikys.db.SummaryRecord
 import metifikys.model.Article
@@ -19,6 +24,9 @@ import metifikys.telegram.SentRef
 import metifikys.telegram.TelegramSender
 import java.time.LocalDateTime
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /** Covers BUG-003: linkless / all-invalid topics must not be silently marked PROCESSED. */
 class DigestDelivererTest {
@@ -147,5 +155,192 @@ class DigestDelivererTest {
         verify { db.markProcessed(articles.map { it.link }) }
         verify(exactly = 0) { db.markUnprocessed(any()) }
         verify(exactly = 0) { sender.sendToChannel(any(), any(), any()) }
+    }
+
+    // ── post: footer (hashtags) and reply threading ──────────────────────────
+
+    private fun configWithPost(post: PostConfig?, channelId: String = "@tech", enableImages: Boolean = false) = AppConfig(
+        telegram = TelegramConfig(botToken = "t"),
+        openai = OpenAIConfig(apiKey = "sk"),
+        database = DatabaseConfig(path = ":memory:"),
+        scheduler = SchedulerConfig(intervalMinutes = 60),
+        categories = mapOf("tech" to CategoryConfig(
+            emoji = "📰",
+            feeds = listOf(FeedConfig("https://example.com/rss")),
+            channelId = channelId,
+            enableImages = enableImages,
+            post = post
+        )),
+        summaryHistory = SummaryHistoryConfig(maxCount = 2)
+    )
+
+    private fun updateItem(eventKey: String, url: String, related: String?) = ShortlistItem(
+        eventKey = eventKey,
+        franchise = "Hollow Knight",
+        coreFact = "fact",
+        relatedPreviousEventKey = related,
+        url = url,
+        status = "meaningful_update"
+    )
+
+    private fun previousPost(eventKey: String, messageId: Long, chatId: Long = -100L, hoursAgo: Long = 5) =
+        DigestMessageRow(chatId, messageId, "tech", eventKey, "", LocalDateTime.now().minusHours(hoursAgo))
+
+    @Test
+    fun `hashtag footer goes to Telegram but never into the stored summary`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+
+        val articles = listOf(article(1))
+        val shortlist = listOf(shortlistItem("evt-1", article(1).link).copy(franchise = "Hollow Knight"))
+        val summary = "• **Story.**\n\nBody.\n\n[Title 1](https://example.com/1)"
+        val post = PostConfig(hashtags = HashtagsConfig(category = "#tech"))
+
+        DigestDeliverer(configWithPost(post), db, sender).deliver("tech", summary, articles, shortlist)
+
+        assertEquals("**Story.**\n\nBody.\n\n[Title 1](https://example.com/1)\n#tech #hollow_knight", sent.captured)
+        verify { db.saveSummary("tech", match { "#tech" !in it && "[Title 1](https://example.com/1)" in it }, 1) }
+        verify { db.insertDigestMessages(match { rows -> rows.single().articleLinks == "https://example.com/1" }) }
+    }
+
+    @Test
+    fun `legacy bullet gets only the static category tag`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+
+        val post = PostConfig(hashtags = HashtagsConfig(category = "#politics", fromFranchise = true))
+        DigestDeliverer(configWithPost(post), db, sender)
+            .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", listOf(article(1)), shortlist = null)
+
+        assertTrue(sent.captured.endsWith("\n#politics"), sent.captured)
+    }
+
+    @Test
+    fun `caption budget drops the hashtag line rather than the bullet`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val caption = slot<String>()
+        every { sender.sendPhotoToChannel(any(), any(), capture(caption), any()) } returns SentRef(-100L, 12L)
+
+        val withImage = article(1).copy(imageUrl = "https://img.example/1.jpg")
+        val body = "x".repeat(960)
+        val summary = "• **Story.**\n\n$body\n\n[Title 1](https://example.com/1)"  // ~1010 chars: fits, but not with a tag line
+        val post = PostConfig(hashtags = HashtagsConfig(category = "#tech #gaming #science"))
+
+        DigestDeliverer(configWithPost(post, enableImages = true), db, sender)
+            .deliver("tech", summary, listOf(withImage), listOf(shortlistItem("evt-1", withImage.link)))
+
+        assertFalse("#tech" in caption.captured, "tag line should have been dropped: ${caption.captured.takeLast(60)}")
+        assertTrue(caption.captured.endsWith("[Title 1](https://example.com/1)"))
+        assertTrue(caption.captured.length <= 1024)
+    }
+
+    @Test
+    fun `meaningful_update bullet is a reply to the previous post about the story`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendToChannel(any(), any(), any(), any()) } returns listOf(SentRef(-100L, 13L))
+        every {
+            db.fetchLatestDigestMessagesByEventKeys("tech", match { "evt-0" in it && "evt-1" in it }, any())
+        } returns mapOf("evt-0" to previousPost("evt-0", 11L))
+
+        val articles = listOf(article(1), article(2))
+        val shortlist = listOf(
+            updateItem("evt-1", article(1).link, related = "evt-0"),
+            shortlistItem("evt-2", article(2).link)
+        )
+        val summary = "• **Update.**\n\n[Title 1](https://example.com/1)\n• **Fresh.**\n\n[Title 2](https://example.com/2)"
+
+        DigestDeliverer(configWithPost(PostConfig(threads = ThreadsConfig())), db, sender)
+            .deliver("tech", summary, articles, shortlist)
+
+        verify { sender.sendToChannel("@tech", match { "/1)" in it }, true, 11L) }
+        verify { sender.sendToChannel("@tech", match { "/2)" in it }, true, null) }
+    }
+
+    @Test
+    fun `the newest post among the related and own keys wins`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendToChannel(any(), any(), any(), any()) } returns listOf(SentRef(-100L, 13L))
+        every { db.fetchLatestDigestMessagesByEventKeys("tech", any(), any()) } returns mapOf(
+            "evt-0" to previousPost("evt-0", 11L, hoursAgo = 30),
+            "evt-1" to previousPost("evt-1", 12L, hoursAgo = 4)   // Step 1 reused the key last time
+        )
+
+        DigestDeliverer(configWithPost(PostConfig(threads = ThreadsConfig())), db, sender)
+            .deliver("tech", "• **Update.**\n\n[Title 1](https://example.com/1)", listOf(article(1)),
+                listOf(updateItem("evt-1", article(1).link, related = "evt-0")))
+
+        verify { sender.sendToChannel("@tech", any(), true, 12L) }
+    }
+
+    @Test
+    fun `a previous post from another chat is ignored and a new item never replies`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendToChannel(any(), any(), any(), any()) } returns listOf(SentRef(-1001234567890L, 13L))
+        every { db.fetchLatestDigestMessagesByEventKeys("tech", any(), any()) } returns mapOf(
+            "evt-0" to previousPost("evt-0", 11L, chatId = -1009999999999L)
+        )
+
+        val articles = listOf(article(1), article(2))
+        val shortlist = listOf(
+            updateItem("evt-1", article(1).link, related = "evt-0"),
+            shortlistItem("evt-2", article(2).link).copy(relatedPreviousEventKey = "evt-0")   // status new
+        )
+        val summary = "• **Update.**\n\n[Title 1](https://example.com/1)\n• **Fresh.**\n\n[Title 2](https://example.com/2)"
+
+        DigestDeliverer(configWithPost(PostConfig(threads = ThreadsConfig()), channelId = "-1001234567890"), db, sender)
+            .deliver("tech", summary, articles, shortlist)
+
+        verify(exactly = 2) { sender.sendToChannel(any(), any(), true, null) }
+    }
+
+    @Test
+    fun `photo bullets reply too, and a lookup failure just sends without replies`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendPhotoToChannel(any(), any(), any(), any()) } returns SentRef(-100L, 13L)
+        every { db.fetchLatestDigestMessagesByEventKeys("tech", any(), any()) } returns mapOf("evt-0" to previousPost("evt-0", 11L))
+
+        val withImage = article(1).copy(imageUrl = "https://img.example/1.jpg")
+        val config = configWithPost(PostConfig(threads = ThreadsConfig()), enableImages = true)
+        DigestDeliverer(config, db, sender)
+            .deliver("tech", "• **Update.**\n\n[Title 1](https://example.com/1)", listOf(withImage),
+                listOf(updateItem("evt-1", withImage.link, related = "evt-0")))
+        verify { sender.sendPhotoToChannel("@tech", "https://img.example/1.jpg", any(), 11L) }
+
+        every { db.fetchLatestDigestMessagesByEventKeys(any(), any(), any()) } throws IllegalStateException("db down")
+        DigestDeliverer(config, db, sender)
+            .deliver("tech", "• **Update.**\n\n[Title 1](https://example.com/1)", listOf(withImage),
+                listOf(updateItem("evt-1", withImage.link, related = "evt-0")))
+        verify { sender.sendPhotoToChannel("@tech", "https://img.example/1.jpg", any(), null) }
+    }
+
+    @Test
+    fun `threads disabled means no lookup at all`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendToChannel(any(), any(), any(), any()) } returns listOf(SentRef(-100L, 13L))
+
+        DigestDeliverer(configWithPost(PostConfig(threads = ThreadsConfig(enabled = false))), db, sender)
+            .deliver("tech", "• **Update.**\n\n[Title 1](https://example.com/1)", listOf(article(1)),
+                listOf(updateItem("evt-1", article(1).link, related = "evt-0")))
+
+        verify(exactly = 0) { db.fetchLatestDigestMessagesByEventKeys(any(), any(), any()) }
+        verify { sender.sendToChannel("@tech", any(), true, null) }
     }
 }

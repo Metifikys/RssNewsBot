@@ -253,6 +253,26 @@ categories:
     # Claude CLI (provider: claudecli). Cannot be combined with llm.batch or `batch: true`
     # on extract/extractAlternate (rejected at load). Defaults to false.
     # skipBatch: true
+    # Optional presentation of this category's posts. Everything here touches ONLY the text
+    # that goes to Telegram — the stored summary and the reaction-attribution rows keep the
+    # clean bullet. Omit the block (or any sub-block) to leave posts exactly as before.
+    post:
+      # A `meaningful_update` bullet is sent as a Telegram REPLY to the previous post about
+      # the same story (found in digest_messages by the item's related/own event key), so the
+      # channel shows a quote header that jumps to it — the story reads as a thread.
+      threads:
+        enabled: true
+        maxAgeDays: 30            # don't reply to a post older than this
+      # Hashtag line under every bullet: static tags for the category plus tags derived from
+      # Step 1's fields (franchise by default; event type and subject opt-in). Tapping a tag in
+      # Telegram lists every post of the channel carrying it. A category without `dedup:` gets
+      # the static tags only.
+      hashtags:
+        category: "#gaming"       # static tags, space-separated; each `#` + letters/digits/_
+        fromFranchise: true       # e.g. #silksong
+        fromEventType: false      # e.g. #release_date (a fixed enum, the most stable tag)
+        fromSubject: false        # off by default: tech subjects are free-text that changes every cycle
+        max: 3                    # cap on generated (non-static) tags per bullet
     feeds:
       - https://kotaku.com/feed
     # Optional: per-use-case provider+model overrides. The provider name points at one of
