@@ -35,8 +35,25 @@ object ArticlesTable : Table("articles") {
      * own `pubDate` is still inside the retention window.
      */
     val duplicateOf = integer("duplicate_of").nullable()
+    /** Source-specific signals captured at ingestion (JSON, see [metifikys.model.ArticleMeta]); null for most feeds. */
+    val metaJson = text("meta_json").nullable()
 
     override val primaryKey = PrimaryKey(id)
+}
+
+/**
+ * Cache for footer badges built from public APIs (Steam, HN, GitHub): one row per
+ * (provider, key), holding the rendered badge text — or "" for a negative result, so an
+ * unknown title is not looked up again every digest. Rows expire by age (TTL per provider)
+ * and are pruned on the maintenance tick.
+ */
+object BadgeCacheTable : Table("badge_cache") {
+    val provider = varchar("provider", 40)
+    val cacheKey = varchar("cache_key", 500)
+    val payload = text("payload")
+    val fetchedAt = datetime("fetched_at").index()
+
+    override val primaryKey = PrimaryKey(provider, cacheKey)
 }
 
 /**
@@ -478,7 +495,8 @@ class NewsDatabase(dbPath: String) {
             SchemaUtils.createMissingTablesAndColumns(
                 ArticlesTable, PendingBatchesTable, SummariesTable, CoveredEventsTable, RejectedEventsTable,
                 LlmCallsTable, ArticleEmbeddingsTable, EventEmbeddingsTable,
-                DigestMessagesTable, ReactionCountsTable, AudienceAffinityTable, BotStateTable
+                DigestMessagesTable, ReactionCountsTable, AudienceAffinityTable, BotStateTable,
+                BadgeCacheTable
             )
         }
         migrateArticleStatuses(jdbcUrl)
@@ -572,12 +590,25 @@ class NewsDatabase(dbPath: String) {
                     it[processingStartedAt] = null
                     it[imageUrl] = article.imageUrl
                     it[summary] = article.summary
+                    it[metaJson] = article.metaJson
                 }
                 if (result.insertedCount > 0) inserted++
             }
         }
         return inserted
     }
+
+    /** One place that maps an `articles` row to the model, so every query returns the same shape. */
+    private fun ResultRow.toArticle(): Article = Article(
+        category = this[ArticlesTable.category],
+        title = this[ArticlesTable.title],
+        link = this[ArticlesTable.link],
+        description = this[ArticlesTable.description],
+        pubDate = this[ArticlesTable.pubDate],
+        imageUrl = this[ArticlesTable.imageUrl],
+        summary = this[ArticlesTable.summary],
+        metaJson = this[ArticlesTable.metaJson]
+    )
 
     fun fetchReadyForDigestByCategory(staleTimeoutHours: Long = 3): Map<String, List<Article>> {
         val cutoff = LocalDateTime.now().minusHours(staleTimeoutHours)
@@ -594,17 +625,7 @@ class NewsDatabase(dbPath: String) {
                 // BUG-015: deterministic, newest-first order so the prompt's article order is stable
                 // across runs. id DESC breaks ties when several rows share a pubDate.
                 .orderBy(ArticlesTable.pubDate to SortOrder.DESC, ArticlesTable.id to SortOrder.DESC)
-                .map {
-                    Article(
-                        category = it[ArticlesTable.category],
-                        title = it[ArticlesTable.title],
-                        link = it[ArticlesTable.link],
-                        description = it[ArticlesTable.description],
-                        pubDate = it[ArticlesTable.pubDate],
-                        imageUrl = it[ArticlesTable.imageUrl],
-                        summary = it[ArticlesTable.summary]
-                    )
-                }
+                .map { it.toArticle() }
                 .groupBy { it.category }
         }
     }
@@ -632,17 +653,7 @@ class NewsDatabase(dbPath: String) {
                 // BUG-015: deterministic, newest-first order so the prompt's article order is stable
                 // across runs. id DESC breaks ties when several rows share a pubDate.
                 .orderBy(ArticlesTable.pubDate to SortOrder.DESC, ArticlesTable.id to SortOrder.DESC)
-                .map {
-                    Article(
-                        category = it[ArticlesTable.category],
-                        title = it[ArticlesTable.title],
-                        link = it[ArticlesTable.link],
-                        description = it[ArticlesTable.description],
-                        pubDate = it[ArticlesTable.pubDate],
-                        imageUrl = it[ArticlesTable.imageUrl],
-                        summary = it[ArticlesTable.summary]
-                    )
-                }
+                .map { it.toArticle() }
         }
     }
 
@@ -654,17 +665,7 @@ class NewsDatabase(dbPath: String) {
                     (ArticlesTable.category eq category) and
                         (ArticlesTable.status eq ArticleStatus.PROCESSING.name)
                 }
-                .map {
-                    Article(
-                        category = it[ArticlesTable.category],
-                        title = it[ArticlesTable.title],
-                        link = it[ArticlesTable.link],
-                        description = it[ArticlesTable.description],
-                        pubDate = it[ArticlesTable.pubDate],
-                        imageUrl = it[ArticlesTable.imageUrl],
-                        summary = it[ArticlesTable.summary]
-                    )
-                }
+                .map { it.toArticle() }
         }
     }
 
@@ -673,17 +674,7 @@ class NewsDatabase(dbPath: String) {
         return transaction {
             ArticlesTable.selectAll()
                 .where { ArticlesTable.link inList links }
-                .map {
-                    Article(
-                        category = it[ArticlesTable.category],
-                        title = it[ArticlesTable.title],
-                        link = it[ArticlesTable.link],
-                        description = it[ArticlesTable.description],
-                        pubDate = it[ArticlesTable.pubDate],
-                        imageUrl = it[ArticlesTable.imageUrl],
-                        summary = it[ArticlesTable.summary]
-                    )
-                }
+                .map { it.toArticle() }
         }
     }
 
@@ -704,17 +695,7 @@ class NewsDatabase(dbPath: String) {
                 }
                 .orderBy(ArticlesTable.pubDate, SortOrder.DESC)
                 .limit(limit)
-                .map {
-                    Article(
-                        category = it[ArticlesTable.category],
-                        title = it[ArticlesTable.title],
-                        link = it[ArticlesTable.link],
-                        description = it[ArticlesTable.description],
-                        pubDate = it[ArticlesTable.pubDate],
-                        imageUrl = it[ArticlesTable.imageUrl],
-                        summary = it[ArticlesTable.summary]
-                    )
-                }
+                .map { it.toArticle() }
         }
     }
 
@@ -1754,6 +1735,50 @@ class NewsDatabase(dbPath: String) {
     // ── Bot state (key/value) ────────────────────────────────────────────────
 
     /** Reads a persisted state value, or null if the key was never set. */
+    // ── Badge cache ───────────────────────────────────────────────────────────
+
+    /** Cached badge text for (provider, key) when younger than [maxAge]; "" is a cached negative. */
+    fun getBadgeCache(provider: String, key: String, maxAge: java.time.Duration): String? = transaction {
+        val cutoff = LocalDateTime.now().minus(maxAge)
+        BadgeCacheTable
+            .select(BadgeCacheTable.payload)
+            .where {
+                (BadgeCacheTable.provider eq provider) and
+                    (BadgeCacheTable.cacheKey eq key) and
+                    (BadgeCacheTable.fetchedAt greaterEq cutoff)
+            }
+            .firstOrNull()
+            ?.get(BadgeCacheTable.payload)
+    }
+
+    /** Upserts the badge text for (provider, key), stamping it with the current time. */
+    fun putBadgeCache(provider: String, key: String, payload: String) {
+        transaction {
+            val now = LocalDateTime.now()
+            val updated = BadgeCacheTable.update(
+                { (BadgeCacheTable.provider eq provider) and (BadgeCacheTable.cacheKey eq key) }
+            ) {
+                it[BadgeCacheTable.payload] = payload
+                it[fetchedAt] = now
+            }
+            if (updated == 0) {
+                BadgeCacheTable.insertIgnore {
+                    it[BadgeCacheTable.provider] = provider
+                    it[cacheKey] = key
+                    it[BadgeCacheTable.payload] = payload
+                    it[fetchedAt] = now
+                }
+            }
+        }
+    }
+
+    fun deleteOldBadgeCache(days: Long = 7) {
+        val cutoff = LocalDateTime.now().minusDays(days)
+        transaction {
+            BadgeCacheTable.deleteWhere { fetchedAt less cutoff }
+        }
+    }
+
     fun getState(key: String): String? = transaction {
         BotStateTable
             .select(BotStateTable.value)

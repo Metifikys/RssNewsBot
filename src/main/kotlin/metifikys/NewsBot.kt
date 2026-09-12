@@ -19,6 +19,8 @@ import metifikys.digest.EventSemanticAnalyzer
 import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.WeeklyDigest
 import metifikys.digest.WeeklyScheduler
+import metifikys.enrich.BadgeProviders
+import metifikys.enrich.BadgeResolver
 import metifikys.feedback.AffinityAggregator
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
@@ -103,7 +105,12 @@ class NewsBot(
      * while nothing consumes the scores.
      */
     affinityAggregator: AffinityAggregator? =
-        if (config.feedback.enabled) AffinityAggregator(config.feedback, db) else null
+        if (config.feedback.enabled) AffinityAggregator(config.feedback, db) else null,
+    /**
+     * Optional live-data footer badges (Steam / HN / GitHub). Built only when some category
+     * enables one via `post.badges`; null otherwise so no HTTP client is created.
+     */
+    badgeResolver: BadgeResolver? = BadgeProviders.resolverFor(config, db)
 ) {
 
     /** Cycle-mode scheduler (`scheduler.perCategory=false`): one global cycle, never overlapping. */
@@ -131,7 +138,7 @@ class NewsBot(
     private val updatesPoller: TelegramUpdatesPoller? =
         if (config.telegram.updatesPolling) TelegramUpdatesPoller(config.telegram.botToken, db) else null
 
-    internal val deliverer = DigestDeliverer(config, db, sender)
+    internal val deliverer = DigestDeliverer(config, db, sender, badgeResolver)
 
     private val categoryProcessor = CategoryProcessor(
         config = config,

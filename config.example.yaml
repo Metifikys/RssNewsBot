@@ -176,6 +176,16 @@ weekly:
   #   system: "..."
   #   user: "..."
 
+# Global knobs for the live-data footer badges (which badges a category shows is `post.badges`
+# inside the category). Lookups run in the background under this budget, so a slow public API
+# never delays a digest; results are cached in the DB (Steam 24h, HN 1h, GitHub 24h, misses too).
+# badges:
+#   timeoutSeconds: 5        # per provider, per bullet
+#   maxTotalSeconds: 15      # per delivered digest; once spent, remaining bullets go out plain
+#   githubToken: ""          # optional, env GITHUB_TOKEN wins: 5000 req/h instead of 60
+#   steamCountry: "UA"       # store region → prices in that currency
+#   steamLanguage: "ukrainian"
+
 # Optional: reaction-feedback loop (phase 1 — aggregation only). When enabled, the reactions
 # collected by telegram.updatesPolling are periodically rolled up into per-dimension audience
 # affinity scores (franchise / event type / subject / source domain) in the audience_affinity
@@ -273,6 +283,15 @@ categories:
         fromEventType: false      # e.g. #release_date (a fixed enum, the most stable tag)
         fromSubject: false        # off by default: tech subjects are free-text that changes every cycle
         max: 3                    # cap on generated (non-static) tags per bullet
+      # Live-data badge lines from public APIs (no keys; cached in the DB; each lookup under the
+      # `badges:` time budget at the top level, so a slow API never delays a digest):
+      #   steam  — 🎮 Steam: ₴899 (−20%) · 92% позитивних (12 345) · реліз … (game events with a subject)
+      #   hn     — 🔥 HN: 512 · 340 коментарів (articles that came through an hnrss.org feed)
+      #   github — ⭐ GitHub: 12.3k · Rust · оновлено … (when the article link is a repository)
+      badges:
+        steam: true
+        hn: false
+        github: false
     feeds:
       - https://kotaku.com/feed
     # Optional: per-use-case provider+model overrides. The provider name points at one of

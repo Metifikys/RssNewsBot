@@ -187,6 +187,8 @@ data class AppConfig(
     val weekly: WeeklyConfig? = null,
     val feedback: FeedbackConfig = FeedbackConfig(),
     val preferences: PreferencesConfig = PreferencesConfig(),
+    /** Global knobs for the live-data footer badges; per-category on/off is `post.badges`. */
+    val badges: BadgeSettings = BadgeSettings(),
     /**
      * Per-(provider, model) prices used by `/status` cost stats. Costs are in USD per
      * 1,000,000 tokens (matches how OpenAI / Anthropic publish their pricing pages).
@@ -575,7 +577,47 @@ data class PostConfig(
     /** Send a `meaningful_update` bullet as a Telegram reply to the previous post about the same event. */
     val threads: ThreadsConfig? = null,
     /** Hashtag line under each bullet (static category tags + tags from Step 1's franchise/subject/eventType). */
-    val hashtags: HashtagsConfig? = null
+    val hashtags: HashtagsConfig? = null,
+    /** Live-data badge lines (Steam / HN / GitHub) under each bullet; see [BadgesConfig]. */
+    val badges: BadgesConfig? = null
+)
+
+/**
+ * Which footer badges a category shows. Each is a deterministic line built from a public API
+ * (no key, cached, hard timeout — see `badges:` at the top level for the knobs):
+ * - [steam]: `🎮 Steam: ₴899 (−20%) · 92% позитивних (12 345) · реліз …` for game events with a subject;
+ * - [hn]: `🔥 HN: 512 · 340 коментарів` for articles that came through an hnrss feed;
+ * - [github]: `⭐ GitHub: 12.3k · Rust · оновлено …` when the article link is a repository.
+ */
+data class BadgesConfig(
+    val steam: Boolean = false,
+    val hn: Boolean = false,
+    val github: Boolean = false
+) {
+    /** Provider ids to run for this category, matching [metifikys.enrich.BadgeProvider.id]. */
+    val enabledIds: Set<String>
+        get() = buildSet {
+            if (steam) add("steam")
+            if (hn) add("hn")
+            if (github) add("github")
+        }
+}
+
+/**
+ * Global knobs for the badge providers (per-category on/off lives in `post.badges`).
+ * Lookups run in the background under a hard budget, so a slow API delays nothing.
+ */
+data class BadgeSettings(
+    /** Per-provider wait per bullet, seconds. */
+    val timeoutSeconds: Long = 5,
+    /** Total badge time per delivered digest, seconds; once spent, remaining bullets go out without badges. */
+    val maxTotalSeconds: Long = 15,
+    /** Optional GitHub token (env `GITHUB_TOKEN` wins): 5000 requests/hour instead of 60. */
+    val githubToken: String? = null,
+    /** Steam store country code — prices in that currency (UA → hryvnia). */
+    val steamCountry: String = "UA",
+    /** Steam store language for localized release dates. */
+    val steamLanguage: String = "ukrainian"
 )
 
 data class ThreadsConfig(
@@ -1024,6 +1066,16 @@ object ConfigLoader {
             require(kw.isNotBlank()) { "preferences.mute[$i] must not be blank" }
         }
 
+        val badges = config.badges.copy(
+            githubToken = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() } ?: config.badges.githubToken
+        )
+        require(badges.timeoutSeconds >= 1) { "badges.timeoutSeconds must be >= 1 (got ${badges.timeoutSeconds})" }
+        require(badges.maxTotalSeconds >= badges.timeoutSeconds) {
+            "badges.maxTotalSeconds (${badges.maxTotalSeconds}) must be >= timeoutSeconds (${badges.timeoutSeconds})"
+        }
+        require(badges.steamCountry.isNotBlank()) { "badges.steamCountry must not be blank" }
+        require(badges.steamLanguage.isNotBlank()) { "badges.steamLanguage must not be blank" }
+
         // Validate database path — no traversal, must not be blank
         val dbPath = config.database.path
         require(dbPath.isNotBlank()) { "Database path must not be blank" }
@@ -1227,7 +1279,8 @@ object ConfigLoader {
             telegram = config.telegram.copy(botToken = botToken),
             openai = config.openai.copy(apiKey = apiKey),
             openrouter = openRouter,
-            anthropic = anthropic
+            anthropic = anthropic,
+            badges = badges
         )
     }
 

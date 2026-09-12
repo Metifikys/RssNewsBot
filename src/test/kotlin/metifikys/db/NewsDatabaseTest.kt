@@ -387,6 +387,42 @@ class NewsDatabaseTest {
     }
 
     @Test
+    fun `badge cache round-trips, expires by age, and prunes`() {
+        assertEquals(null, db.getBadgeCache("steam", "silksong", java.time.Duration.ofHours(1)))
+        db.putBadgeCache("steam", "silksong", "🎮 Steam: 719₴")
+        db.putBadgeCache("steam", "doom", "")   // negative
+        assertEquals("🎮 Steam: 719₴", db.getBadgeCache("steam", "silksong", java.time.Duration.ofHours(1)))
+        assertEquals("", db.getBadgeCache("steam", "doom", java.time.Duration.ofHours(1)))
+        assertEquals(null, db.getBadgeCache("hn", "silksong", java.time.Duration.ofHours(1)), "namespaced by provider")
+
+        db.putBadgeCache("steam", "silksong", "🎮 Steam: 899₴")   // upsert
+        assertEquals("🎮 Steam: 899₴", db.getBadgeCache("steam", "silksong", java.time.Duration.ofHours(1)))
+
+        // Age the row past the TTL: expired for a 1h maxAge, gone after prune.
+        transaction {
+            BadgeCacheTable.update({ BadgeCacheTable.cacheKey eq "silksong" }) {
+                it[fetchedAt] = LocalDateTime.now().minusDays(10)
+            }
+        }
+        assertEquals(null, db.getBadgeCache("steam", "silksong", java.time.Duration.ofHours(1)))
+        assertEquals("🎮 Steam: 899₴", db.getBadgeCache("steam", "silksong", java.time.Duration.ofDays(30)))
+        db.deleteOldBadgeCache(7)
+        assertEquals(null, db.getBadgeCache("steam", "silksong", java.time.Duration.ofDays(30)))
+        assertEquals("", db.getBadgeCache("steam", "doom", java.time.Duration.ofHours(1)), "fresh rows survive the prune")
+    }
+
+    @Test
+    fun `article meta_json is persisted and read back`() {
+        val meta = metifikys.model.ArticleMeta(hn = metifikys.model.HnMeta(41234567, 512, 340)).toJson()
+        db.insertArticles(listOf(article("https://example.com/hn").copy(metaJson = meta), article("https://example.com/plain")))
+        val byLink = db.fetchReadyForDigestByCategory().getValue("tech").associateBy { it.link }
+        assertEquals(meta, byLink.getValue("https://example.com/hn").metaJson)
+        assertEquals(41234567L, byLink.getValue("https://example.com/hn").meta()!!.hn!!.id)
+        assertEquals(null, byLink.getValue("https://example.com/plain").metaJson)
+        assertEquals(meta, db.fetchArticlesByLinks(listOf("https://example.com/hn")).single().metaJson)
+    }
+
+    @Test
     fun `fetchLatestDigestMessagesByEventKeys returns the newest post per key, first chunk of it`() {
         val older = LocalDateTime.now().minusDays(3)
         val newer = LocalDateTime.now().minusDays(1)

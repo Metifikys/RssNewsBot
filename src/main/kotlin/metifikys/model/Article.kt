@@ -15,8 +15,13 @@ data class Article(
     /** Ephemeral flag — not persisted to DB. Set from [FeedConfig][metifikys.config.FeedConfig.fetchFullContent]. */
     val fetchFullContent: Boolean = false,
     /** Ephemeral — not persisted. Provider name from [FeedConfig.summarize][metifikys.config.FeedConfig.summarize]. */
-    val summarize: String? = null
+    val summarize: String? = null,
+    /** Persisted. Source-specific signals captured at ingestion, see [ArticleMeta]. Null for most feeds. */
+    val metaJson: String? = null
 ) {
+    /** Parsed [metaJson]; null when absent or malformed. */
+    fun meta(): ArticleMeta? = ArticleMeta.parse(metaJson)
+
     /**
      * Body text used in digest LLM prompts: prefer LLM summary when present, otherwise the
      * description. The description is HTML-stripped defensively — new rows are already stored

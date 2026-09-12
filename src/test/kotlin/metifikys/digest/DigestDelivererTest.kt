@@ -207,6 +207,42 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `badge lines come before the hashtag line and only for enabled providers`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+
+        val steam = object : metifikys.enrich.BadgeProvider {
+            override val id = "steam"
+            override fun badge(item: ShortlistItem?, articles: List<Article>) =
+                metifikys.enrich.Badge("🎮 [Steam](https://store.steampowered.com/app/1): 719₴ · ${articles.size} article(s) for ${item?.eventKey}")
+        }
+        val github = object : metifikys.enrich.BadgeProvider {
+            override val id = "github"
+            override fun badge(item: ShortlistItem?, articles: List<Article>) = metifikys.enrich.Badge("⭐ should not appear")
+        }
+        val resolver = metifikys.enrich.BadgeResolver(listOf(steam, github))
+        val post = PostConfig(
+            hashtags = HashtagsConfig(category = "#gaming"),
+            badges = metifikys.config.BadgesConfig(steam = true, github = false)
+        )
+        val articles = listOf(article(1))
+        val shortlist = listOf(shortlistItem("evt-1", article(1).link).copy(franchise = "Silksong"))
+
+        DigestDeliverer(configWithPost(post), db, sender, resolver)
+            .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", articles, shortlist)
+
+        assertEquals(
+            "**Story.**\n\n[Title 1](https://example.com/1)\n" +
+                "🎮 [Steam](https://store.steampowered.com/app/1): 719₴ · 1 article(s) for evt-1\n#gaming #silksong",
+            sent.captured
+        )
+        verify { db.saveSummary("tech", match { "Steam" !in it && "#gaming" !in it }, 1) }
+    }
+
+    @Test
     fun `legacy bullet gets only the static category tag`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

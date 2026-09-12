@@ -7,6 +7,7 @@ import metifikys.config.ThreadsConfig
 import metifikys.db.CoveredEventRow
 import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
+import metifikys.enrich.BadgeResolver
 import metifikys.format.Hashtags
 import metifikys.format.TopicDecorator
 import metifikys.format.TopicFormatter
@@ -34,7 +35,9 @@ private val BARE_URL_SCHEME = Regex("""https?://""", RegexOption.IGNORE_CASE)
 class DigestDeliverer(
     private val config: AppConfig,
     private val db: NewsDatabase,
-    private val sender: TelegramSender
+    private val sender: TelegramSender,
+    /** Live-data footer badges; null when no category enables any (`post.badges`). */
+    private val badgeResolver: BadgeResolver? = null
 ) {
 
     /**
@@ -142,6 +145,8 @@ class DigestDeliverer(
         val eventKeyByUrl: Map<String, String> = itemByUrl.mapValues { (_, item) -> item.eventKey }
         val postCfg = categoryConfig.post
         val replyTargets = resolveReplyTargets(categoryName, channelId, shortlist, postCfg?.threads)
+        // One badge time budget per delivered digest, shared by all its bullets.
+        val badgeDeadline = badgeResolver?.newDeadline() ?: 0L
 
         val sentTopics = mutableListOf<String>()
         val failedTopicIdx = mutableListOf<Int>()
@@ -173,7 +178,9 @@ class DigestDeliverer(
             val eventKey = item?.eventKey
             val replyTo = eventKey?.let { replyTargets[it] }
             val budget = if (image != null) TopicDecorator.CAPTION_BUDGET else TopicDecorator.TEXT_BUDGET
-            val outgoing = TopicDecorator.decorate(topic, buildFooter(item, postCfg), budget)
+            val topicArticles = topicUrls[idx].mapNotNull { articleByLink[it] }
+            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline)
+            val outgoing = TopicDecorator.decorate(topic, footer, budget)
             val refs: List<SentRef> = if (image != null) {
                 // Single post: photo + caption. Caption is truncated to Telegram's 1024-char
                 // limit inside TelegramSender (with markdown→plain-text fallback on parse errors).
@@ -261,12 +268,26 @@ class DigestDeliverer(
 
     /**
      * Footer lines for one bullet, in display order (most valuable first — [TopicDecorator]
-     * drops from the end when the message budget is tight). Today: the hashtag line.
+     * drops from the end when the message budget is tight): live-data badges, then the hashtag
+     * line. Badge lookups run under the resolver's time budget and never throw.
      */
-    private fun buildFooter(item: ShortlistItem?, post: PostConfig?): List<String> {
+    private fun buildFooter(
+        categoryName: String,
+        item: ShortlistItem?,
+        topicArticles: List<Article>,
+        post: PostConfig?,
+        badgeDeadline: Long
+    ): List<String> {
         if (post == null) return emptyList()
+        val lines = mutableListOf<String>()
+        val enabledBadges = post.badges?.enabledIds.orEmpty()
+        if (badgeResolver != null && enabledBadges.isNotEmpty()) {
+            lines += badgeResolver.resolve(enabledBadges, item, topicArticles, badgeDeadline, "[Category:$categoryName]")
+        }
         val tags = Hashtags.forItem(item, post.hashtags)
-        return if (tags.isEmpty()) emptyList() else listOf(tags.joinToString(" "))
+        if (tags.isNotEmpty()) lines += tags.joinToString(" ")
+        if (lines.isNotEmpty()) logger.debug { "[Category:$categoryName][Post] footer: $lines" }
+        return lines
     }
 
     /**

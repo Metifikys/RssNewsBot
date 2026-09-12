@@ -76,6 +76,38 @@ class RssFetcherTest {
     }
 
     @Test
+    fun `fetchFeed keeps the HN id, points and comments of an hnrss item as meta`() {
+        val rss = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel>
+                <title>Hacker News: Newest</title>
+                <link>https://news.ycombinator.com/newest</link>
+                <item>
+                  <title>Show HN: Thing</title>
+                  <link>https://example.com/thing</link>
+                  <description>&lt;p&gt;Article URL: &lt;a href="https://example.com/thing"&gt;https://example.com/thing&lt;/a&gt;&lt;/p&gt;&lt;p&gt;Comments URL: &lt;a href="https://news.ycombinator.com/item?id=41234567"&gt;https://news.ycombinator.com/item?id=41234567&lt;/a&gt;&lt;/p&gt;&lt;p&gt;Points: 512&lt;/p&gt;&lt;p&gt;# Comments: 340&lt;/p&gt;</description>
+                </item>
+                <item>
+                  <title>Plain</title>
+                  <link>https://example.com/plain</link>
+                  <description>just text</description>
+                </item>
+              </channel>
+            </rss>
+        """.trimIndent().toByteArray()
+
+        withLocalFeed(rss) { url ->
+            val result = fetcher.fetchFeed(FeedConfig(url), "tech")
+            val hn = result.single { it.link == "https://example.com/thing" }
+            assertEquals(41234567L, hn.meta()?.hn?.id)
+            assertEquals(512, hn.meta()?.hn?.points)
+            assertEquals(340, hn.meta()?.hn?.comments)
+            assertEquals(null, result.single { it.link == "https://example.com/plain" }.metaJson)
+        }
+    }
+
+    @Test
     fun `fetchFeed stores descriptions as plain text, markup stripped at ingestion`() {
         val rss = """
             <?xml version="1.0" encoding="UTF-8"?>

@@ -69,6 +69,22 @@ class PostConfigTest {
     }
 
     @Test
+    fun `badges flags map to provider ids, and the global badges block is range-checked`() {
+        val config = load(yaml("post:\n  badges:\n    steam: true\n    github: true"))
+        assertEquals(setOf("steam", "github"), config.categories.getValue("gaming").post!!.badges!!.enabledIds)
+        assertEquals(5L, config.badges.timeoutSeconds)
+        assertEquals("UA", config.badges.steamCountry)
+
+        val withGlobal = load("badges:\n  timeoutSeconds: 2\n  maxTotalSeconds: 8\n  steamCountry: \"PL\"\n" + yaml(""))
+        assertEquals(2L, withGlobal.badges.timeoutSeconds)
+        assertEquals(8L, withGlobal.badges.maxTotalSeconds)
+        assertEquals("PL", withGlobal.badges.steamCountry)
+
+        assertThrows<IllegalArgumentException> { load("badges:\n  timeoutSeconds: 0\n" + yaml("")) }
+        assertThrows<IllegalArgumentException> { load("badges:\n  timeoutSeconds: 10\n  maxTotalSeconds: 5\n" + yaml("")) }
+    }
+
+    @Test
     fun `absent post block leaves posts unchanged`() {
         val config = load(yaml(""))
         assertNull(config.categories.getValue("gaming").post)

@@ -9,6 +9,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.CategoryConfig
 import metifikys.config.FeedConfig
 import metifikys.model.Article
+import metifikys.model.ArticleMeta
 import metifikys.model.HtmlText
 import org.jsoup.Jsoup
 import java.net.HttpURLConnection
@@ -435,7 +436,10 @@ class RssFetcher(
                         // outbound link is the only source of text — fetch it regardless of
                         // what the feed's own `fetchFullContent` says.
                         fetchFullContent = feedConfig.fetchFullContent || reddit != null,
-                        summarize = feedConfig.summarize
+                        summarize = feedConfig.summarize,
+                        // hnrss items carry the HN id, points and comment count in the raw
+                        // description; keep them for the footer badge before strip/enrich lose them.
+                        metaJson = HackerNewsMeta.fromDescription(description)?.let { ArticleMeta(hn = it).toJson() }
                     )
                 } catch (e: Exception) {
                     logger.warn { "Skipping malformed entry in $url: ${e.message}" }
