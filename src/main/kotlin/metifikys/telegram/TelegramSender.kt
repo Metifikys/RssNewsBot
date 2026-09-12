@@ -72,6 +72,32 @@ class TelegramSender(
     )
 
     @Serializable
+    private data class EditMessageTextRequest(
+        val chat_id: String,
+        val message_id: Long,
+        val text: String,
+        val parse_mode: String? = null,
+        val disable_web_page_preview: Boolean? = null
+    )
+
+    @Serializable
+    private data class PinMessageRequest(
+        val chat_id: String,
+        val message_id: Long,
+        val disable_notification: Boolean? = null
+    )
+
+    /** Outcome of [editMessageText]. */
+    enum class EditResult {
+        /** Edited (or Telegram reported the text unchanged). */
+        OK,
+        /** The message is gone or cannot be edited — the caller should post a fresh one. */
+        NOT_FOUND,
+        /** Transient failure (rate limit, network); worth retrying later. */
+        FAILED
+    }
+
+    @Serializable
     private data class SendMessageResponse(
         val ok: Boolean = false,
         val result: SentMessage? = null,
@@ -97,7 +123,7 @@ class TelegramSender(
      */
     private sealed interface SendResult {
         data class Ok(val ref: SentRef) : SendResult
-        object BadRequest : SendResult
+        data class BadRequest(val description: String? = null) : SendResult
         object Transient : SendResult
     }
 
@@ -251,7 +277,7 @@ class TelegramSender(
                     }
                     code == 400 -> {
                         logger.warn { "Telegram $endpoint HTTP 400 for $chatId — ${err?.description ?: "bad request"}" }
-                        SendResult.BadRequest
+                        SendResult.BadRequest(err?.description)
                     }
                     else -> {
                         logger.warn { "Telegram $endpoint HTTP $code for $chatId" }
@@ -287,6 +313,58 @@ class TelegramSender(
                 (post("sendMessage", plainPayload, chatId) as? SendResult.Ok)?.ref?.messageId
             }
             is SendResult.Transient -> null
+        }
+    }
+
+    /**
+     * Edits the text of a message the bot sent (channel posts included; there is no time limit
+     * on a bot's own messages). Same Markdown → HTML rendering and plain-text fallback as
+     * [sendToChannel]. "Message is not modified" counts as [EditResult.OK]; any other 400 after the
+     * plain-text retry means the message is gone → [EditResult.NOT_FOUND].
+     */
+    fun editMessageText(chatId: String, messageId: Long, text: String, disablePreview: Boolean = true): EditResult {
+        val html = TopicFormatter.toHtml(text)
+        val preview = if (disablePreview) true else null
+        fun attempt(body: String, parseMode: String?): SendResult =
+            post("editMessageText", json.encodeToString(EditMessageTextRequest(chatId, messageId, body, parseMode, preview)), chatId)
+        return when (val first = attempt(html, "HTML")) {
+            is SendResult.Ok -> EditResult.OK
+            is SendResult.Transient -> EditResult.FAILED
+            is SendResult.BadRequest -> {
+                if (first.description?.contains("not modified", ignoreCase = true) == true) return EditResult.OK
+                when (val second = attempt(html.htmlToPlainText(), null)) {
+                    is SendResult.Ok -> EditResult.OK
+                    is SendResult.Transient -> EditResult.FAILED
+                    is SendResult.BadRequest ->
+                        if (second.description?.contains("not modified", ignoreCase = true) == true) EditResult.OK else EditResult.NOT_FOUND
+                }
+            }
+        }
+    }
+
+    /** Pins a message in the chat (silently by default). The bot needs the channel's edit-messages right. */
+    fun pinChatMessage(chatId: String, messageId: Long, disableNotification: Boolean = true): Boolean =
+        postBoolean("pinChatMessage", json.encodeToString(PinMessageRequest(chatId, messageId, if (disableNotification) true else null)), chatId)
+
+    fun unpinChatMessage(chatId: String, messageId: Long): Boolean =
+        postBoolean("unpinChatMessage", json.encodeToString(PinMessageRequest(chatId, messageId)), chatId)
+
+    /** For Bot API methods whose `result` is a bare `true`. */
+    private fun postBoolean(endpoint: String, payload: String, chatId: String): Boolean {
+        val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val request = Request.Builder()
+            .url("$apiBaseUrl/bot$botToken/$endpoint")
+            .post(body)
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                val ok = response.isSuccessful && response.body?.string().orEmpty().contains("\"ok\":true")
+                if (!ok) logger.warn { "Telegram $endpoint failed for $chatId (HTTP ${response.code})" }
+                ok
+            }
+        } catch (e: Exception) {
+            logger.warn(e) { "Telegram $endpoint failed for $chatId" }
+            false
         }
     }
 

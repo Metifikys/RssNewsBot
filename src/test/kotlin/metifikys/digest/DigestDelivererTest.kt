@@ -276,6 +276,30 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `trackers are told about the events that actually reached the channel`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendToChannel(any(), match { "/1)" in it }, any(), any()) } returns listOf(SentRef(-100L, 11L))
+        every { sender.sendToChannel(any(), match { "/2)" in it }, any(), any()) } returns emptyList()
+        val trackers = mockk<TrackerUpdater>(relaxed = true)
+
+        val articles = listOf(article(1), article(2))
+        val shortlist = listOf(shortlistItem("evt-1", article(1).link), shortlistItem("evt-2", article(2).link))
+        val summary = "• **First.**\n\n[Title 1](https://example.com/1)\n• **Second.**\n\n[Title 2](https://example.com/2)"
+
+        DigestDeliverer(configWithPost(null), db, sender, null, null, trackers).deliver("tech", summary, articles, shortlist)
+
+        verify {
+            trackers.afterDigest(
+                "tech",
+                match { items -> items.map { it.eventKey } == listOf("evt-1") },
+                match { rows -> rows.single().messageId == 11L && rows.single().eventKey == "evt-1" }
+            )
+        }
+    }
+
+    @Test
     fun `legacy bullet gets only the static category tag`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

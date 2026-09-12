@@ -63,6 +63,28 @@ object BadgeCacheTable : Table("badge_cache") {
  * again every digest. Long-lived on purpose: `covered_events` retention (~90 days) would make
  * "first mention" a quarterly event.
  */
+/**
+ * State of the living trackers (`categories.<name>.trackers`): one row per
+ * (category, tracker, entity) — the Step 1 subject normalized to an entity key — with the
+ * event's date as Step 1 read it, the previous date when it moved, and the latest post about
+ * it for the link. The rendered message id lives in `bot_state` (`tracker:<category>:<id>`).
+ */
+object TrackerEntriesTable : Table("tracker_entries") {
+    val category = varchar("category", 100)
+    val trackerId = varchar("tracker_id", 60)
+    val entityKey = varchar("entity_key", 200)
+    val title = text("title")
+    val eventDate = varchar("event_date", 16).nullable()
+    val prevDate = varchar("prev_date", 16).nullable()
+    val status = varchar("status", 20)
+    val eventKey = varchar("event_key", 3000)
+    val chatId = long("chat_id").nullable()
+    val messageId = long("message_id").nullable()
+    val updatedAt = datetime("updated_at").index()
+
+    override val primaryKey = PrimaryKey(category, trackerId, entityKey)
+}
+
 object EntityIntrosTable : Table("entity_intros") {
     val category = varchar("category", 100)
     val entityKey = varchar("entity_key", 200)
@@ -472,6 +494,21 @@ data class AudienceAffinityRow(
     val updatedAt: LocalDateTime
 )
 
+/** One entity's line in a tracker. `status` ∈ scheduled | delayed | tba. Dates use [metifikys.digest.TrackerDates] forms. */
+data class TrackerEntryRow(
+    val category: String,
+    val trackerId: String,
+    val entityKey: String,
+    val title: String,
+    val eventDate: String?,
+    val prevDate: String?,
+    val status: String,
+    val eventKey: String,
+    val chatId: Long?,
+    val messageId: Long?,
+    val updatedAt: LocalDateTime
+)
+
 /** One (category, entity) first-mention record; `extract == null` means "looked up, nothing found". */
 data class EntityIntroRow(
     val category: String,
@@ -526,7 +563,7 @@ class NewsDatabase(dbPath: String) {
                 ArticlesTable, PendingBatchesTable, SummariesTable, CoveredEventsTable, RejectedEventsTable,
                 LlmCallsTable, ArticleEmbeddingsTable, EventEmbeddingsTable,
                 DigestMessagesTable, ReactionCountsTable, AudienceAffinityTable, BotStateTable,
-                BadgeCacheTable, EntityIntrosTable
+                BadgeCacheTable, EntityIntrosTable, TrackerEntriesTable
             )
         }
         migrateArticleStatuses(jdbcUrl)
@@ -1833,6 +1870,73 @@ class NewsDatabase(dbPath: String) {
         val cutoff = LocalDateTime.now().minusDays(days)
         transaction {
             BadgeCacheTable.deleteWhere { fetchedAt less cutoff }
+        }
+    }
+
+    // ── Tracker entries ───────────────────────────────────────────────────────
+
+    fun fetchTrackerEntries(category: String, trackerId: String): List<TrackerEntryRow> = transaction {
+        TrackerEntriesTable
+            .selectAll()
+            .where { (TrackerEntriesTable.category eq category) and (TrackerEntriesTable.trackerId eq trackerId) }
+            .map {
+                TrackerEntryRow(
+                    category = it[TrackerEntriesTable.category],
+                    trackerId = it[TrackerEntriesTable.trackerId],
+                    entityKey = it[TrackerEntriesTable.entityKey],
+                    title = it[TrackerEntriesTable.title],
+                    eventDate = it[TrackerEntriesTable.eventDate],
+                    prevDate = it[TrackerEntriesTable.prevDate],
+                    status = it[TrackerEntriesTable.status],
+                    eventKey = it[TrackerEntriesTable.eventKey],
+                    chatId = it[TrackerEntriesTable.chatId],
+                    messageId = it[TrackerEntriesTable.messageId],
+                    updatedAt = it[TrackerEntriesTable.updatedAt]
+                )
+            }
+    }
+
+    fun upsertTrackerEntry(row: TrackerEntryRow) {
+        transaction {
+            val updated = TrackerEntriesTable.update(
+                {
+                    (TrackerEntriesTable.category eq row.category) and
+                        (TrackerEntriesTable.trackerId eq row.trackerId) and
+                        (TrackerEntriesTable.entityKey eq row.entityKey)
+                }
+            ) {
+                it[title] = row.title
+                it[eventDate] = row.eventDate
+                it[prevDate] = row.prevDate
+                it[status] = row.status
+                it[eventKey] = row.eventKey
+                it[chatId] = row.chatId
+                it[messageId] = row.messageId
+                it[updatedAt] = row.updatedAt
+            }
+            if (updated == 0) {
+                TrackerEntriesTable.insertIgnore {
+                    it[category] = row.category
+                    it[trackerId] = row.trackerId
+                    it[entityKey] = row.entityKey
+                    it[title] = row.title
+                    it[eventDate] = row.eventDate
+                    it[prevDate] = row.prevDate
+                    it[status] = row.status
+                    it[eventKey] = row.eventKey
+                    it[chatId] = row.chatId
+                    it[messageId] = row.messageId
+                    it[updatedAt] = row.updatedAt
+                }
+            }
+        }
+    }
+
+    /** Entries not touched by any digest in [days] days: a stale TBA or a long-released title. */
+    fun deleteOldTrackerEntries(days: Long = 365) {
+        val cutoff = LocalDateTime.now().minusDays(days)
+        transaction {
+            TrackerEntriesTable.deleteWhere { updatedAt less cutoff }
         }
     }
 

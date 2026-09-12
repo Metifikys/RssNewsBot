@@ -39,7 +39,13 @@ data class ExtractionItem(
     val digestFit: Int = 0,
     val relatedPreviousEventKey: String? = null,
     val url: String,
-    val status: String
+    val status: String,
+    /**
+     * The date the event is about (a release date, the new date after a delay), as Step 1 read
+     * it from the article: `YYYY-MM-DD`, `YYYY-MM`, `YYYY-Qn` or `YYYY`; null when the article
+     * states none. Feeds the trackers; validated against the article text before use.
+     */
+    val eventDate: String? = null
 )
 
 /**
@@ -59,7 +65,9 @@ data class ShortlistItem(
     val relatedPreviousEventKey: String? = null,
     val url: String,
     val status: String,
-    val articleIndices: List<Int> = emptyList()
+    val articleIndices: List<Int> = emptyList(),
+    /** See [ExtractionItem.eventDate]. */
+    val eventDate: String? = null
 )
 
 /**

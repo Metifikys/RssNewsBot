@@ -302,6 +302,24 @@ categories:
         languages: [uk]           # Wikipedia languages to try, in order; text is printed as found
         maxPerDigest: 2
         repeatAfterDays: 365
+    # Living pinned messages maintained from this category's events. After every digest the
+    # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
+    # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),
+    # re-renders the message and edits it in place only when something changed; a deleted
+    # message is posted (and pinned) again. Past-date entries move to a "released this week"
+    # section, entries beyond horizonDays are kept but hidden. Requires a dedup: block.
+    #   📅 Найближчі релізи · оновлено 12.09 14:30
+    #   14.10.2026 · Hollow Knight: Silksong ⏳ було 24.09.2026 · пост
+    #   Q1 2027 · GTA VI
+    #   TBA · Half-Life 3
+    trackers:
+      - id: releases
+        title: "📅 Найближчі релізи"
+        eventTypes: [release_date, delay]
+        horizonDays: 120
+        maxEntries: 20
+        pinned: true              # needs the bot's "edit messages" admin right in the channel
+        releasedRetentionDays: 7
     feeds:
       - https://kotaku.com/feed
     # Optional: per-use-case provider+model overrides. The provider name points at one of

@@ -429,6 +429,26 @@ class NewsDatabaseTest {
     }
 
     @Test
+    fun `tracker entries upsert per entity, list per tracker and prune by age`() {
+        val row = TrackerEntryRow("gaming", "releases", "silksong", "Silksong", "2026-10-14", null, "scheduled", "evt-1", -100L, 12L, LocalDateTime.now())
+        db.upsertTrackerEntry(row)
+        db.upsertTrackerEntry(row.copy(trackerId = "layoffs", entityKey = "other", title = "Other"))
+        assertEquals(listOf("silksong"), db.fetchTrackerEntries("gaming", "releases").map { it.entityKey })
+        assertTrue(db.fetchTrackerEntries("tech", "releases").isEmpty())
+
+        db.upsertTrackerEntry(row.copy(eventDate = "2026-11-01", prevDate = "2026-10-14", status = "delayed", messageId = 20L))
+        val updated = db.fetchTrackerEntries("gaming", "releases").single()
+        assertEquals("2026-11-01", updated.eventDate)
+        assertEquals("2026-10-14", updated.prevDate)
+        assertEquals("delayed", updated.status)
+        assertEquals(20L, updated.messageId)
+
+        db.upsertTrackerEntry(row.copy(entityKey = "stale", updatedAt = LocalDateTime.now().minusDays(400)))
+        db.deleteOldTrackerEntries(365)
+        assertEquals(listOf("silksong"), db.fetchTrackerEntries("gaming", "releases").map { it.entityKey })
+    }
+
+    @Test
     fun `entity intros upsert, read back and prune by age`() {
         assertEquals(null, db.getEntityIntro("gaming", "team_cherry"))
         val row = EntityIntroRow("gaming", "team_cherry", "Team Cherry", "line", "https://uk.wikipedia.org/wiki/Team_Cherry", "uk", LocalDateTime.now())

@@ -54,6 +54,42 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `editMessageText renders HTML and reports OK, pin and unpin post their ids`() = withFakeApi { s, bodies ->
+        assertEquals(TelegramSender.EditResult.OK, s.editMessageText("@ch", 7L, "**bold** [l](https://x.y)"))
+        assertTrue(""""message_id":7""" in bodies[0], bodies[0])
+        assertTrue("<b>bold</b>" in bodies[0], bodies[0])
+        assertTrue(""""disable_web_page_preview":true""" in bodies[0], bodies[0])
+
+        bodies.clear()
+        assertTrue(s.pinChatMessage("@ch", 7L))
+        assertTrue(""""message_id":7""" in bodies[0] && """"disable_notification":true""" in bodies[0], bodies[0])
+        assertTrue(s.unpinChatMessage("@ch", 7L))
+        assertFalse("disable_notification" in bodies[1], bodies[1])
+        assertEquals(listOf("/bottok/pinChatMessage", "/bottok/unpinChatMessage").size, bodies.size)
+    }
+
+    @Test
+    fun `editMessageText maps a 400 to NOT_FOUND unless the text was merely unchanged`() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        var description = "Bad Request: message to edit not found"
+        server.createContext("/") { ex ->
+            ex.requestBody.readBytes()
+            val resp = """{"ok":false,"error_code":400,"description":"$description"}""".toByteArray()
+            ex.sendResponseHeaders(400, resp.size.toLong())
+            ex.responseBody.use { it.write(resp) }
+        }
+        server.start()
+        try {
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}")
+            assertEquals(TelegramSender.EditResult.NOT_FOUND, s.editMessageText("@ch", 7L, "x"))
+            description = "Bad Request: message is not modified"
+            assertEquals(TelegramSender.EditResult.OK, s.editMessageText("@ch", 7L, "x"))
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun `photo posts reply too`() = withFakeApi { s, bodies ->
         val ref = s.sendPhotoToChannel("@ch", "https://img.example/1.jpg", caption = "cap", replyToMessageId = 11L)
         assertEquals(SentRef(-100123L, 42L), ref)

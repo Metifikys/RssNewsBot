@@ -12,6 +12,16 @@ class ShortlistSerializationTest {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     @Test
+    fun `eventDate round-trips and is null when the LLM omits it`() {
+        val item = ShortlistItem(eventKey = "k", coreFact = "f", url = "https://a/1", status = "new", eventDate = "2026-10-14")
+        assertEquals(item, json.decodeFromString<ShortlistItem>(json.encodeToString(item)))
+        val legacy = json.decodeFromString<ShortlistItem>("""{"eventKey":"k","coreFact":"f","url":"https://a/1","status":"new"}""")
+        assertEquals(null, legacy.eventDate)
+        val extraction = json.decodeFromString<ExtractionItem>("""{"eventKey":"k","coreFact":"f","url":"https://a/1","status":"new","eventDate":"2027-Q1"}""")
+        assertEquals("2027-Q1", extraction.eventDate)
+    }
+
+    @Test
     fun `round trip ExtractionResult with mixed statuses`() {
         val original = ExtractionResult(
             extractions = listOf(

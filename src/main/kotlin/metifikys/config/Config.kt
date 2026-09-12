@@ -566,7 +566,38 @@ data class CategoryConfig(
      * right before it is sent. Touches ONLY the text that goes to Telegram — the stored summary
      * and the reaction-attribution rows keep the clean bullet. Null = posts are unchanged.
      */
-    val post: PostConfig? = null
+    val post: PostConfig? = null,
+    /**
+     * Living pinned messages the bot maintains from this category's events — e.g. an upcoming
+     * releases calendar fed by `release_date` / `delay` events. See [TrackerConfig]. Requires a
+     * `dedup:` block (event types and dates come from Step 1).
+     */
+    val trackers: List<TrackerConfig> = emptyList()
+)
+
+/**
+ * One tracker: a message in the category's channel that the bot edits after every digest
+ * (and pins) with the current state of a subset of events — one line per entity (the Step 1
+ * subject, else franchise), dated by the item's `eventDate`, linked to the latest post about
+ * it. Entries in the past move to a "released this week" section for [releasedRetentionDays]
+ * days, then vanish; entries beyond [horizonDays] are kept but not shown. The message is
+ * edited only when its body changed; a deleted message is simply posted (and pinned) again.
+ */
+data class TrackerConfig(
+    /** Stable id, `[a-z0-9_-]+`, unique within the category; keys the DB rows and `bot_state`. */
+    val id: String,
+    /** Header line of the message, e.g. `📅 Найближчі релізи`. */
+    val title: String,
+    /** Step 1 event types that feed this tracker, e.g. `[release_date, delay]`. */
+    val eventTypes: List<String>,
+    /** Show entries dated up to this many days ahead. */
+    val horizonDays: Long = 120,
+    /** Cap on upcoming lines in the message. */
+    val maxEntries: Int = 20,
+    /** Pin the message (silently) when it is (re)posted; needs the bot's edit-messages right in the channel. */
+    val pinned: Boolean = true,
+    /** How long a released (past-date) entry stays in the "released" section. */
+    val releasedRetentionDays: Long = 7
 )
 
 /**
@@ -1140,6 +1171,27 @@ object ConfigLoader {
             }
             category.mute.forEachIndexed { i, kw ->
                 require(kw.isNotBlank()) { "Category '$name' mute[$i] must not be blank" }
+            }
+            if (category.trackers.isNotEmpty()) {
+                require(category.dedup != null) {
+                    "Category '$name' configures trackers but has no dedup: block — trackers are fed by Step 1 event types and dates"
+                }
+                val ids = mutableSetOf<String>()
+                for (t in category.trackers) {
+                    require(Regex("""[a-z0-9_-]+""").matches(t.id)) {
+                        "Category '$name' trackers[].id '${t.id}' must match [a-z0-9_-]+"
+                    }
+                    require(ids.add(t.id)) { "Category '$name' trackers: duplicate id '${t.id}'" }
+                    require(t.title.isNotBlank()) { "Category '$name' tracker '${t.id}': title must not be blank" }
+                    require(t.eventTypes.isNotEmpty() && t.eventTypes.none { it.isBlank() }) {
+                        "Category '$name' tracker '${t.id}': eventTypes must list at least one non-blank event type"
+                    }
+                    require(t.horizonDays >= 1) { "Category '$name' tracker '${t.id}': horizonDays must be >= 1 (got ${t.horizonDays})" }
+                    require(t.maxEntries >= 1) { "Category '$name' tracker '${t.id}': maxEntries must be >= 1 (got ${t.maxEntries})" }
+                    require(t.releasedRetentionDays >= 0) {
+                        "Category '$name' tracker '${t.id}': releasedRetentionDays must be >= 0 (got ${t.releasedRetentionDays})"
+                    }
+                }
             }
             category.post?.let { post ->
                 post.threads?.let { t ->

@@ -38,6 +38,7 @@ object PromptBuilder {
         val url: String,
         val status: String,
         val articleIndices: List<Int> = emptyList(),
+        val eventDate: String? = null,
         val sourceArticles: List<RenderSourceArticle> = emptyList()
     )
 
@@ -142,6 +143,7 @@ object PromptBuilder {
             url = url,
             status = status,
             articleIndices = articleIndices,
+            eventDate = eventDate,
             sourceArticles = sourceArticles
         )
     }

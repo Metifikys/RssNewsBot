@@ -328,6 +328,7 @@ class DigestCycle(
         db.pruneOldEmbeddings(config.processing.embeddingRetentionDays)
         db.deleteOldBadgeCache()
         db.deleteOldEntityIntros()
+        db.deleteOldTrackerEntries()
     }
 
     /**

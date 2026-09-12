@@ -72,6 +72,10 @@ extract:
        (aggregate `articleIndices`). Every `url` in shortlist MUST come from CURRENT_BATCH —
        do not invent URLs.
 
+    7. `eventDate` — the date the event is ABOUT (a release date, the new date after a delay, a
+       launch), ONLY when the article states it: "YYYY-MM-DD", "YYYY-MM", "YYYY-Qn" or "YYYY";
+       null otherwise. Never guess a date. The bot cross-checks the year against the article.
+
     Respond with valid JSON only (no prose, no markdown fence). Schema:
     {
       "extractions": [
@@ -86,6 +90,7 @@ extract:
           "newsworthiness": <int 0-10>,
           "digestFit": <int 0-10>,
           "relatedPreviousEventKey": "<string|null>",
+          "eventDate": "<YYYY-MM-DD | YYYY-MM | YYYY-Qn | YYYY | null>",
           "url": "<string from input>",
           "status": "new" | "duplicate" | "meaningful_update" | "rejected"
         }
@@ -101,6 +106,7 @@ extract:
           "newsworthiness": <int 0-10>,
           "digestFit": <int 0-10>,
           "relatedPreviousEventKey": "<string|null>",
+          "eventDate": "<YYYY-MM-DD | YYYY-MM | YYYY-Qn | YYYY | null>",
           "url": "<string from input>",
           "status": "new" | "meaningful_update",
           "articleIndices": [<0-based int>, ...]

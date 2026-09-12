@@ -40,7 +40,9 @@ class DigestDeliverer(
     /** Live-data footer badges; null when no category enables any (`post.badges`). */
     private val badgeResolver: BadgeResolver? = null,
     /** First-mention Wikipedia intro; null when no category enables it (`post.intro`). */
-    private val introProvider: WikipediaIntroProvider? = null
+    private val introProvider: WikipediaIntroProvider? = null,
+    /** Living tracker messages; null when no category configures `trackers`. */
+    private val trackerUpdater: TrackerUpdater? = null
 ) {
 
     /**
@@ -215,7 +217,14 @@ class DigestDeliverer(
 
         // Persist message→event links for every message that was sent, regardless of whether
         // sibling topics failed — a delivered message collects reactions on its own.
-        if (digestMessageRows.isNotEmpty()) db.insertDigestMessages(digestMessageRows)
+        if (digestMessageRows.isNotEmpty()) {
+            db.insertDigestMessages(digestMessageRows)
+            // Trackers see exactly the events that reached the channel.
+            if (trackerUpdater != null && shortlist != null) {
+                val sentKeys = digestMessageRows.mapNotNull { it.eventKey }.toSet()
+                trackerUpdater.afterDigest(categoryName, shortlist.filter { it.eventKey in sentKeys }, digestMessageRows)
+            }
+        }
 
         when {
             sentTopics.isEmpty() -> {

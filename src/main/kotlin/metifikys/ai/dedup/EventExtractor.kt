@@ -11,6 +11,7 @@ import metifikys.config.DigestConfig
 import metifikys.db.NewsDatabase
 import metifikys.db.CoveredEventRow
 import metifikys.db.RejectedEventRow
+import metifikys.digest.TrackerDates
 import metifikys.feedback.AffinityImpact
 import metifikys.feedback.AffinityScores
 import metifikys.model.Article
@@ -271,7 +272,7 @@ class EventExtractor(
                 }
             }
             ok
-        }
+        }.map { item -> guardEventDate(category, item, articles) }
 
         val effectiveCoveredRows = coveredRows
             ?: db.fetchRecentEvents(category, 7, 200)  // fallback for batch-resume path
@@ -409,6 +410,33 @@ class EventExtractor(
                 requestNumber = requestNumber
             )
         }
+    }
+
+    /**
+     * Hallucination guard for `eventDate` (the trackers' input, same spirit as the URL filter):
+     * the value must be in the known vocabulary (`YYYY-MM-DD` / `YYYY-MM` / `YYYY-Qn` / `YYYY`)
+     * AND its year must appear in the text of the item's source articles; otherwise the field is
+     * nulled — a story without a date is fine, a story with an invented one is not.
+     */
+    private fun guardEventDate(category: String, item: ShortlistItem, articles: List<Article>): ShortlistItem {
+        val raw = item.eventDate ?: return item
+        val normalized = TrackerDates.normalize(raw)
+        val year = normalized?.let { TrackerDates.yearOf(it) }
+        if (normalized == null || year == null) {
+            logger.debug { "[Category:$category][Dedup] eventDate '$raw' for ${item.eventKey} is not a known form — dropped" }
+            return item.copy(eventDate = null)
+        }
+        val sourceLinks = metifikys.ai.PromptBuilder.sourceLinksOf(item, articles).toSet()
+        val sources = articles.filter { it.link in sourceLinks }.ifEmpty { articles.filter { it.link == item.url } }
+        val yearText = year.toString()
+        val grounded = sources.any { a ->
+            yearText in a.title || yearText in a.description || yearText in (a.summary ?: "")
+        }
+        if (!grounded) {
+            logger.info { "[Category:$category][Dedup] eventDate '$raw' for ${item.eventKey}: year $year not in the article text — dropped" }
+            return item.copy(eventDate = null)
+        }
+        return if (normalized == raw) item else item.copy(eventDate = normalized)
     }
 
     /**

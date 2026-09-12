@@ -17,6 +17,7 @@ import metifikys.config.dayOfWeekParsed
 import metifikys.config.timeParsed
 import metifikys.digest.EventSemanticAnalyzer
 import metifikys.digest.SemanticDedupDetector
+import metifikys.digest.TrackerUpdater
 import metifikys.digest.WeeklyDigest
 import metifikys.digest.WeeklyScheduler
 import metifikys.enrich.BadgeHttp
@@ -118,7 +119,10 @@ class NewsBot(
     introProvider: WikipediaIntroProvider? =
         if (config.categories.values.any { it.post?.intro?.enabled == true }) {
             WikipediaIntroProvider(BadgeHttp(timeoutSeconds = config.badges.timeoutSeconds), DbIntroStore(db))
-        } else null
+        } else null,
+    /** Optional living trackers; built only when some category configures `trackers`. */
+    trackerUpdater: TrackerUpdater? =
+        if (config.categories.values.any { it.trackers.isNotEmpty() }) TrackerUpdater(config, db, sender) else null
 ) {
 
     /** Cycle-mode scheduler (`scheduler.perCategory=false`): one global cycle, never overlapping. */
@@ -146,7 +150,7 @@ class NewsBot(
     private val updatesPoller: TelegramUpdatesPoller? =
         if (config.telegram.updatesPolling) TelegramUpdatesPoller(config.telegram.botToken, db) else null
 
-    internal val deliverer = DigestDeliverer(config, db, sender, badgeResolver, introProvider)
+    internal val deliverer = DigestDeliverer(config, db, sender, badgeResolver, introProvider, trackerUpdater)
 
     private val categoryProcessor = CategoryProcessor(
         config = config,

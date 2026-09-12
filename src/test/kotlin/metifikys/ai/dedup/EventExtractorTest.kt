@@ -414,6 +414,37 @@ class EventExtractorTest {
     }
 
     @Test
+    fun `eventDate survives only when well-formed and its year appears in the article`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { openAI.completeJson(any(), any(), any()) } returns """
+        {
+          "extractions": [],
+          "shortlist": [
+            {"eventKey": "grounded", "coreFact": "f", "url": "https://a.com/1", "status": "new", "articleIndices": [0], "eventDate": "2026-10-14"},
+            {"eventKey": "invented", "coreFact": "f", "url": "https://a.com/2", "status": "new", "articleIndices": [1], "eventDate": "2031-03-01"},
+            {"eventKey": "malformed", "coreFact": "f", "url": "https://a.com/3", "status": "new", "articleIndices": [2], "eventDate": "next spring"},
+            {"eventKey": "quarter", "coreFact": "f", "url": "https://a.com/4", "status": "new", "articleIndices": [3], "eventDate": "2027-q1"}
+          ]
+        }
+        """.trimIndent()
+
+        val articles = listOf(
+            article("https://a.com/1").copy(description = "Silksong lands on 14 October 2026."),
+            article("https://a.com/2").copy(description = "No date mentioned anywhere."),
+            article("https://a.com/3").copy(description = "Coming in 2027."),
+            article("https://a.com/4").copy(title = "Delayed to Q1 2027")
+        )
+        val ready = assertIs<ExtractOutcome.Ready>(extractor.extract("games", cat(), articles))
+        val byKey = ready.result.shortlist.associateBy { it.eventKey }
+        assertEquals("2026-10-14", byKey.getValue("grounded").eventDate)
+        assertEquals(null, byKey.getValue("invented").eventDate)
+        assertEquals(null, byKey.getValue("malformed").eventDate)
+        assertEquals("2027-Q1", byKey.getValue("quarter").eventDate)
+    }
+
+    @Test
     fun `without maxPostsPerEvent there is no post-count lookup`() {
         every { promptLoader.resolve(any()) } returns okResolved
         every { promptLoader.substitute(any(), any()) } answers { firstArg() }
