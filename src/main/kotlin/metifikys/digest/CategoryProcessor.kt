@@ -14,6 +14,7 @@ import metifikys.db.NewsDatabase
 import metifikys.model.Article
 import metifikys.model.CategoryInput
 import metifikys.model.ShortlistItem
+import metifikys.model.effectiveNewsworthiness
 import java.time.Duration
 import java.time.LocalDateTime
 import java.util.concurrent.Callable
@@ -175,8 +176,9 @@ open class CategoryProcessor(
 
         // ── Step 1: pre-cycle gate ─────────────────────────────────────────────
         // (a) basic floor — too few articles to bother with the LLM at all
-        if (articles.size < config.processing.minArticles) {
-            logger.info { "[Category:$name] Only ${articles.size} article(s), need ${config.processing.minArticles}. Skipping." }
+        val minArticles = categoryConfig.minArticles ?: config.processing.minArticles
+        if (articles.size < minArticles) {
+            logger.info { "[Category:$name] Only ${articles.size} article(s), need $minArticles. Skipping." }
             return
         }
         // (b) backpressure — if batches are piling up AND new article volume isn't large
@@ -198,10 +200,10 @@ open class CategoryProcessor(
         val hasBatchFallback = categoryConfig.llm?.batchFallback != null
         val syncCutoff = if (hasBatchFallback) primaryMaxPending + secondaryMaxPending else primaryMaxPending
         val isBatchingStuck = !batchingDisabled && pendingForCategory >= syncCutoff
-        if (isBatchingStuck && articles.size < 2 * config.processing.minArticles) {
+        if (isBatchingStuck && articles.size < 2 * minArticles) {
             logger.warn {
                 "[Category:$name] backpressure: pending=$pendingForCategory ≥ syncCutoff=$syncCutoff, " +
-                        "newArticles=${articles.size} < 2×${config.processing.minArticles}. Skipping cycle."
+                        "newArticles=${articles.size} < 2×$minArticles. Skipping cycle."
             }
             return
         }
@@ -314,7 +316,22 @@ open class CategoryProcessor(
                     val digestCfg = categoryConfig.dedup?.digest
                     if (digestCfg != null && digestCfg.ranker.enabled) {
                         val shortlistSize = extraction.shortlist.size
-                        if (shortlistSize < digestCfg.minStrongItems) {
+                        // Breaking lane: one item scored at/above the threshold (raw Step 1
+                        // newsworthiness, not the affinity-adjusted composite — audience taste
+                        // must not make a story "urgent") skips the count-based hold-back for
+                        // the whole shortlist. The rest already passed Step 1 and the ranker;
+                        // a "weak" shortlist is a small one, not a bad one.
+                        val breakingThreshold = digestCfg.breakingNewsworthiness
+                        val breaking = breakingThreshold
+                            ?.let { t -> extraction.shortlist.filter { it.effectiveNewsworthiness >= t } }
+                            .orEmpty()
+                        if (shortlistSize < digestCfg.minStrongItems && breaking.isNotEmpty()) {
+                            logger.info {
+                                "[Category:$name][Dedup] Breaking: ${breaking.size} item(s) with newsworthiness >= " +
+                                    "$breakingThreshold (${breaking.map { it.eventKey }}) — publishing the " +
+                                    "$shortlistSize-item shortlist without waiting for minStrongItems=${digestCfg.minStrongItems}."
+                            }
+                        } else if (shortlistSize < digestCfg.minStrongItems) {
                             val lastDigestAt = db.fetchRecentSummaries(name, 1).firstOrNull()?.createdAt
                             val hoursSince = lastDigestAt?.let {
                                 Duration.between(it, LocalDateTime.now()).toHours()

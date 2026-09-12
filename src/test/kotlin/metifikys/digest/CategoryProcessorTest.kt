@@ -139,6 +139,23 @@ class CategoryProcessorTest {
         verify(exactly = 0) { factory.forBatch(any()) }
     }
 
+    @Test
+    fun `per-category minArticles overrides the global gate`() {
+        val (p, _, factory, _, deliverer) = deps(cfg(minArticles = 5, category = cat().copy(minArticles = 2)))
+        val client = mockk<LlmClient>()
+        every { factory.forBatch(any()) } returns client
+        every { client.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("d")
+        every { deliverer.deliver(any(), any(), any(), any()) } just Runs
+
+        p.process(mapOf("tech" to listOf(article(1), article(2))))  // 2 < global 5, but ≥ category 2
+
+        verify { client.submitCategoryBatch("tech", any()) }
+
+        val (p2, _, factory2) = deps(cfg(minArticles = 1, category = cat().copy(minArticles = 3)))
+        p2.process(mapOf("tech" to listOf(article(1), article(2))))  // 2 ≥ global 1, but < category 3
+        verify(exactly = 0) { factory2.forBatch(any()) }
+    }
+
     // ── process(): backpressure ────────────────────────────────────────────────
 
     @Test
@@ -494,6 +511,70 @@ class CategoryProcessorTest {
         p.process(mapOf("tech" to listOf(article(1), article(2), article(3))))
 
         verify { client.submitCategoryBatch(any(), any()) }
+    }
+
+    // ── process(): breaking lane ───────────────────────────────────────────────
+
+    private fun breakingCat(threshold: Int?) = cat(
+        dedup = DedupConfig(
+            promptFile = "x.yaml",
+            digest = DigestConfig(
+                ranker = RankerConfig(enabled = true),
+                minStrongItems = 5,
+                maxWaitHours = 4,
+                minItemsOnForcePublish = 2,
+                breakingNewsworthiness = threshold
+            )
+        )
+    )
+
+    /** Dedup category, 1-item shortlist, last digest an hour ago (well inside maxWait), batch route stubbed. */
+    private fun breakingDeps(cat: CategoryConfig, shortlist: List<ShortlistItem>): Tuple {
+        val extractor = mockk<EventExtractor>()
+        val t = deps(cfg(minArticles = 1, category = cat), eventExtractor = extractor)
+        every { t.promptLoader.resolve(any()) } returns resolvedDedup
+        every { extractor.extract(any(), any(), any()) } returns ExtractOutcome.Ready(ExtractionResult(emptyList(), shortlist))
+        every { t.db.fetchRecentSummaries("tech", 1) } returns listOf(
+            SummaryRecord("tech", "recent", LocalDateTime.now().minusHours(1))
+        )
+        val client = mockk<LlmClient>()
+        every { t.factory.forBatch(any()) } returns client
+        every { client.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("d")
+        every { t.deliverer.deliver(any(), any(), any(), any()) } just Runs
+        return t
+    }
+
+    private val threeArticles = mapOf("tech" to listOf(article(1), article(2), article(3)))
+
+    @Test
+    fun `a breaking item publishes a weak shortlist without waiting`() {
+        val t = breakingDeps(breakingCat(9), listOf(shortlistItem(1).copy(newsworthiness = 9)))
+        t.processor.process(threeArticles)
+        verify { t.factory.forBatch(any()) }
+        verify(exactly = 0) { t.db.markUnprocessed(any()) }
+    }
+
+    @Test
+    fun `below the breaking threshold the hold-back applies as before`() {
+        val t = breakingDeps(breakingCat(9), listOf(shortlistItem(1).copy(newsworthiness = 8)))
+        t.processor.process(threeArticles)
+        verify(exactly = 0) { t.factory.forBatch(any()) }
+        verify { t.db.markUnprocessed(listOf("https://example.com/1")) }
+    }
+
+    @Test
+    fun `breaking falls back to importance when newsworthiness is absent`() {
+        val t = breakingDeps(breakingCat(9), listOf(shortlistItem(1).copy(newsworthiness = 0, importance = 9)))
+        t.processor.process(threeArticles)
+        verify { t.factory.forBatch(any()) }
+    }
+
+    @Test
+    fun `without a breaking threshold a top story still waits for company`() {
+        val t = breakingDeps(breakingCat(null), listOf(shortlistItem(1).copy(newsworthiness = 10)))
+        t.processor.process(threeArticles)
+        verify(exactly = 0) { t.factory.forBatch(any()) }
+        verify { t.db.markUnprocessed(listOf("https://example.com/1")) }
     }
 
     // ── submitOrSync(): exception handling ────────────────────────────────────

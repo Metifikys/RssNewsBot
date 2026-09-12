@@ -17,6 +17,7 @@ import metifikys.model.Article
 import metifikys.model.CoveredEvent
 import metifikys.model.ExtractionResult
 import metifikys.model.ShortlistItem
+import metifikys.model.effectiveNewsworthiness
 import java.time.Duration
 import java.time.LocalDateTime
 import java.util.concurrent.CompletableFuture
@@ -448,7 +449,7 @@ class EventExtractor(
             val previous = coveredByKey[relatedKey] ?: return@filter true
             val minutesSince = Duration.between(previous.coveredAt, now).toMinutes().coerceAtLeast(0)
             val withinCooldown = minutesSince < config.meaningfulUpdateCooldownMinutes
-            val strongEnough = effectiveNewsworthiness(item) >= config.newsworthinessOverride
+            val strongEnough = item.effectiveNewsworthiness >= config.newsworthinessOverride
 
             val keep = !withinCooldown || strongEnough
             if (!keep) dropped += CooldownDrop(item, previous, minutesSince)
@@ -456,7 +457,4 @@ class EventExtractor(
         }
         return kept to dropped
     }
-
-    private fun effectiveNewsworthiness(item: ShortlistItem): Int =
-        if (item.newsworthiness > 0) item.newsworthiness else item.importance
 }

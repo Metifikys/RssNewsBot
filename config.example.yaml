@@ -365,6 +365,12 @@ categories:
         minDigestFit: 3                 # drop items below this digestFit score
         newsworthinessOverride: 8       # …unless their newsworthiness >= this
         meaningfulUpdateCooldownMinutes: 90  # suppress near-immediate follow-ups unless they are truly major
+        # Breaking lane: if any post-ranker item scores newsworthiness >= this, the hold-back
+        # above (minStrongItems / maxWaitHours / minItemsOnForcePublish) is skipped and the
+        # whole shortlist goes out now — a lone top story no longer waits for company.
+        # Raw Step 1 score, 1..10; omit to disable. Note the pre-Step-1 `minArticles` gate
+        # still applies — lower it per category (`minArticles: 2` next to `emoji:`) if needed.
+        # breakingNewsworthiness: 9
       # Optional: inline prompt overrides — any non-null field takes priority over the file.
       # prompts:
       #   extractSystem: "..."

@@ -62,6 +62,13 @@ data class ShortlistItem(
     val articleIndices: List<Int> = emptyList()
 )
 
+/**
+ * The news weight the ranker gates on: `newsworthiness` when Step 1 emitted it, else the older
+ * single `importance` score (prompts written before the split only produce that one).
+ */
+val ShortlistItem.effectiveNewsworthiness: Int
+    get() = if (newsworthiness > 0) newsworthiness else importance
+
 /** Full Step 1 output. */
 @Serializable
 data class ExtractionResult(

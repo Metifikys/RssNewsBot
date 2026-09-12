@@ -502,6 +502,14 @@ data class CategoryConfig(
      */
     val fetchIntervalMinutes: Long? = null,
     /**
+     * Per-category override of `processing.minArticles`: the digest run is skipped while fewer
+     * ready articles than this are queued. The gate sits BEFORE Step 1, so it is the only lever
+     * for a category that must react to a lone big story quickly (see
+     * [DigestConfig.breakingNewsworthiness], which only kicks in after Step 1 has scored). Null
+     * = the global value.
+     */
+    val minArticles: Int? = null,
+    /**
      * When true, each digest bullet is sent as a Telegram photo+caption (single post)
      * if its first linked article has an `imageUrl` extracted from RSS. Otherwise the
      * bullet is sent as plain text. Defaults to false — opt-in per category.
@@ -709,7 +717,18 @@ data class DigestConfig(
     /** Items with `newsworthiness` ≥ this value bypass the `minDigestFit` floor. */
     val newsworthinessOverride: Int = 8,
     /** Suppress low/medium-weight follow-up posts if the related event was just covered. */
-    val meaningfulUpdateCooldownMinutes: Long = 90
+    val meaningfulUpdateCooldownMinutes: Long = 90,
+    /**
+     * Breaking lane. When non-null and the post-ranker shortlist holds at least one item whose
+     * newsworthiness (raw Step 1 score, not the affinity-adjusted composite) is >= this, the
+     * weak-shortlist hold-back ([minStrongItems] / [maxWaitHours] / [minItemsOnForcePublish])
+     * is skipped and the whole shortlist is rendered now. Without it a single top story on a
+     * quiet day waits for company — the most important news of the day is the one that waits
+     * longest. Null (default) = off. Suggested 9: [newsworthinessOverride] (8) already lets an
+     * item past the digestFit floor and the cooldown; 9–10 is what Step 1 reserves for the
+     * genuinely big announcements.
+     */
+    val breakingNewsworthiness: Int? = null
 )
 
 data class RankerConfig(
@@ -1065,6 +1084,14 @@ object ConfigLoader {
                     "Category '$name' sets ranker.reactionWeight=${r.reactionWeight} but feedback.enabled=false — " +
                         "the affinity table is never populated, so the term would silently read zeros. Enable feedback: or drop the weight."
                 }
+            }
+            category.dedup?.digest?.breakingNewsworthiness?.let { b ->
+                require(b in 1..10) {
+                    "Category '$name' digest.breakingNewsworthiness must be in 1..10 (got $b); null disables the breaking lane"
+                }
+            }
+            category.minArticles?.let { m ->
+                require(m >= 1) { "Category '$name' minArticles must be >= 1 (got $m)" }
             }
             category.dedup?.let { d ->
                 require(d.extractMaxArticles > 0) {
