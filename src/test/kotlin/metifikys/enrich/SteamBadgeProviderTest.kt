@@ -95,6 +95,15 @@ class SteamBadgeProviderTest {
     }
 
     @Test
+    fun `a coming-soon game without a firm date shows Steam's own wording, not "реліз Незабаром"`() {
+        val noDate = """{"1030300":{"success":true,"data":{"is_free":false,"release_date":{"coming_soon":true,"date":"Незабаром"}}}}"""
+        FakeApi().route("/api/storesearch/", search).route("/api/appdetails", noDate).start().use { api ->
+            val badge = provider(api).badge(item("Hollow Knight: Silksong", eventType = "major_announcement"), emptyList())
+            assertEquals("🎮 [Steam](https://store.steampowered.com/app/1030300): незабаром", badge?.text)
+        }
+    }
+
+    @Test
     fun `free games and released games render without price or date`() {
         val freeDetails = """{"1030300":{"success":true,"data":{"is_free":true,"release_date":{"coming_soon":false,"date":"2019"}}}}"""
         FakeApi().route("/api/storesearch/", search).route("/api/appdetails", freeDetails).route("/appreviews/", reviews).start().use { api ->

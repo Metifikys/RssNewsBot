@@ -110,8 +110,14 @@ class SteamBadgeProvider(
         }
         val release = data?.get("release_date")?.jsonObject
         if (release?.get("coming_soon")?.jsonPrimitive?.booleanOrNull == true) {
+            // For a game without a firm date Steam puts its own wording in `date` ("Незабаром",
+            // "Coming soon", "Буде оголошено"); only a value with digits is an actual date.
             val date = release["date"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-            parts += if (date.isNotEmpty()) "реліз $date" else "незабаром"
+            parts += when {
+                date.any { it.isDigit() } -> "реліз $date"
+                date.isNotEmpty() -> date.lowercase()
+                else -> "незабаром"
+            }
         }
         if (parts.isEmpty()) return null
         return "🎮 [Steam]($PUBLIC_STORE/app/$appId): ${parts.joinToString(" · ")}"
