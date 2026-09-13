@@ -14,9 +14,9 @@ class TopicDecoratorTest {
     }
 
     @Test
-    fun `footer lines follow the bullet in the given order, one per line`() {
+    fun `footer is its own block under the bullet, one line per entry`() {
         val out = TopicDecorator.decorate(topic, listOf("🎮 Steam: ₴899", "#gaming #silksong"), TopicDecorator.TEXT_BUDGET)
-        assertEquals("$topic\n🎮 Steam: ₴899\n#gaming #silksong", out)
+        assertEquals("$topic\n\n🎮 Steam: ₴899\n#gaming #silksong", out)
     }
 
     @Test
@@ -24,14 +24,14 @@ class TopicDecoratorTest {
         val body = "x".repeat(1000)
         val badge = "b".repeat(20)
         val tags = "#" + "t".repeat(29)
-        // 1000 + 1 + 20 = 1021 fits in 1030; adding the tag line (1021 + 1 + 30) does not.
-        assertEquals("$body\n$badge", TopicDecorator.decorate(body, listOf(badge, tags), 1030))
+        // 1000 + 2 + 20 = 1022 fits in 1030; adding the tag line (1022 + 1 + 30) does not.
+        assertEquals("$body\n\n$badge", TopicDecorator.decorate(body, listOf(badge, tags), 1030))
         // Nothing fits → the bare bullet.
         assertEquals(body, TopicDecorator.decorate(body, listOf(badge, tags), 1010))
     }
 
     @Test
-    fun `trailing whitespace of the bullet does not produce a blank line`() {
-        assertEquals("bullet\n#tag", TopicDecorator.decorate("bullet  \n\n", listOf("#tag"), 100))
+    fun `trailing whitespace of the bullet does not stack extra blank lines`() {
+        assertEquals("bullet\n\n#tag", TopicDecorator.decorate("bullet  \n\n", listOf("#tag"), 100))
     }
 }

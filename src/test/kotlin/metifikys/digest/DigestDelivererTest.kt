@@ -201,7 +201,7 @@ class DigestDelivererTest {
 
         DigestDeliverer(configWithPost(post), db, sender).deliver("tech", summary, articles, shortlist)
 
-        assertEquals("**Story.**\n\nBody.\n\n[Title 1](https://example.com/1)\n#tech #hollow_knight", sent.captured)
+        assertEquals("**Story.**\n\nBody.\n\n[Title 1](https://example.com/1)\n\n#tech #hollow_knight", sent.captured)
         verify { db.saveSummary("tech", match { "#tech" !in it && "[Title 1](https://example.com/1)" in it }, 1) }
         verify { db.insertDigestMessages(match { rows -> rows.single().articleLinks == "https://example.com/1" }) }
     }
@@ -235,7 +235,7 @@ class DigestDelivererTest {
             .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", articles, shortlist)
 
         assertEquals(
-            "**Story.**\n\n[Title 1](https://example.com/1)\n" +
+            "**Story.**\n\n[Title 1](https://example.com/1)\n\n" +
                 "🎮 [Steam](https://store.steampowered.com/app/1): 719₴ · 1 article(s) for evt-1\n#gaming #silksong",
             sent.captured
         )
@@ -269,8 +269,8 @@ class DigestDelivererTest {
         DigestDeliverer(configWithPost(post), db, sender, null, intro).deliver("tech", summary, articles, shortlist)
 
         assertEquals(2, sent.size)
-        assertEquals("**One.**\n\n[Title 1](https://example.com/1)\n📚 Alpha: студія · [Вікіпедія](https://uk.wikipedia.org/wiki/Alpha)\n#tech #alpha", sent[0])
-        assertEquals("**Two.**\n\n[Title 2](https://example.com/2)\n#tech #beta", sent[1])   // cap of 1 per digest
+        assertEquals("**One.**\n\n[Title 1](https://example.com/1)\n\n📚 Alpha: студія · [Вікіпедія](https://uk.wikipedia.org/wiki/Alpha)\n#tech #alpha", sent[0])
+        assertEquals("**Two.**\n\n[Title 2](https://example.com/2)\n\n#tech #beta", sent[1])   // cap of 1 per digest
         verify(exactly = 1) { intro.intro("tech", any(), any(), any()) }
         verify { db.saveSummary("tech", match { "Вікіпедія" !in it }, 2) }
     }
@@ -324,7 +324,7 @@ class DigestDelivererTest {
 
         val withImage = article(1).copy(imageUrl = "https://img.example/1.jpg")
         val body = "x".repeat(960)
-        val summary = "• **Story.**\n\n$body\n\n[Title 1](https://example.com/1)"  // ~1010 chars: fits, but not with a tag line
+        val summary = "• **Story.**\n\n$body\n\n[Title 1](https://example.com/1)"  // ~1010 chars: fits, but not with a blank line + tag line
         val post = PostConfig(hashtags = HashtagsConfig(category = "#tech #gaming #science"))
 
         DigestDeliverer(configWithPost(post, enableImages = true), db, sender)
