@@ -83,11 +83,11 @@ class TrackerUpdaterTest {
             listOf(row("gta6", 11), row("silksong", 12), row("kirby", 13))
         )
 
+        // Kirby (no date) is stored but hidden: showUndated defaults to false.
         assertEquals(
             "**📅 Найближчі релізи** · оновлено 12.09 14:30\n\n" +
                 "14.10.2026 · Hollow Knight: Silksong · [пост](https://t.me/c/1234567890/12)\n" +
-                "Q1 2027 · GTA VI · [пост](https://t.me/c/1234567890/11)\n" +
-                "TBA · Kirby Air Riders · [пост](https://t.me/c/1234567890/13)",
+                "Q1 2027 · GTA VI · [пост](https://t.me/c/1234567890/11)",
             text.captured
         )
         verify { sender.pinChatMessage("-1001234567890", 500L, true) }
@@ -157,6 +157,13 @@ class TrackerUpdaterTest {
             "20.09.2026 · Soon Game\n05.10.2026 · Later Game\n\n**Вийшло за тиждень**\n10.09.2026 · Fresh Game",
             body
         )
+        // showUndated puts TBA rows at the bottom of the upcoming list (within maxEntries).
+        val withTba = TrackerUpdater(config(), db, sender) { now }.renderBody(
+            cfg.copy(showUndated = true, maxEntries = 3), "@gaming",
+            listOf(entry("soon", "Soon Game", "2026-09-20"), entry("tba", "TBA Game", null), entry("later", "Later Game", "2026-10-05")),
+            now.toLocalDate()
+        )
+        assertEquals("20.09.2026 · Soon Game\n05.10.2026 · Later Game\nTBA · TBA Game", withTba)
     }
 
     @Test

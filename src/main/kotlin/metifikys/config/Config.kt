@@ -597,7 +597,13 @@ data class TrackerConfig(
     /** Pin the message (silently) when it is (re)posted; needs the bot's edit-messages right in the channel. */
     val pinned: Boolean = true,
     /** How long a released (past-date) entry stays in the "released" section. */
-    val releasedRetentionDays: Long = 7
+    val releasedRetentionDays: Long = 7,
+    /**
+     * Show entries without a date (`TBA`) at the bottom of the list. Off by default: until the
+     * extraction prompt emits `eventDate`, every entry is undated and the calendar would be a
+     * bare list of titles; with dates flowing, TBA rows are mostly noise.
+     */
+    val showUndated: Boolean = false
 )
 
 /**

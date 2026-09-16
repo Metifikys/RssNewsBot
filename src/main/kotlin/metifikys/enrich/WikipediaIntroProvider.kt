@@ -55,45 +55,78 @@ class WikipediaIntroProvider(
         /** How long a "nothing found" record suppresses a new search. */
         val MISS_RETRY_DAYS: Long = 30
         const val MAX_CHARS = 200
-        private val SENTENCE_END = Regex("""(?<=[.!?…])\s+""")
+        private const val MIN_SENTENCE_CHARS = 40
+        private val SENTENCE_BOUNDARY = Regex("""[.!?…]\s+""")
+        /** `Diablo IV / Blizzard Entertainment`, `Minecraft, Roblox / YouTube`, `A | B`, `A; B`. */
+        private val SEGMENT_SPLIT = Regex("""\s*(?:/|\||;|,)\s*""")
+        private val TRAILING_PAREN = Regex("""\s*\([^()]*\)\s*$""")
+        /** Segments that name a kind of thing, not a thing — never worth an encyclopedia line. */
+        private val GENERIC = setOf(
+            "indie", "indies", "indie game", "community", "industry", "various", "multiple", "misc", "other",
+            "інді", "спільнота", "індустрія", "різне", "інше"
+        )
 
-        /** The entity a bullet introduces: the franchise, else the subject; null when neither is usable. */
-        internal fun entityName(item: ShortlistItem): String? =
-            listOf(item.franchise, item.subject).map { it.trim() }.firstOrNull { it.length >= 2 && it.any(Char::isLetter) }
+        /**
+         * The entities a bullet may introduce, most specific first. Step 1 writes the franchise as
+         * `Game / Studio` (or `Game (indie)`), so the field is split into segments — the game, then
+         * the studio — each without a trailing parenthetical; the subject is the fallback when the
+         * franchise is blank. Generic words ("indie", "community") and one-letter tokens are dropped.
+         */
+        internal fun entityCandidates(item: ShortlistItem): List<String> {
+            val source = item.franchise.trim().ifEmpty { item.subject.trim() }
+            return source.split(SEGMENT_SPLIT)
+                .map { TRAILING_PAREN.replace(it, "").trim() }
+                .filter { it.length >= 2 && it.any(Char::isLetter) && it.lowercase() !in GENERIC }
+                .distinctBy { it.lowercase() }
+        }
+
+        /** Kept for callers/tests: the primary entity, i.e. the first candidate. */
+        internal fun entityName(item: ShortlistItem): String? = entityCandidates(item).firstOrNull()
+
+        /** `Super Smash Bros. (серія відеоігор)` → key of `Super Smash Bros.`; Wikipedia's disambiguators are not part of the name. */
+        internal fun titleKey(title: String): String? = Hashtags.entityKey(TRAILING_PAREN.replace(title, ""))
     }
 
     /**
-     * The intro line for [item] in [category], or null when the entity is known, stop-listed,
-     * recently looked up without result, or not on Wikipedia.
+     * The intro line for [item] in [category], or null when the entity is already introduced,
+     * stop-listed, recently looked up without result, or not on Wikipedia. Candidates are tried
+     * most-specific first (the game before its studio): an already-introduced candidate ends the
+     * search — the bullet's entity is known — while a candidate without an article falls through
+     * to the next one. Every looked-up candidate is remembered under its own key.
      */
     fun intro(category: String, item: ShortlistItem, config: IntroConfig, now: LocalDateTime = LocalDateTime.now()): String? {
-        val name = entityName(item) ?: return null
-        val key = Hashtags.entityKey(name) ?: return null
-        val known = store.get(category, key)
-        if (known != null) {
-            val age = Duration.between(known.introducedAt, now).toDays()
-            val suppressedFor = if (known.extract != null) config.repeatAfterDays else MISS_RETRY_DAYS
-            if (age < suppressedFor) return null
-        }
-        val found = try {
-            config.languages.firstNotNullOfOrNull { lang -> lookup(name, key, lang) }
-        } catch (e: Exception) {
-            logger.warn { "[Intro] Wikipedia lookup failed for '$name': ${e.message}" }
-            return null
-        }
-        store.put(
-            EntityIntroRow(
-                category = category, entityKey = key,
-                title = found?.title, extract = found?.line, url = found?.url, lang = found?.lang,
-                introducedAt = now
+        for (name in entityCandidates(item)) {
+            val key = Hashtags.entityKey(name) ?: continue
+            val known = store.get(category, key)
+            if (known != null) {
+                val age = Duration.between(known.introducedAt, now).toDays()
+                if (known.extract != null) {
+                    if (age < config.repeatAfterDays) return null   // introduced already — nothing to add
+                } else if (age < MISS_RETRY_DAYS) {
+                    continue                                           // known miss — try the next candidate
+                }
+            }
+            val found = try {
+                config.languages.firstNotNullOfOrNull { lang -> lookup(name, key, lang) }
+            } catch (e: Exception) {
+                logger.warn { "[Intro] Wikipedia lookup failed for '$name': ${e.message}" }
+                return null
+            }
+            store.put(
+                EntityIntroRow(
+                    category = category, entityKey = key,
+                    title = found?.title, extract = found?.line, url = found?.url, lang = found?.lang,
+                    introducedAt = now
+                )
             )
-        )
-        if (found == null) {
-            logger.debug { "[Intro] no Wikipedia article for '$name' ($category)" }
-            return null
+            if (found == null) {
+                logger.debug { "[Intro] no Wikipedia article for '$name' ($category)" }
+                continue
+            }
+            logger.info { "[Category:$category][Intro] first mention of '$name' → ${found.lang}:${found.title}" }
+            return "📚 ${found.line} · [Вікіпедія](${found.url})"
         }
-        logger.info { "[Category:$category][Intro] first mention of '$name' → ${found.lang}:${found.title}" }
-        return "📚 ${found.line} · [Вікіпедія](${found.url})"
+        return null
     }
 
     private data class Found(val title: String, val line: String, val url: String, val lang: String)
@@ -106,25 +139,49 @@ class WikipediaIntroProvider(
             ?.jsonObject?.get("query")?.jsonObject?.get("search")?.jsonArray ?: return null
         for (hit in search) {
             val title = hit.jsonObject["title"]?.jsonPrimitive?.contentOrNull ?: continue
-            if (!TitleMatch.similar(Hashtags.entityKey(title), key)) continue
+            if (!TitleMatch.similar(titleKey(title), key)) continue
             val summary = http.getJson("$base/api/rest_v1/page/summary/${encodeTitle(title)}")?.jsonObject ?: continue
             if (summary["type"]?.jsonPrimitive?.contentOrNull == "disambiguation") continue
             val pageTitle = summary["title"]?.jsonPrimitive?.contentOrNull ?: title
+            // The summary follows redirects; a page whose own title no longer matches the entity
+            // ("Super Smash Bros." → the 3DS/Wii U installment) is not the entity's article.
+            if (!TitleMatch.similar(titleKey(pageTitle), key)) continue
             val description = summary["description"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
             val extract = summary["extract"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
             val url = summary["content_urls"]?.jsonObject?.get("desktop")?.jsonObject?.get("page")?.jsonPrimitive?.contentOrNull
                 ?: "$base/wiki/${encodeTitle(title)}"
+            val sentence = extract.takeIf { it.isNotEmpty() }?.let { firstSentence(it) }
+            // A short opening sentence says more than the one-line description ("відеогра 2016
+            // року"); a long one is cut mid-thought, so then the description wins.
             val line = when {
+                sentence != null && sentence.length <= MAX_CHARS -> sentence
                 description.isNotEmpty() -> "$pageTitle: ${description.replaceFirstChar { it.lowercase() }}"
-                extract.isNotEmpty() -> firstSentence(extract)
+                sentence != null -> clip(sentence)
                 else -> continue
             }
-            return Found(pageTitle, clip(line), url, lang)
+            return Found(pageTitle, line, url, lang)
         }
         return null
     }
 
-    private fun firstSentence(extract: String): String = SENTENCE_END.split(extract.trim(), limit = 2).first().trim()
+    /**
+     * The opening sentence of an article, without its final period. A boundary is skipped when
+     * the text so far is too short to be a sentence or ends in an abbreviation ("Super Smash
+     * Bros. — серія…", "Inc.", "St."): a short capitalized word before the period.
+     */
+    private fun firstSentence(extract: String): String {
+        val text = extract.trim()
+        for (m in SENTENCE_BOUNDARY.findAll(text)) {
+            val candidate = text.substring(0, m.range.first + 1)
+            if (candidate.length < MIN_SENTENCE_CHARS) continue
+            val lastWord = candidate.trimEnd('.', '!', '?', '…').substringAfterLast(' ')
+            val abbreviation = candidate.endsWith(".") &&
+                (lastWord.length == 1 || (lastWord.length <= 4 && lastWord.first().isUpperCase()))
+            if (abbreviation) continue
+            return candidate.removeSuffix(".").trim()
+        }
+        return text.removeSuffix(".").trim()
+    }
 
     private fun clip(s: String): String {
         if (s.length <= MAX_CHARS) return s

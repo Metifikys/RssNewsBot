@@ -190,7 +190,16 @@ class DigestDeliverer(
             val refs: List<SentRef> = if (image != null) {
                 // Single post: photo + caption. Caption is truncated to Telegram's 1024-char
                 // limit inside TelegramSender (with markdown→plain-text fallback on parse errors).
-                listOfNotNull(sender.sendPhotoToChannel(channelId, image, caption = outgoing, replyToMessageId = replyTo))
+                // A photo Telegram cannot fetch ("failed to get HTTP URL content") must not fail
+                // the topic — it used to revert the articles and re-render them every cycle — so
+                // the bullet goes out as a text message instead.
+                val photoRef = sender.sendPhotoToChannel(channelId, image, caption = outgoing, replyToMessageId = replyTo)
+                if (photoRef != null) {
+                    listOf(photoRef)
+                } else {
+                    logger.warn { "[Image:$categoryName] photo post failed for $image — sending the bullet as text" }
+                    sender.sendToChannel(channelId, outgoing, disablePreview = true, replyToMessageId = replyTo)
+                }
             } else {
                 sender.sendToChannel(channelId, outgoing, disablePreview = true, replyToMessageId = replyTo)
             }
@@ -353,7 +362,10 @@ class DigestDeliverer(
                 .filter { channelNumeric == null || it.chatId == channelNumeric }
                 .maxByOrNull { it.sentAt }
             if (previous == null) {
-                logger.debug { "[Category:$category][Thread] no previous post for ${item.eventKey} (keys: $keys)" }
+                logger.info {
+                    "[Category:$category][Thread] no previous post for ${item.eventKey} " +
+                        "(related=${item.relatedPreviousEventKey}, ${rows.size} row(s) found for ${keys.size} key(s))"
+                }
                 continue
             }
             out[item.eventKey] = previous.messageId

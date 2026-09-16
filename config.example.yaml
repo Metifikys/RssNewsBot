@@ -320,6 +320,7 @@ categories:
         maxEntries: 20
         pinned: true              # needs the bot's "edit messages" admin right in the channel
         releasedRetentionDays: 7
+        showUndated: false        # true = list TBA entries too; needs eventDate in the prompt to mean anything
     feeds:
       - https://kotaku.com/feed
     # Optional: per-use-case provider+model overrides. The provider name points at one of

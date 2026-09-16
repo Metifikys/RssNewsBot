@@ -24,12 +24,15 @@ class WikipediaIntroProviderTest {
         WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3), store, baseUrlFor = { api.baseUrl })
 
     @Test
-    fun `first mention yields a line from the short description, second mention nothing`() {
+    fun `first mention yields the article's opening sentence, second mention nothing`() {
         val store = MemoryIntroStore()
         FakeApi().route("/w/api.php", search).route("/api/rest_v1/page/summary/", summary).start().use { api ->
             val p = provider(api, store)
             val line = p.intro("gaming", item(franchise = "Team Cherry"), IntroConfig())
-            assertEquals("📚 Team Cherry: австралійська студія відеоігор · [Вікіпедія](https://uk.wikipedia.org/wiki/Team_Cherry)", line)
+            assertEquals(
+                "📚 Team Cherry — австралійська незалежна студія розробки відеоігор з Аделаїди · [Вікіпедія](https://uk.wikipedia.org/wiki/Team_Cherry)",
+                line
+            )
             val hits = api.hits.get()
             assertNull(p.intro("gaming", item(franchise = "Team Cherry"), IntroConfig()))
             assertNull(p.intro("gaming", item(subject = "team cherry"), IntroConfig()), "same key via subject")
@@ -40,14 +43,83 @@ class WikipediaIntroProviderTest {
     }
 
     @Test
-    fun `falls back to the first sentence of the extract when there is no description`() {
-        val noDescription = summary.replace(""""description":"Австралійська студія відеоігор",""", "")
-        FakeApi().route("/w/api.php", search).route("/api/rest_v1/page/summary/", noDescription).start().use { api ->
-            val line = provider(api).intro("gaming", item(franchise = "Team Cherry"), IntroConfig())
+    fun `a long opening sentence gives way to the short description, and to a clipped sentence without one`() {
+        val longSentence = "Team Cherry — " + "дуже довга розповідь про студію, ".repeat(9) + "заснована 2014 року. Друге речення."
+        val withDescription = summary.replace(Regex(""""extract":"[^"]*""""), """"extract":"$longSentence"""")
+        FakeApi().route("/w/api.php", search).route("/api/rest_v1/page/summary/", withDescription).start().use { api ->
             assertEquals(
-                "📚 Team Cherry — австралійська незалежна студія розробки відеоігор з Аделаїди. · [Вікіпедія](https://uk.wikipedia.org/wiki/Team_Cherry)",
-                line
+                "📚 Team Cherry: австралійська студія відеоігор · [Вікіпедія](https://uk.wikipedia.org/wiki/Team_Cherry)",
+                provider(api).intro("gaming", item(franchise = "Team Cherry"), IntroConfig())
             )
+        }
+        val noDescription = withDescription.replace(""""description":"Австралійська студія відеоігор",""", "")
+        FakeApi().route("/w/api.php", search).route("/api/rest_v1/page/summary/", noDescription).start().use { api ->
+            val line = provider(api).intro("gaming", item(franchise = "Team Cherry"), IntroConfig())!!
+            val body = line.substringBefore(" · [Вікіпедія]")
+            assertTrue(body.startsWith("📚 Team Cherry — дуже довга") && body.endsWith("…"), line)
+            assertTrue(body.length <= 3 + WikipediaIntroProvider.MAX_CHARS + 1, "clipped body too long: ${body.length}")
+        }
+    }
+
+    @Test
+    fun `franchise segments are tried most-specific first and remembered separately`() {
+        // "Game / Studio": the game has no article, the studio does → the studio is introduced,
+        // both keys are recorded, and the next story about the same studio adds nothing.
+        val store = MemoryIntroStore()
+        val gameMiss = """{"query":{"search":[]}}"""
+        FakeApi().route("/w/api.php?", gameMiss).start().use { api ->
+            // FakeApi matches on path prefix only; route search by query manually below.
+        }
+        val api = FakeApi().start()
+        try {
+            val p = WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3), store, baseUrlFor = { api.baseUrl })
+            // No routes → 404 → getJson null → miss for every candidate.
+            assertNull(p.intro("gaming", item(franchise = "Silksong 2 / Team Cherry"), IntroConfig()))
+            assertNull(store.get("gaming", "silksong_2")!!.extract)
+            assertNull(store.get("gaming", "team_cherry")!!.extract)
+            assertEquals(listOf("/w/api.php?action=query&list=search&srsearch=Silksong+2&srlimit=3&srprop=&format=json",
+                "/w/api.php?action=query&list=search&srsearch=Team+Cherry&srlimit=3&srprop=&format=json"), api.requests)
+        } finally {
+            api.close()
+        }
+        // Now the studio has an article: a known-miss game falls through to the studio.
+        FakeApi().route("/w/api.php", search).route("/api/rest_v1/page/summary/", summary).start().use { api2 ->
+            val p = WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3), store, baseUrlFor = { api2.baseUrl })
+            store.put(store.get("gaming", "team_cherry")!!.copy(introducedAt = LocalDateTime.now().minusDays(40)))
+            val line = p.intro("gaming", item(franchise = "Silksong 2 / Team Cherry"), IntroConfig())
+            assertTrue(line!!.startsWith("📚 Team Cherry"), line)
+            assertTrue(api2.requests.none { "Silksong" in it }, "known miss must not be searched again: ${api2.requests}")
+            // The game itself known-introduced → nothing, even though the studio is now known too.
+            store.put(store.get("gaming", "team_cherry")!!)
+            assertNull(p.intro("gaming", item(franchise = "Hollow Knight / Team Cherry"), IntroConfig()).takeIf { false })
+            assertNull(p.intro("gaming", item(franchise = "Team Cherry / Silksong 2"), IntroConfig()))
+        }
+    }
+
+    @Test
+    fun `generic segments and parentheticals are ignored, titles match without Wikipedia's disambiguator`() {
+        assertEquals(listOf("Warota"), WikipediaIntroProvider.entityCandidates(item(franchise = "Warota (indie)")))
+        assertEquals(listOf("Diablo IV", "Blizzard Entertainment"), WikipediaIntroProvider.entityCandidates(item(franchise = "Diablo IV / Blizzard Entertainment")))
+        assertEquals(listOf("Pokémon TCG"), WikipediaIntroProvider.entityCandidates(item(franchise = "Pokémon TCG / community")))
+        assertEquals(listOf("Minecraft", "Roblox", "YouTube"), WikipediaIntroProvider.entityCandidates(item(franchise = "Minecraft, Roblox / YouTube")))
+        assertEquals("super_smash_bros", WikipediaIntroProvider.titleKey("Super Smash Bros. (серія відеоігор)"))
+
+        val seriesSearch = """{"query":{"search":[{"title":"Super Smash Bros. (серія відеоігор)"}]}}"""
+        val seriesSummary = """{"type":"standard","title":"Super Smash Bros. (серія відеоігор)","extract":"Super Smash Bros. — серія файтингів від Nintendo.",
+            "content_urls":{"desktop":{"page":"https://uk.wikipedia.org/wiki/SSB"}}}"""
+        FakeApi().route("/w/api.php", seriesSearch).route("/api/rest_v1/page/summary/", seriesSummary).start().use { api ->
+            assertEquals(
+                "📚 Super Smash Bros. — серія файтингів від Nintendo · [Вікіпедія](https://uk.wikipedia.org/wiki/SSB)",
+                provider(api).intro("gaming", item(franchise = "Super Smash Bros. / Nintendo"), IntroConfig())
+            )
+        }
+    }
+
+    @Test
+    fun `a summary that redirected to a different page is not the entity's article`() {
+        val redirected = """{"type":"standard","title":"Super Smash Bros. для Nintendo 3DS та Wii U","description":"відеогра 2014 року","extract":"x"}"""
+        FakeApi().route("/w/api.php", """{"query":{"search":[{"title":"Super Smash Bros."}]}}""").route("/api/rest_v1/page/summary/", redirected).start().use { api ->
+            assertNull(provider(api).intro("gaming", item(franchise = "Super Smash Bros."), IntroConfig()))
         }
     }
 

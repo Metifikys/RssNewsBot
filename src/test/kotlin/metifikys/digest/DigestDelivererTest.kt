@@ -423,6 +423,26 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `a photo Telegram cannot fetch falls back to a text post instead of failing the topic`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendPhotoToChannel(any(), any(), any(), any()) } returns null
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 21L))
+
+        val withImage = article(1).copy(imageUrl = "https://img.example/broken.jpg")
+        DigestDeliverer(configWithPost(null, enableImages = true), db, sender)
+            .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", listOf(withImage), listOf(shortlistItem("evt-1", withImage.link)))
+
+        verify { sender.sendPhotoToChannel("@tech", "https://img.example/broken.jpg", any(), null) }
+        assertEquals("**Story.**\n\n[Title 1](https://example.com/1)", sent.captured)
+        verify { db.markProcessed(listOf(withImage.link)) }
+        verify(exactly = 0) { db.markUnprocessed(any()) }
+        verify { db.insertDigestMessages(match { rows -> rows.single().messageId == 21L }) }
+    }
+
+    @Test
     fun `threads disabled means no lookup at all`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

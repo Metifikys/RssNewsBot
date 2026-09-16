@@ -154,6 +154,7 @@ class TrackerUpdater(
     internal fun renderBody(tracker: TrackerConfig, channelId: String, entries: Collection<TrackerEntryRow>, today: LocalDate): String {
         val horizon = today.plusDays(tracker.horizonDays)
         val upcoming = entries
+            .filter { e -> tracker.showUndated || e.eventDate != null }
             .filter { e -> val end = TrackerDates.end(e.eventDate); end == null || !end.isBefore(today) }
             .filter { e -> val start = TrackerDates.start(e.eventDate); start == null || !start.isAfter(horizon) }
             .sortedWith(
