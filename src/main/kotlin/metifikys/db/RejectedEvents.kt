@@ -1,7 +1,11 @@
 package metifikys.db
 
-import org.jetbrains.exposed.sql.Table
+import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.javatime.datetime
+import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.LocalDateTime
 
 object RejectedEventsTable : Table("rejected_events") {
@@ -40,3 +44,97 @@ data class RejectedEventRow(
     val articleIndex: Int = -1,
     val extractedAt: LocalDateTime
 )
+
+interface RejectedEventStore {
+    /** Appends a batch of rejected/duplicate Step 1 extractions for prompt tuning. */
+    fun saveRejectedEvents(events: List<RejectedEventRow>)
+
+    /**
+     * Returns up to [limit] rejected-event rows for [category] within [sinceDays], newest-first,
+     * whose status is in [statuses]. The weekly roundup ranker uses the `"duplicate"` rows as the
+     * "this story showed up again" signal — each one is a later sighting of an already-covered
+     * event, so counting them per story yields the "most duplicates / most repeated" measure.
+     */
+    fun fetchRecentRejectedEvents(
+        category: String,
+        sinceDays: Long,
+        limit: Int,
+        statuses: Set<String> = setOf("duplicate")
+    ): List<RejectedEventRow>
+
+    /** Deletes rejected-event log entries older than [days] days. */
+    fun deleteOldRejectedEvents(days: Long = 30)
+}
+
+internal class RejectedEventRepository : RejectedEventStore {
+
+    override fun saveRejectedEvents(events: List<RejectedEventRow>) {
+        if (events.isEmpty()) return
+        transaction {
+            for (event in events) {
+                RejectedEventsTable.insert {
+                    it[category] = event.category
+                    it[eventKey] = event.eventKey
+                    it[subject] = event.subject
+                    it[franchise] = event.franchise
+                    it[eventType] = event.eventType
+                    it[coreFact] = event.coreFact
+                    it[importance] = event.importance
+                    it[newsworthiness] = event.newsworthiness
+                    it[digestFit] = event.digestFit
+                    it[url] = event.url
+                    it[status] = event.status
+                    it[relatedPreviousEventKey] = event.relatedPreviousEventKey
+                    it[articleIndex] = event.articleIndex
+                    it[extractedAt] = event.extractedAt
+                }
+            }
+        }
+    }
+
+    override fun fetchRecentRejectedEvents(
+        category: String,
+        sinceDays: Long,
+        limit: Int,
+        statuses: Set<String>
+    ): List<RejectedEventRow> {
+        if (limit <= 0 || statuses.isEmpty()) return emptyList()
+        val cutoff = LocalDateTime.now().minusDays(sinceDays)
+        return transaction {
+            RejectedEventsTable
+                .selectAll()
+                .where {
+                    (RejectedEventsTable.category eq category) and
+                        (RejectedEventsTable.status inList statuses) and
+                        (RejectedEventsTable.extractedAt greaterEq cutoff)
+                }
+                .orderBy(RejectedEventsTable.extractedAt, SortOrder.DESC)
+                .limit(limit)
+                .map {
+                    RejectedEventRow(
+                        category = it[RejectedEventsTable.category],
+                        eventKey = it[RejectedEventsTable.eventKey],
+                        subject = it[RejectedEventsTable.subject],
+                        franchise = it[RejectedEventsTable.franchise],
+                        eventType = it[RejectedEventsTable.eventType],
+                        coreFact = it[RejectedEventsTable.coreFact],
+                        importance = it[RejectedEventsTable.importance],
+                        newsworthiness = it[RejectedEventsTable.newsworthiness],
+                        digestFit = it[RejectedEventsTable.digestFit],
+                        url = it[RejectedEventsTable.url],
+                        status = it[RejectedEventsTable.status],
+                        relatedPreviousEventKey = it[RejectedEventsTable.relatedPreviousEventKey],
+                        articleIndex = it[RejectedEventsTable.articleIndex],
+                        extractedAt = it[RejectedEventsTable.extractedAt]
+                    )
+                }
+        }
+    }
+
+    override fun deleteOldRejectedEvents(days: Long) {
+        val cutoff = LocalDateTime.now().minusDays(days)
+        transaction {
+            RejectedEventsTable.deleteWhere { extractedAt less cutoff }
+        }
+    }
+}
