@@ -6,7 +6,9 @@ import metifikys.ai.LlmCallRecorder
 import metifikys.ai.LlmClientsFactory
 import metifikys.ai.LlmEndpoint
 import metifikys.ai.dedup.EventExtractor
+import metifikys.ai.dedup.PromptFinding
 import metifikys.ai.dedup.PromptLoader
+import metifikys.ai.dedup.PromptValidator
 import metifikys.config.AppConfig
 import metifikys.db.NewsDatabase
 import metifikys.db.RetentionArchiver
@@ -37,6 +39,7 @@ import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.HostThrottle
 import metifikys.fetch.RssFetcher
 import metifikys.fetch.TextScrubRules
+import metifikys.telegram.AdminAlerts
 import metifikys.telegram.AdminAuth
 import metifikys.telegram.AdminCallbackRouter
 import metifikys.telegram.AdminCommandRouter
@@ -89,7 +92,7 @@ class NewsBot(
     ),
     private val db: NewsDatabase = NewsDatabase(config.database.path),
     sender: TelegramSender = TelegramSender(config.telegram.botToken),
-    promptLoader: PromptLoader = PromptLoader(),
+    private val promptLoader: PromptLoader = PromptLoader(),
     llmCallRecorder: LlmCallRecorder = LlmCallRecorder(db, metifikys.ai.LlmPricing(config.pricing)),
     llmClientsFactory: LlmClientsFactory = LlmClientsFactory(config, db, llmCallRecorder),
     articleSummarizer: ArticleSummarizer = ArticleSummarizer(config, config.categories, llmClientsFactory),
@@ -172,6 +175,11 @@ class NewsBot(
     private val statusPoster: StatusPoster? = config.admin.statusChatId?.let { chatId ->
         StatusPoster(chatId, sender, statusCommand, errorLog)
     }
+
+    /** Operator alerts (prompt problems, CLI login) to the admin chat; no-op without `admin.statusChatId`. */
+    private val adminAlerts = AdminAlerts(config.admin.statusChatId, sender)
+
+    private val promptValidator = PromptValidator(promptLoader)
 
     /**
      * Admin commands and button presses run here, one at a time, off the poller thread
@@ -288,6 +296,10 @@ class NewsBot(
 
     fun start() {
         logger.info { "RssNewsBot started." }
+        checkPrompts()
+        // Hot reload: a prompt file edited on the server is re-read on its next use; re-check it
+        // then. Never fatal (the bot is running) — ERRORs go to the log, /status and the admin chat.
+        promptLoader.onReload = { file -> revalidatePrompts(file) }
         val orModels = config.openrouter?.modelPriority?.joinToString(" → ")
         val syncProvider = if (orModels != null) "openrouter($orModels)" else "openai(${config.openai.model})"
         val extractorProvider = if (orModels != null) {
@@ -413,6 +425,49 @@ class NewsBot(
                 "[Weekly] Weekly top-story roundup enabled: ${w.dayOfWeek} ${w.time}, topN=${w.topN}, " +
                     "lookback=${w.lookbackDays}d, minMentions=${w.minMentions}."
             }
+        }
+    }
+
+    /**
+     * Startup prompt validation ([PromptValidator]): any ERROR refuses to start, listing every
+     * finding — under systemd `Restart=always` that loops, but the cause is right there in the
+     * journal, which beats weeks of a category quietly posting in the legacy format. WARNs go
+     * to the log and, as one message, to the admin chat.
+     */
+    internal fun checkPrompts() {
+        val findings = promptValidator.validate(config)
+        if (findings.isEmpty()) {
+            logger.info { "[Prompts] all prompts validated." }
+            return
+        }
+        val errors = findings.filter { it.level == PromptFinding.Level.ERROR }
+        if (errors.isNotEmpty()) {
+            val report = PromptValidator.format(findings)
+            logger.error { "[Prompts] refusing to start — ${errors.size} error(s):\n$report" }
+            throw IllegalStateException("Prompt validation failed (${errors.size} error(s)):\n$report")
+        }
+        logFindings(findings)
+        val warns = findings.filter { it.level == PromptFinding.Level.WARN }
+        if (warns.isNotEmpty()) adminAlerts.send("⚠️ Промпти:\n" + warns.joinToString("\n") { "• ${it.category}/${it.slot}: ${it.message}" })
+    }
+
+    private fun revalidatePrompts(file: java.io.File) {
+        val findings = promptValidator.categoriesUsing(file, config).flatMap { name ->
+            promptValidator.validateCategory(name, config.categories.getValue(name), config)
+        }
+        logFindings(findings)
+        val errors = findings.filter { it.level == PromptFinding.Level.ERROR }
+        for (e in errors) errorLog.recordError(e.category, "[Prompts]", IllegalStateException("${e.slot}: ${e.message}"))
+        if (errors.isNotEmpty()) {
+            adminAlerts.send("⛔ Промпти після правки ${file.name}:\n" + errors.joinToString("\n") { "• ${it.category}/${it.slot}: ${it.message}" })
+        }
+    }
+
+    private fun logFindings(findings: List<PromptFinding>) {
+        for (f in findings) when (f.level) {
+            PromptFinding.Level.ERROR -> logger.error { "[Prompts] $f" }
+            PromptFinding.Level.WARN -> logger.warn { "[Prompts] $f" }
+            PromptFinding.Level.INFO -> logger.info { "[Prompts] $f" }
         }
     }
 

@@ -190,6 +190,17 @@ via a `/status` admin snapshot.
 - **Schema validation at load time** — invalid `hardThreshold` ranges, missing provider
   blocks for `summarize: anthropic`, unsupported `provider: openrouter` on the Batch API,
   path-traversal in `database.path`, etc. all fail fast with explicit messages.
+- **Prompt validation at startup** —
+  [`PromptValidator`](src/main/kotlin/metifikys/ai/dedup/PromptValidator.kt) checks every prompt
+  the config will use. The bot refuses to start (listing every finding) when a `dedup.promptFile`
+  is missing / unparseable / has `..`, any of the four prompt keys does not resolve (formerly a
+  silent fallback to the legacy single-step flow), extract lacks `{{CURRENT_BATCH_JSON}}`,
+  `render.user` lacks `{{SHORTLIST_JSON}}` or the weekly prompts lack `{{CANDIDATES_JSON}}`.
+  Warnings (no `{{PREVIOUSLY_COVERED_EVENTS_JSON}}`, unknown `{{X}}` sent literally, any
+  placeholder in `render.system`, `{{AUDIENCE_SIGNALS}}` with feedback off, `post.longForm` with no
+  `depth` in the render prompt, trackers with no `eventDate` in extract) go to the log and as one
+  message to `admin.statusChatId`. A prompt file edited on the running server is re-checked when it
+  is reloaded; errors then go to the log, `/status` and the admin chat.
 - **Dependency locking** — `gradle.lockfile` pins all transitive versions to defend against
   silent supply-chain shifts.
 - **Auto-migration** — schema changes via Exposed `createMissingTablesAndColumns`; legacy

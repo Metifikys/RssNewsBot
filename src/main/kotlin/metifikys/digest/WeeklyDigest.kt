@@ -187,7 +187,6 @@ class WeeklyDigest(
 ) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
-    private val yamlMapper = ObjectMapper(YAMLFactory()).registerKotlinModule()
 
     /** Categories that participate: the explicit allowlist, else every category with a `dedup:` block. */
     private fun participatingCategories(): List<String> =
@@ -497,37 +496,8 @@ class WeeklyDigest(
         return result
     }
 
-    /** Resolves (system, user) prompts: inline override → prompt file → built-in default. */
-    private fun resolvePrompts(): Pair<String, String> {
-        val fileDoc = weekly.promptFile?.let { loadPromptFile(it) }
-        val system = weekly.prompts?.system?.takeIf { it.isNotBlank() }
-            ?: fileDoc?.first?.takeIf { it.isNotBlank() }
-            ?: DEFAULT_SYSTEM
-        val user = weekly.prompts?.user?.takeIf { it.isNotBlank() }
-            ?: fileDoc?.second?.takeIf { it.isNotBlank() }
-            ?: DEFAULT_USER
-        return system to user
-    }
-
-    private fun loadPromptFile(rawPath: String): Pair<String?, String?>? {
-        if (rawPath.contains("..")) {
-            logger.warn { "[Weekly] Rejecting prompt file path with '..': $rawPath" }
-            return null
-        }
-        val file = if (File(rawPath).isAbsolute) File(rawPath) else File(baseDir, rawPath)
-        if (!file.exists() || !file.isFile || !file.canRead()) {
-            logger.warn { "[Weekly] Prompt file missing or unreadable: ${file.absolutePath} — using defaults." }
-            return null
-        }
-        return try {
-            val root = yamlMapper.readTree(file) ?: return null
-            root.at("/weekly/system").asText(null)?.takeIf { it.isNotEmpty() } to
-                root.at("/weekly/user").asText(null)?.takeIf { it.isNotEmpty() }
-        } catch (e: Exception) {
-            logger.warn(e) { "[Weekly] Failed to parse prompt file ${file.absolutePath} — using defaults." }
-            null
-        }
-    }
+    private fun resolvePrompts(): Pair<String, String> =
+        resolvePrompts(weekly, baseDir).let { it.system to it.user }
 
     @Serializable
     private data class WeeklyCandidateJson(
@@ -596,5 +566,50 @@ class WeeklyDigest(
             CANDIDATES (відсортовані за кількістю згадувань):
             {{CANDIDATES_JSON}}
         """.trimIndent()
+
+        /** Placeholders substituted in both weekly prompts (see `renderPost`). */
+        val PLACEHOLDERS: Set<String> = setOf("CATEGORY", "EMOJI", "TOP_N", "WEEK_RANGE", "CANDIDATES_JSON")
+
+        private val yamlMapper = ObjectMapper(YAMLFactory()).registerKotlinModule()
+
+        /**
+         * The weekly (system, user) prompts: inline override → prompt file → built-in default.
+         * [WeeklyPrompts.fileProblem] says why `weekly.promptFile` did not load (the defaults
+         * then stand in) — read by the startup prompt validation.
+         */
+        fun resolvePrompts(weekly: WeeklyConfig, baseDir: File): WeeklyPrompts {
+            val (fileDoc, problem) = weekly.promptFile?.let { loadPromptFile(it, baseDir) } ?: (null to null)
+            val system = weekly.prompts?.system?.takeIf { it.isNotBlank() }
+                ?: fileDoc?.first?.takeIf { it.isNotBlank() }
+                ?: DEFAULT_SYSTEM
+            val user = weekly.prompts?.user?.takeIf { it.isNotBlank() }
+                ?: fileDoc?.second?.takeIf { it.isNotBlank() }
+                ?: DEFAULT_USER
+            return WeeklyPrompts(system, user, problem)
+        }
+
+        /** ((system, user), null) when the file loaded; (null, why) otherwise. */
+        private fun loadPromptFile(rawPath: String, baseDir: File): Pair<Pair<String?, String?>?, String?> {
+            if (rawPath.contains("..")) {
+                logger.warn { "[Weekly] Rejecting prompt file path with '..': $rawPath" }
+                return null to "path contains '..'"
+            }
+            val file = if (File(rawPath).isAbsolute) File(rawPath) else File(baseDir, rawPath)
+            if (!file.exists() || !file.isFile || !file.canRead()) {
+                logger.warn { "[Weekly] Prompt file missing or unreadable: ${file.absolutePath} — using defaults." }
+                return null to "missing or unreadable: ${file.absolutePath}"
+            }
+            return try {
+                val root = yamlMapper.readTree(file) ?: return null to "empty file: ${file.absolutePath}"
+                (root.at("/weekly/system").asText(null)?.takeIf { it.isNotEmpty() } to
+                    root.at("/weekly/user").asText(null)?.takeIf { it.isNotEmpty() }) to null
+            } catch (e: Exception) {
+                logger.warn(e) { "[Weekly] Failed to parse prompt file ${file.absolutePath} — using defaults." }
+                null to "YAML parse error in ${file.absolutePath}: ${e.message?.lineSequence()?.firstOrNull()}"
+            }
+        }
     }
 }
+
+/** Resolved weekly prompts; [fileProblem] is set when `weekly.promptFile` did not load. */
+data class WeeklyPrompts(val system: String, val user: String, val fileProblem: String?)

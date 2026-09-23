@@ -24,6 +24,20 @@ data class ResolvedDedupPrompts(
 )
 
 /**
+ * Slot-by-slot view of how a category's dedup prompts resolve, for [PromptValidator]: each
+ * field is the value [PromptLoader.resolve] would use (null = unresolved); [fileProblem] says
+ * why `dedup.promptFile` did not load (null when there is no file or it loaded).
+ */
+data class PromptInspection(
+    val promptFile: String?,
+    val fileProblem: String?,
+    val extractSystem: String?,
+    val extractUser: String?,
+    val renderSystem: String?,
+    val renderUser: String?
+)
+
+/**
  * Loads per-category dedup prompts from YAML files and/or inline config overrides.
  *
  * Resolution order for each of the four required prompt strings
@@ -35,6 +49,8 @@ data class ResolvedDedupPrompts(
  *      legacy single-step flow for that category.
  *
  * Files are cached by (absolutePath, lastModified). Paths containing `..` are rejected.
+ * A file edited in place is picked up on its next use (hot reload); [onReload] then gets the
+ * reloaded file so the caller can re-validate it.
  */
 class PromptLoader(
     private val baseDir: File = File(".").canonicalFile
@@ -49,26 +65,36 @@ class PromptLoader(
 
     private data class CacheEntry(val lastModified: Long, val doc: YamlDoc)
 
+    /** A file load: the parsed doc, or why there is none. */
+    private data class FileLoad(val doc: YamlDoc?, val problem: String?)
+
     private val cache = ConcurrentHashMap<String, CacheEntry>()
     private val mapper = ObjectMapper(YAMLFactory()).registerKotlinModule()
 
+    /**
+     * Called (on the thread that triggered the load) after a cached prompt file was re-read
+     * because it changed on disk — not on its first load. Exceptions are logged and swallowed.
+     */
+    @Volatile
+    var onReload: ((File) -> Unit)? = null
+
     fun resolve(cat: CategoryConfig): ResolvedDedupPrompts? {
         val dedup = cat.dedup ?: return null
-
-        val fileDoc: YamlDoc? = dedup.promptFile?.let { loadFile(it) }
-        val inline = dedup.prompts
-
-        val extractSystem = inline?.extractSystem?.nonBlank() ?: fileDoc?.extractSystem?.nonBlank()
-        val extractUser = inline?.extractUser?.nonBlank() ?: fileDoc?.extractUser?.nonBlank()
-        val renderSystem = inline?.renderSystem?.nonBlank() ?: fileDoc?.renderSystem?.nonBlank()
-        val renderUser = inline?.renderUser?.nonBlank() ?: fileDoc?.renderUser?.nonBlank()
+        val p = inspect(cat)!!
+        val extractSystem = p.extractSystem
+        val extractUser = p.extractUser
+        val renderSystem = p.renderSystem
+        val renderUser = p.renderUser
 
         if (extractSystem == null || extractUser == null || renderSystem == null || renderUser == null) {
-            logger.warn {
-                "[Dedup] Prompt resolution failed for category — missing field(s): " +
+            // ERROR, not WARN: this once turned a category into the legacy single-step format
+            // for days without anyone noticing (146ea63). Startup validation (PromptValidator)
+            // refuses such a config, so getting here means the file broke while running.
+            logger.error {
+                "[Dedup] Prompt resolution failed (promptFile=${dedup.promptFile}) — missing field(s): " +
                     "extractSystem=${extractSystem != null}, extractUser=${extractUser != null}, " +
-                    "renderSystem=${renderSystem != null}, renderUser=${renderUser != null}. " +
-                    "Falling back to legacy flow."
+                    "renderSystem=${renderSystem != null}, renderUser=${renderUser != null}" +
+                    (p.fileProblem?.let { "; file: $it" } ?: "") + ". Falling back to legacy flow."
             }
             return null
         }
@@ -83,6 +109,29 @@ class PromptLoader(
         )
     }
 
+    /** How each prompt slot of [cat] resolves; null when the category has no `dedup:` block. */
+    fun inspect(cat: CategoryConfig): PromptInspection? {
+        val dedup = cat.dedup ?: return null
+        val load = dedup.promptFile?.let { loadFile(it) }
+        val fileDoc = load?.doc
+        val inline = dedup.prompts
+        return PromptInspection(
+            promptFile = dedup.promptFile,
+            fileProblem = load?.problem,
+            extractSystem = inline?.extractSystem?.nonBlank() ?: fileDoc?.extractSystem?.nonBlank(),
+            extractUser = inline?.extractUser?.nonBlank() ?: fileDoc?.extractUser?.nonBlank(),
+            renderSystem = inline?.renderSystem?.nonBlank() ?: fileDoc?.renderSystem?.nonBlank(),
+            renderUser = inline?.renderUser?.nonBlank() ?: fileDoc?.renderUser?.nonBlank()
+        )
+    }
+
+    /** The canonical file [rawPath] points at (as [resolve] reads it), or null for a `..` path. */
+    fun fileFor(rawPath: String): File? {
+        if (rawPath.contains("..")) return null
+        val file = if (File(rawPath).isAbsolute) File(rawPath) else File(baseDir, rawPath)
+        return runCatching { file.canonicalFile }.getOrDefault(file.absoluteFile)
+    }
+
     /** Replaces `{{KEY}}` placeholders in [template] with the values from [vars]. */
     fun substitute(template: String, vars: Map<String, String>): String {
         var result = template
@@ -92,34 +141,44 @@ class PromptLoader(
         return result
     }
 
-    private fun loadFile(rawPath: String): YamlDoc? {
+    private fun loadFile(rawPath: String): FileLoad {
         if (rawPath.contains("..")) {
             logger.warn { "[Dedup] Rejecting prompt file path with '..': $rawPath" }
-            return null
+            return FileLoad(null, "path contains '..'")
         }
         val file = if (File(rawPath).isAbsolute) File(rawPath) else File(baseDir, rawPath)
         if (!file.exists() || !file.isFile || !file.canRead()) {
             logger.warn { "[Dedup] Prompt file missing or unreadable: ${file.absolutePath}" }
-            return null
+            return FileLoad(null, "missing or unreadable: ${file.absolutePath}")
         }
         val key = file.canonicalPath
         val lastModified = file.lastModified()
-        cache[key]?.let { if (it.lastModified == lastModified) return it.doc }
+        val previous = cache[key]
+        if (previous != null && previous.lastModified == lastModified) return FileLoad(previous.doc, null)
 
-        return try {
-            val root = mapper.readTree(file) ?: return null
-            val doc = YamlDoc(
+        val doc = try {
+            val root = mapper.readTree(file) ?: return FileLoad(null, "empty file: ${file.absolutePath}")
+            YamlDoc(
                 extractSystem = root.at("/extract/system").asText(null)?.takeIf { !it.isNullOrEmpty() },
                 extractUser = root.at("/extract/user").asText(null)?.takeIf { !it.isNullOrEmpty() },
                 renderSystem = root.at("/render/system").asText(null)?.takeIf { !it.isNullOrEmpty() },
                 renderUser = root.at("/render/user").asText(null)?.takeIf { !it.isNullOrEmpty() }
             )
-            cache[key] = CacheEntry(lastModified, doc)
-            doc
         } catch (e: Exception) {
             logger.warn(e) { "[Dedup] Failed to parse prompt file ${file.absolutePath}" }
-            null
+            val reason = e.message?.lineSequence()?.firstOrNull() ?: e.javaClass.simpleName
+            return FileLoad(null, "YAML parse error in ${file.absolutePath}: $reason")
         }
+        cache[key] = CacheEntry(lastModified, doc)
+        if (previous != null) {
+            logger.info { "[Dedup] Prompt file changed on disk, reloaded: ${file.absolutePath}" }
+            try {
+                onReload?.invoke(File(key))
+            } catch (e: Exception) {
+                logger.warn(e) { "[Dedup] Prompt reload hook failed for ${file.absolutePath}" }
+            }
+        }
+        return FileLoad(doc, null)
     }
 
     private fun String.nonBlank(): String? = takeIf { it.isNotBlank() }

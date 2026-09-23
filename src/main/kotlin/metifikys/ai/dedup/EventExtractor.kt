@@ -66,6 +66,10 @@ class EventExtractor(
 ) {
 
     companion object {
+        /** Placeholders substituted in both extract prompts (system and user) — see [extract]. */
+        val PLACEHOLDERS: Set<String> =
+            setOf("CURRENT_BATCH_JSON", "PREVIOUSLY_COVERED_EVENTS_JSON", "CATEGORY", "EMOJI", "AUDIENCE_SIGNALS")
+
         private val defaultJson = Json {
             ignoreUnknownKeys = true
             encodeDefaults = true

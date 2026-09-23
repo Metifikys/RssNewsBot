@@ -29,6 +29,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
 import java.util.concurrent.CompletableFuture
+import kotlin.test.assertFailsWith
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -1634,6 +1635,30 @@ class NewsBotTest {
             eventExtractor = ee
         )
         return Triple(b, pl, ee)
+    }
+
+    @Test
+    fun `startup prompt check refuses a dedup category whose prompt file does not resolve`() {
+        val cfg = config.copy(
+            categories = mapOf(
+                "tech" to CategoryConfig(
+                    emoji = "💻",
+                    feeds = listOf(FeedConfig("https://example.com/rss")),
+                    channelId = "@test_tech",
+                    dedup = DedupConfig(promptFile = "prompts/no-such-prompt-file.yaml")
+                )
+            )
+        )
+        val b = NewsBot(cfg, fetcher, ArticleFetcher(fetcher, enforceUrlValidation = false), db, sender, llmClientsFactory = llmClientsFactory)
+        val e = assertFailsWith<IllegalStateException> { b.checkPrompts() }
+        assertTrue("tech/promptFile" in e.message!!, e.message)
+        assertTrue("legacy" in e.message!!, e.message)
+    }
+
+    @Test
+    fun `startup prompt check passes a config without dedup blocks`() {
+        NewsBot(config, fetcher, ArticleFetcher(fetcher, enforceUrlValidation = false), db, sender, llmClientsFactory = llmClientsFactory)
+            .checkPrompts()
     }
 
     @Test

@@ -228,6 +228,11 @@ open class CategoryProcessor(
         // category has no dedup config, OR Step 1 fails, we fall through with shortlist=null
         // and the legacy chunked path takes over.
         val resolvedDedup = promptLoader.resolve(categoryConfig)
+        if (resolvedDedup == null && categoryConfig.dedup != null) {
+            // The prompt file broke after startup validation passed (edited or deleted in place):
+            // surface it in /status instead of letting the legacy flow run unnoticed.
+            errorLog.recordError(name, "[Dedup]", IllegalStateException("dedup prompts do not resolve — legacy single-step flow"))
+        }
         var shortlist: List<ShortlistItem>? = null
         var dedupCapped: List<Article>? = null
 

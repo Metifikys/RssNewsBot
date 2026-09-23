@@ -16,6 +16,9 @@ object PromptBuilder {
 
     private val json = Json { encodeDefaults = false }
 
+    /** Placeholders [buildRenderUserPrompt] substitutes in `render.user` (`render.system` goes out verbatim). */
+    val RENDER_PLACEHOLDERS: Set<String> = setOf("SHORTLIST_JSON", "CATEGORY", "EMOJI")
+
     @Serializable
     private data class RenderSourceArticle(
         val articleIndex: Int,
