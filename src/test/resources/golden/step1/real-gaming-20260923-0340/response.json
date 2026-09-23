@@ -1,0 +1,214 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "game_awards_2026_goty_frontrunners_predictions",
+      "subject": "The Game Awards 2026 (прогнози Гри року)",
+      "franchise": "The Game Awards / Geoff Keighley, Grand Theft Auto 6",
+      "eventType": "industry_news",
+      "coreFact": "Polygon опублікував прогнози щодо фаворитів Гри року на церемонії The Game Awards 2026, яка відбудеться 10 грудня; Grand Theft Auto 6 вважається беззаперечним фаворитом на тлі слабшого загалом року.",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.polygon.com/game-of-the-year-goty-game-awards-2026-frontrunners",
+      "status": "new"
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "active_matter_1_0_launch_review",
+      "subject": "Active Matter (реліз 1.0 та огляд)",
+      "franchise": "Active Matter / Matter Team",
+      "eventType": "review",
+      "coreFact": "Тактичний екстракшн-шутер Active Matter від Matter Team вийшов у релізі 1.0 15 вересня для ПК і консолей; оглядач Insider Gaming назвав гру 'обов'язковою до гри' попри невелику кількість гравців.",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://insider-gaming.com/active-matter-must-play-extraction-shooter-turning-heads",
+      "status": "new"
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "piroker_poker_roguelike_autobattler_reveal",
+      "subject": "Piroker (анонс гри)",
+      "franchise": "Piroker (indie)",
+      "eventType": "major_announcement",
+      "coreFact": "Анонсовано Piroker — восьмигравцевий автобатлер, що поєднує правила покеру Texas Hold 'Em з роуглайк-механіками.",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://massivelyop.com/2026/09/22/piroker-is-an-eight-player-auto-battler-that-blends-texas-hold-em-rules-and-roguelike-mechanics",
+      "status": "new"
+    },
+    {
+      "articleIndex": 3,
+      "eventKey": "grip2_combat_racing_evolved_demo_teaser",
+      "subject": "GRIP 2: Combat Racing Evolved (демо-трейлер)",
+      "franchise": "GRIP / Caged Element",
+      "eventType": "media_reveal",
+      "coreFact": "Опубліковано тизер-трейлер демоверсії GRIP 2: Combat Racing Evolved (раніше GRIP XR), яка вийде 1 жовтня.",
+      "importance": 3,
+      "newsworthiness": 3,
+      "digestFit": 4,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.youtube.com/watch?v=4yfYknVoVtU",
+      "status": "new"
+    },
+    {
+      "articleIndex": 4,
+      "eventKey": "stuntboost_tech_deck_release",
+      "subject": "Stuntboost (реліз гри)",
+      "franchise": "Stuntboost (indie)",
+      "eventType": "release_date",
+      "coreFact": "Вийшла Stuntboost — платформер у стилі tech deck про катання на скейтборді по картонних конструкціях у спальні.",
+      "importance": 3,
+      "newsworthiness": 3,
+      "digestFit": 4,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.rockpapershotgun.com/stuntboost-is-a-tech-dech-skateboarding-platformer-all-about-doing-sick-flips-on-cardboard-constructs-in-your-bedroom-and-its-out-now",
+      "status": "new"
+    },
+    {
+      "articleIndex": 5,
+      "eventKey": "fish_and_ships_reveal",
+      "subject": "Fish & Ships (анонс гри)",
+      "franchise": "Fish & Ships (indie)",
+      "eventType": "media_reveal",
+      "coreFact": "Анонсовано Fish & Ships — кооперативну пригодницьку гру про риб, які керують дирижаблем, прямуючи до океану.",
+      "importance": 3,
+      "newsworthiness": 3,
+      "digestFit": 4,
+      "relatedPreviousEventKey": null,
+      "url": "https://massivelyop.com/2026/09/22/fish-and-ships-is-a-new-friendslop-adventure-of-fish-on-an-airship-heading-to-the-ocean",
+      "status": "new"
+    },
+    {
+      "articleIndex": 6,
+      "eventKey": "gw2_visions_eternity_stream_team_column",
+      "subject": "Guild Wars 2: Visions of Eternity (колонка Stream Team)",
+      "franchise": "Guild Wars 2 / ArenaNet",
+      "eventType": "opinion",
+      "coreFact": "MassivelyOP публікує чергову колонку Stream Team про проходження розділу Code of Creation у Guild Wars 2: Visions of Eternity.",
+      "importance": 2,
+      "newsworthiness": 2,
+      "digestFit": 1,
+      "relatedPreviousEventKey": null,
+      "url": "https://massivelyop.com/2026/09/22/the-stream-team-starting-the-end-of-guild-wars-2s-visions-of-eternity-with-code-of-creation",
+      "status": "rejected"
+    },
+    {
+      "articleIndex": 7,
+      "eventKey": "kirby_air_riders_switch2_amazon_deal",
+      "subject": "Kirby Air Riders (знижка на Amazon)",
+      "franchise": "Kirby Air Riders / Nintendo",
+      "eventType": "deal_promo",
+      "coreFact": "IGN повідомляє про знижку 27% на фізичну версію Kirby Air Riders для Nintendo Switch 2 в Amazon.",
+      "importance": 2,
+      "newsworthiness": 2,
+      "digestFit": 2,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.ign.com/articles/kirby-air-riders-switch-2-game-deal-september-2026-updated",
+      "status": "rejected"
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "game_awards_2026_goty_frontrunners_predictions",
+      "subject": "The Game Awards 2026 (прогнози Гри року)",
+      "franchise": "The Game Awards / Geoff Keighley, Grand Theft Auto 6",
+      "eventType": "industry_news",
+      "coreFact": "Polygon опублікував прогнози щодо фаворитів Гри року на церемонії The Game Awards 2026, яка відбудеться 10 грудня; Grand Theft Auto 6 вважається беззаперечним фаворитом на тлі слабшого загалом року.",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.polygon.com/game-of-the-year-goty-game-awards-2026-frontrunners",
+      "status": "new",
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "active_matter_1_0_launch_review",
+      "subject": "Active Matter (реліз 1.0 та огляд)",
+      "franchise": "Active Matter / Matter Team",
+      "eventType": "review",
+      "coreFact": "Тактичний екстракшн-шутер Active Matter від Matter Team вийшов у релізі 1.0 15 вересня для ПК і консолей; оглядач Insider Gaming назвав гру 'обов'язковою до гри' попри невелику кількість гравців.",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://insider-gaming.com/active-matter-must-play-extraction-shooter-turning-heads",
+      "status": "new",
+      "articleIndices": [
+        1
+      ]
+    },
+    {
+      "eventKey": "piroker_poker_roguelike_autobattler_reveal",
+      "subject": "Piroker (анонс гри)",
+      "franchise": "Piroker (indie)",
+      "eventType": "major_announcement",
+      "coreFact": "Анонсовано Piroker — восьмигравцевий автобатлер, що поєднує правила покеру Texas Hold 'Em з роуглайк-механіками.",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://massivelyop.com/2026/09/22/piroker-is-an-eight-player-auto-battler-that-blends-texas-hold-em-rules-and-roguelike-mechanics",
+      "status": "new",
+      "articleIndices": [
+        2
+      ]
+    },
+    {
+      "eventKey": "grip2_combat_racing_evolved_demo_teaser",
+      "subject": "GRIP 2: Combat Racing Evolved (демо-трейлер)",
+      "franchise": "GRIP / Caged Element",
+      "eventType": "media_reveal",
+      "coreFact": "Опубліковано тизер-трейлер демоверсії GRIP 2: Combat Racing Evolved (раніше GRIP XR), яка вийде 1 жовтня.",
+      "importance": 3,
+      "newsworthiness": 3,
+      "digestFit": 4,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.youtube.com/watch?v=4yfYknVoVtU",
+      "status": "new",
+      "articleIndices": [
+        3
+      ]
+    },
+    {
+      "eventKey": "stuntboost_tech_deck_release",
+      "subject": "Stuntboost (реліз гри)",
+      "franchise": "Stuntboost (indie)",
+      "eventType": "release_date",
+      "coreFact": "Вийшла Stuntboost — платформер у стилі tech deck про катання на скейтборді по картонних конструкціях у спальні.",
+      "importance": 3,
+      "newsworthiness": 3,
+      "digestFit": 4,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.rockpapershotgun.com/stuntboost-is-a-tech-dech-skateboarding-platformer-all-about-doing-sick-flips-on-cardboard-constructs-in-your-bedroom-and-its-out-now",
+      "status": "new",
+      "articleIndices": [
+        4
+      ]
+    },
+    {
+      "eventKey": "fish_and_ships_reveal",
+      "subject": "Fish & Ships (анонс гри)",
+      "franchise": "Fish & Ships (indie)",
+      "eventType": "media_reveal",
+      "coreFact": "Анонсовано Fish & Ships — кооперативну пригодницьку гру про риб, які керують дирижаблем, прямуючи до океану.",
+      "importance": 3,
+      "newsworthiness": 3,
+      "digestFit": 4,
+      "relatedPreviousEventKey": null,
+      "url": "https://massivelyop.com/2026/09/22/fish-and-ships-is-a-new-friendslop-adventure-of-fish-on-an-airship-heading-to-the-ocean",
+      "status": "new",
+      "articleIndices": [
+        5
+      ]
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "hades-2|patch|1.1",
+      "subject": "",
+      "franchise": "Hades",
+      "eventType": "news",
+      "coreFact": "hades-2|patch|1.1",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 6,
+      "relatedPreviousEventKey": "hades-2|release|date",
+      "url": "https://news.example/hades-2-patch-notes",
+      "status": "meaningful_update",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "silksong|sales|5m",
+      "subject": "",
+      "franchise": "Hollow Knight",
+      "eventType": "news",
+      "coreFact": "silksong|sales|5m",
+      "importance": 9,
+      "newsworthiness": 9,
+      "digestFit": 8,
+      "relatedPreviousEventKey": "silksong|launch|reviews",
+      "url": "https://news.example/silksong-sales-5m",
+      "status": "meaningful_update",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "witcher-4|trailer|gameplay",
+      "subject": "",
+      "franchise": "The Witcher",
+      "eventType": "news",
+      "coreFact": "witcher-4|trailer|gameplay",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 9,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/witcher-4-trailer",
+      "status": "new",
+      "eventDate": null
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "hades-2|patch|1.1",
+      "subject": "",
+      "franchise": "Hades",
+      "eventType": "news",
+      "coreFact": "hades-2|patch|1.1",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 6,
+      "relatedPreviousEventKey": "hades-2|release|date",
+      "url": "https://news.example/hades-2-patch-notes",
+      "status": "meaningful_update",
+      "eventDate": null,
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "silksong|sales|5m",
+      "subject": "",
+      "franchise": "Hollow Knight",
+      "eventType": "news",
+      "coreFact": "silksong|sales|5m",
+      "importance": 9,
+      "newsworthiness": 9,
+      "digestFit": 8,
+      "relatedPreviousEventKey": "silksong|launch|reviews",
+      "url": "https://news.example/silksong-sales-5m",
+      "status": "meaningful_update",
+      "eventDate": null,
+      "articleIndices": [
+        1
+      ]
+    },
+    {
+      "eventKey": "witcher-4|trailer|gameplay",
+      "subject": "",
+      "franchise": "The Witcher",
+      "eventType": "news",
+      "coreFact": "witcher-4|trailer|gameplay",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 9,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/witcher-4-trailer",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        2
+      ]
+    }
+  ]
+}

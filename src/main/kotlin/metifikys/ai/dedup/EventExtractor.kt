@@ -49,6 +49,29 @@ sealed class ExtractOutcome {
 }
 
 /**
+ * A shortlist item Step 1 post-processing removed, and why ([reason] is one of the constants; the
+ * ranker's carries its own detail). Keyed by [url]: event keys are the model's and unstable.
+ */
+data class Step1Drop(val url: String, val eventKey: String, val reason: String) {
+    companion object {
+        const val HALLUCINATED_URL = "hallucinated_url"
+        const val COOLDOWN = "cooldown"
+        const val MAX_POSTS_PER_EVENT = "max_posts_per_event"
+        const val RANKER = "ranker"
+        const val AFFINITY = "affinity"
+    }
+}
+
+/** [EventExtractor.evaluate]'s output: the result the digest would use, plus what was dropped. */
+data class Step1Evaluation(
+    val result: ExtractionResult,
+    val drops: List<Step1Drop>,
+    /** Article → event membership, for the `event_articles` rows (`storyIntel`). */
+    val members: List<EventMembership.Member>,
+    val evaluatedAt: LocalDateTime
+)
+
+/**
  * Step 1 of the two-step dedup pipeline.
  *
  * Calls an OpenAI-compatible chat.completions endpoint in JSON mode with:
@@ -71,7 +94,9 @@ class EventExtractor(
     private val alternateOpenAI: LlmClient? = null,
     private val requestCounter: AtomicLong = AtomicLong(0),
     /** With `enabled`, every Step 1 result is also recorded as story clusters (`event_articles`). */
-    private val storyIntel: StoryIntelConfig = StoryIntelConfig()
+    private val storyIntel: StoryIntelConfig = StoryIntelConfig(),
+    /** "Now" of the post-processing (cooldown, posts cap, anti-bubble, row stamps); golden tests pin it. */
+    private val clock: () -> LocalDateTime = LocalDateTime::now
 ) {
 
     companion object {
@@ -252,56 +277,59 @@ class EventExtractor(
         raw: String,
         coveredRows: List<CoveredEventRow>?
     ): ExtractionResult? {
+        val evaluation = evaluate(category, cat, articles, raw, coveredRows) ?: return null
+        saveRejected(category, evaluation)
+        if (storyIntel.enabled) recordEventArticles(category, evaluation.members, evaluation.evaluatedAt)
+        return evaluation.result
+    }
+
+    /**
+     * Step 1 post-processing of [raw] without any writes: parse, URL filter, `eventDate` guard,
+     * cooldown, posts-per-event cap, ranker — and, with [withAudience], the affinity term and the
+     * anti-bubble pick (both only read the DB). Null when [raw] does not parse. The sync and the
+     * batch path go through [postProcess], which adds the writes (rejected events, story
+     * clusters); golden tests and shadow runs call this directly, so another model's output is
+     * judged by exactly the same code without touching the tables. [tag] prefixes the log lines.
+     */
+    fun evaluate(
+        category: String,
+        cat: CategoryConfig,
+        articles: List<Article>,
+        raw: String,
+        coveredRows: List<CoveredEventRow>?,
+        withAudience: Boolean = true,
+        tag: String = "[Category:$category]"
+    ): Step1Evaluation? {
         val parsed = try {
             json.decodeFromString<ExtractionResult>(raw)
         } catch (e: Exception) {
             logger.warn(e) {
-                "[Category:$category][Dedup] Step 1 JSON parse failed. Raw (truncated): ${raw.take(500)}"
+                "$tag[Dedup] Step 1 JSON parse failed. Raw (truncated): ${raw.take(500)}"
             }
             return null
         }
 
-        val now = LocalDateTime.now()
-        val rejectedItems = parsed.extractions.filter { it.status == "rejected" || it.status == "duplicate" }
-        if (rejectedItems.isNotEmpty()) {
-            db.saveRejectedEvents(rejectedItems.map { item ->
-                RejectedEventRow(
-                    category = category,
-                    eventKey = item.eventKey,
-                    subject = item.subject,
-                    franchise = item.franchise,
-                    eventType = item.eventType,
-                    coreFact = item.coreFact,
-                    importance = item.importance,
-                    newsworthiness = item.newsworthiness,
-                    digestFit = item.digestFit,
-                    url = item.url,
-                    status = item.status,
-                    relatedPreviousEventKey = item.relatedPreviousEventKey,
-                    articleIndex = item.articleIndex,
-                    extractedAt = now
-                )
-            })
-            logger.debug { "[Category:$category][Dedup] saved ${rejectedItems.size} rejected/duplicate event(s) for prompt tuning" }
-        }
+        val now = clock()
+        val drops = mutableListOf<Step1Drop>()
+        var members: List<EventMembership.Member> = emptyList()
 
         val allowedUrls = articles.map { it.link }.toSet()
         val urlFilteredShortlist = parsed.shortlist.filter { item ->
             val ok = item.url in allowedUrls
             if (!ok) {
                 logger.warn {
-                    "[Category:$category][Dedup] Dropping shortlist item with hallucinated URL '${item.url}' (event_key=${item.eventKey})"
+                    "$tag[Dedup] Dropping shortlist item with hallucinated URL '${item.url}' (event_key=${item.eventKey})"
                 }
+                drops += Step1Drop(item.url, item.eventKey, Step1Drop.HALLUCINATED_URL)
             }
             ok
-        }.map { item -> guardEventDate(category, item, articles) }
+        }.map { item -> guardEventDate(tag, item, articles) }
             // `lane` is code's field (the anti-bubble pick below), never the model's.
             .map { item -> if (item.lane == null) item else item.copy(lane = null) }
             .let { list ->
                 // Article → event, resolved once while `articles` is still the prompt's list: the
                 // shortlist carries its sources to delivery, and (storyIntel) the clusters are stored.
-                val members = EventMembership.resolve(parsed.extractions, list, articles)
-                if (storyIntel.enabled) recordEventArticles(category, members, now)
+                members = EventMembership.resolve(parsed.extractions, list, articles)
                 list.map { it.copy(sourceLinks = EventMembership.sourceLinks(it, members, articles)) }
             }
 
@@ -314,15 +342,18 @@ class EventExtractor(
                 category = category,
                 shortlist = urlFilteredShortlist,
                 coveredRows = effectiveCoveredRows,
-                config = digestConfig
+                config = digestConfig,
+                now = now,
+                tag = tag
             )
             if (droppedByCooldown.isNotEmpty()) {
                 logger.info {
-                    "[Category:$category][Dedup] meaningful_update cooldown dropped=${droppedByCooldown.size}: " +
+                    "$tag[Dedup] meaningful_update cooldown dropped=${droppedByCooldown.size}: " +
                         droppedByCooldown.joinToString { drop ->
                             "${drop.item.eventKey}<-${drop.previous.eventKey}@${drop.minutesSince}m"
                         }
                 }
+                droppedByCooldown.forEach { drops += Step1Drop(it.item.url, it.item.eventKey, Step1Drop.COOLDOWN) }
             }
             kept
         } else {
@@ -330,7 +361,10 @@ class EventExtractor(
         }
 
         val cappedShortlist = if (digestConfig?.maxPostsPerEvent != null) {
-            applyPostsPerEventCap(category, cooldownFilteredShortlist, digestConfig)
+            applyPostsPerEventCap(category, cooldownFilteredShortlist, digestConfig, now, tag).also { kept ->
+                cooldownFilteredShortlist.filter { it !in kept }
+                    .forEach { drops += Step1Drop(it.url, it.eventKey, Step1Drop.MAX_POSTS_PER_EVENT) }
+            }
         } else {
             cooldownFilteredShortlist
         }
@@ -340,32 +374,75 @@ class EventExtractor(
             if (ranked.dropped.isNotEmpty()) {
                 val byReason = ranked.dropped.groupingBy { it.reason.substringBefore(" ") }.eachCount()
                 logger.info {
-                    "[Category:$category][Ranker] kept=${ranked.kept.size}, dropped=${ranked.dropped.size}, " +
+                    "$tag[Ranker] kept=${ranked.kept.size}, dropped=${ranked.dropped.size}, " +
                         "franchiseConcentration=${"%.2f".format(ranked.franchiseConcentration())}, " +
                         "dropReasons=$byReason"
                 }
                 for (d in ranked.dropped) {
-                    logger.debug { "[Category:$category][Ranker] drop ${d.item.eventKey}: ${d.reason}" }
+                    logger.debug { "$tag[Ranker] drop ${d.item.eventKey}: ${d.reason}" }
                 }
             } else {
                 logger.info {
-                    "[Category:$category][Ranker] kept=${ranked.kept.size} (no drops), " +
+                    "$tag[Ranker] kept=${ranked.kept.size} (no drops), " +
                         "franchiseConcentration=${"%.2f".format(ranked.franchiseConcentration())}"
                 }
             }
-            val kept = applyAffinity(category, cappedShortlist, ranked, digestConfig)
-            applyAntiBubble(category, cappedShortlist, kept, ranked, digestConfig, now)
+            val final = if (withAudience) {
+                val kept = applyAffinity(category, cappedShortlist, ranked, digestConfig)
+                applyAntiBubble(category, cappedShortlist, kept, ranked, digestConfig, now)
+            } else {
+                ranked.kept
+            }
+            val finalIds = final.map { it.eventKey to it.url }.toSet()
+            val rankerReasons = ranked.dropped.associate { (it.item.eventKey to it.item.url) to it.reason }
+            for (item in cappedShortlist) {
+                val id = item.eventKey to item.url
+                if (id in finalIds) continue
+                val reason = rankerReasons[id]?.let { "${Step1Drop.RANKER}: $it" } ?: Step1Drop.AFFINITY
+                drops += Step1Drop(item.url, item.eventKey, reason)
+            }
+            final
         } else {
             cappedShortlist
         }
 
         val statuses = parsed.extractions.groupingBy { it.status }.eachCount()
         logger.info {
-            "[Category:$category][Dedup] Step 1: extracted=${parsed.extractions.size}, " +
+            "$tag[Dedup] Step 1: extracted=${parsed.extractions.size}, " +
                 "shortlisted=${finalShortlist.size}, byStatus=$statuses"
         }
 
-        return ExtractionResult(extractions = parsed.extractions, shortlist = finalShortlist)
+        return Step1Evaluation(
+            result = ExtractionResult(extractions = parsed.extractions, shortlist = finalShortlist),
+            drops = drops,
+            members = members,
+            evaluatedAt = now
+        )
+    }
+
+    /** The model's `rejected` / `duplicate` decisions, kept for prompt tuning (`rejected_events`). */
+    private fun saveRejected(category: String, evaluation: Step1Evaluation) {
+        val rejectedItems = evaluation.result.extractions.filter { it.status == "rejected" || it.status == "duplicate" }
+        if (rejectedItems.isEmpty()) return
+        db.saveRejectedEvents(rejectedItems.map { item ->
+            RejectedEventRow(
+                category = category,
+                eventKey = item.eventKey,
+                subject = item.subject,
+                franchise = item.franchise,
+                eventType = item.eventType,
+                coreFact = item.coreFact,
+                importance = item.importance,
+                newsworthiness = item.newsworthiness,
+                digestFit = item.digestFit,
+                url = item.url,
+                status = item.status,
+                relatedPreviousEventKey = item.relatedPreviousEventKey,
+                articleIndex = item.articleIndex,
+                extractedAt = evaluation.evaluatedAt
+            )
+        })
+        logger.debug { "[Category:$category][Dedup] saved ${rejectedItems.size} rejected/duplicate event(s) for prompt tuning" }
     }
 
     /**
@@ -527,12 +604,12 @@ class EventExtractor(
      * AND its year must appear in the text of the item's source articles; otherwise the field is
      * nulled — a story without a date is fine, a story with an invented one is not.
      */
-    private fun guardEventDate(category: String, item: ShortlistItem, articles: List<Article>): ShortlistItem {
+    private fun guardEventDate(tag: String, item: ShortlistItem, articles: List<Article>): ShortlistItem {
         val raw = item.eventDate ?: return item
         val normalized = TrackerDates.normalize(raw)
         val year = normalized?.let { TrackerDates.yearOf(it) }
         if (normalized == null || year == null) {
-            logger.debug { "[Category:$category][Dedup] eventDate '$raw' for ${item.eventKey} is not a known form — dropped" }
+            logger.debug { "$tag[Dedup] eventDate '$raw' for ${item.eventKey} is not a known form — dropped" }
             return item.copy(eventDate = null)
         }
         val sourceLinks = metifikys.ai.PromptBuilder.sourceLinksOf(item, articles).toSet()
@@ -542,7 +619,7 @@ class EventExtractor(
             yearText in a.title || yearText in a.description || yearText in (a.summary ?: "")
         }
         if (!grounded) {
-            logger.info { "[Category:$category][Dedup] eventDate '$raw' for ${item.eventKey}: year $year not in the article text — dropped" }
+            logger.info { "$tag[Dedup] eventDate '$raw' for ${item.eventKey}: year $year not in the article text — dropped" }
             return item.copy(eventDate = null)
         }
         return if (normalized == raw) item else item.copy(eventDate = normalized)
@@ -559,7 +636,8 @@ class EventExtractor(
         category: String,
         shortlist: List<ShortlistItem>,
         config: DigestConfig,
-        now: LocalDateTime = LocalDateTime.now()
+        now: LocalDateTime,
+        tag: String
     ): List<ShortlistItem> {
         val cap = config.maxPostsPerEvent ?: return shortlist
         val updates = shortlist.filter { it.status == "meaningful_update" }
@@ -568,7 +646,7 @@ class EventExtractor(
         val counts = try {
             db.countDigestPostsByEventKeys(category, keys, now.minusDays(config.updateWindowDays))
         } catch (e: Exception) {
-            logger.warn(e) { "[Category:$category][Ranker] maxPostsPerEvent lookup failed — cap not applied this run" }
+            logger.warn(e) { "$tag[Ranker] maxPostsPerEvent lookup failed — cap not applied this run" }
             return shortlist
         }
         return shortlist.filter { item ->
@@ -577,7 +655,7 @@ class EventExtractor(
             val keep = posts < cap
             if (!keep) {
                 logger.info {
-                    "[Category:$category][Ranker] drop ${item.eventKey}: maxPostsPerEvent=$cap reached " +
+                    "$tag[Ranker] drop ${item.eventKey}: maxPostsPerEvent=$cap reached " +
                         "($posts posts in ${config.updateWindowDays} days)"
                 }
             }
@@ -599,7 +677,8 @@ class EventExtractor(
         shortlist: List<ShortlistItem>,
         coveredRows: List<CoveredEventRow>,
         config: DigestConfig,
-        now: LocalDateTime = LocalDateTime.now()
+        now: LocalDateTime,
+        tag: String
     ): Pair<List<ShortlistItem>, List<CooldownDrop>> {
         if (config.meaningfulUpdateCooldownMinutes <= 0) return shortlist to emptyList()
 
@@ -615,7 +694,7 @@ class EventExtractor(
                 db.fetchCoveredEventsByKeys(category, missingKeys, since).forEach { coveredByKey.putIfAbsent(it.eventKey, it) }
             } catch (e: Exception) {
                 logger.warn(e) {
-                    "[Category:$category][Dedup] cooldown lookup of ${missingKeys.size} key(s) outside the prompt context failed — " +
+                    "$tag[Dedup] cooldown lookup of ${missingKeys.size} key(s) outside the prompt context failed — " +
                         "checking against the context only"
                 }
             }

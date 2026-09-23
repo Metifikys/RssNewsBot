@@ -106,44 +106,9 @@ class DigestDeliverer(
         val articleByLink = resolvedArticles.associateBy { it.link }
         val allArticleLinks = resolvedArticles.map { it.link }.toSet()
 
-        // A topic is *valid* only if it carries at least one whitelisted (in-set) article URL.
-        // `hadValidTopic` distinguishes the two ways `topics` can end up empty: dropped as
-        // duplicates of a prior digest (valid, already delivered → PROCESSED) vs. no valid
-        // topic at all (nothing was ever delivered → UNPROCESSED for retry). See BUG-003.
-        var hadValidTopic = false
-        val topics = TopicFormatter.splitTopics(summary)
-            .map { TopicFormatter.replaceSourceLabel(it, articleByLink) }
-            .map { TopicFormatter.applyStrictLayout(it) }
-            .filter { topic ->
-                val topicUrls = TopicFormatter.extractUrls(topic)
-                // BUG-011: every URL must be in the current article set.
-                // Drops prompt-injection payloads that coax the LLM into emitting attacker URLs.
-                val foreignUrls = topicUrls - allArticleLinks
-                if (foreignUrls.isNotEmpty()) {
-                    logger.warn {
-                        "[Category:$categoryName] Dropping topic with non-whitelisted URL(s) $foreignUrls " +
-                            "— possible prompt injection."
-                    }
-                    return@filter false
-                }
-                // BUG-011 (bare-URL bypass): extractUrls only sees Markdown [label](url) links, so an
-                // injected *bare* URL (https://evil.example with no markdown) slips past the whitelist
-                // above. Strip the markdown links, then reject any remaining http(s):// in the topic.
-                if (BARE_URL_SCHEME.containsMatchIn(TopicFormatter.MARKDOWN_LINK.replace(topic, " "))) {
-                    logger.warn {
-                        "[Category:$categoryName] Dropping topic with a bare (non-markdown) URL — possible prompt injection."
-                    }
-                    return@filter false
-                }
-                // BUG-003: a digest bullet with no source link is malformed — drop it rather
-                // than publish a linkless topic (the old code let these through).
-                if (topicUrls.isEmpty()) {
-                    logger.warn { "[Category:$categoryName] Dropping topic with no source URL (BUG-003)." }
-                    return@filter false
-                }
-                hadValidTopic = true
-                topicUrls.any { it !in previousUrls }
-            }
+        val prepared = prepareTopics(categoryName, summary, resolvedArticles, previousUrls)
+        val topics = prepared.topics
+        val hadValidTopic = prepared.hadValidTopic
 
         logger.debug { "[Category:$categoryName]$channelId $topics" }
 
@@ -394,6 +359,87 @@ class DigestDeliverer(
                         (if (unsentEventKeys.isEmpty()) "." else ", ${unsentEventKeys.size} event(s) left uncovered for retry: $unsentEventKeys")
                 }
             }
+        }
+    }
+
+    /**
+     * [prepareTopics]' output. [dropped] counts the topics removed by the URL whitelist, by reason
+     * (`foreign_url`, `bare_url`, `no_url`); [duplicates] those whose every link was in a recent digest.
+     */
+    data class PreparedTopics(
+        val topics: List<String>,
+        /**
+         * A topic is *valid* only if it carries at least one whitelisted (in-set) article URL. This
+         * tells apart the two ways [topics] can end up empty: dropped as duplicates of a prior digest
+         * (valid, already delivered → PROCESSED) vs. no valid topic at all (nothing was ever
+         * delivered → UNPROCESSED for retry). See BUG-003.
+         */
+        val hadValidTopic: Boolean,
+        val dropped: Map<String, Int> = emptyMap(),
+        val duplicates: Int = 0
+    )
+
+    companion object {
+        const val DROP_FOREIGN_URL = "foreign_url"
+        const val DROP_BARE_URL = "bare_url"
+        const val DROP_NO_URL = "no_url"
+
+        /**
+         * The pure half of [deliver]: splits a render [summary] into topics, relabels and lays them
+         * out, and applies the URL whitelist against [articles] and the [previousUrls] repeat check.
+         * No DB, no Telegram — golden tests, shadow renders and the fact checker see exactly the
+         * topics delivery would post.
+         */
+        fun prepareTopics(
+            categoryName: String,
+            summary: String,
+            articles: List<Article>,
+            previousUrls: Set<String> = emptySet()
+        ): PreparedTopics {
+            val articleByLink = articles.associateBy { it.link }
+            val allArticleLinks = articleByLink.keys
+            var hadValidTopic = false
+            var duplicates = 0
+            val dropped = mutableMapOf<String, Int>()
+            val topics = TopicFormatter.splitTopics(summary)
+                .map { TopicFormatter.replaceSourceLabel(it, articleByLink) }
+                .map { TopicFormatter.applyStrictLayout(it) }
+                .filter { topic ->
+                    val topicUrls = TopicFormatter.extractUrls(topic)
+                    // BUG-011: every URL must be in the current article set.
+                    // Drops prompt-injection payloads that coax the LLM into emitting attacker URLs.
+                    val foreignUrls = topicUrls - allArticleLinks
+                    if (foreignUrls.isNotEmpty()) {
+                        logger.warn {
+                            "[Category:$categoryName] Dropping topic with non-whitelisted URL(s) $foreignUrls " +
+                                "— possible prompt injection."
+                        }
+                        dropped.merge(DROP_FOREIGN_URL, 1, Int::plus)
+                        return@filter false
+                    }
+                    // BUG-011 (bare-URL bypass): extractUrls only sees Markdown [label](url) links, so an
+                    // injected *bare* URL (https://evil.example with no markdown) slips past the whitelist
+                    // above. Strip the markdown links, then reject any remaining http(s):// in the topic.
+                    if (BARE_URL_SCHEME.containsMatchIn(TopicFormatter.MARKDOWN_LINK.replace(topic, " "))) {
+                        logger.warn {
+                            "[Category:$categoryName] Dropping topic with a bare (non-markdown) URL — possible prompt injection."
+                        }
+                        dropped.merge(DROP_BARE_URL, 1, Int::plus)
+                        return@filter false
+                    }
+                    // BUG-003: a digest bullet with no source link is malformed — drop it rather
+                    // than publish a linkless topic (the old code let these through).
+                    if (topicUrls.isEmpty()) {
+                        logger.warn { "[Category:$categoryName] Dropping topic with no source URL (BUG-003)." }
+                        dropped.merge(DROP_NO_URL, 1, Int::plus)
+                        return@filter false
+                    }
+                    hadValidTopic = true
+                    val fresh = topicUrls.any { it !in previousUrls }
+                    if (!fresh) duplicates++
+                    fresh
+                }
+            return PreparedTopics(topics, hadValidTopic, dropped, duplicates)
         }
     }
 

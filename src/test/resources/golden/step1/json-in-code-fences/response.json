@@ -1,0 +1,72 @@
+```json
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "ps6|devkits|rumor",
+      "subject": "",
+      "franchise": "PlayStation",
+      "eventType": "news",
+      "coreFact": "ps6|devkits|rumor",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/ps6-rumor",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "xbox|price|increase",
+      "subject": "",
+      "franchise": "Xbox",
+      "eventType": "news",
+      "coreFact": "xbox|price|increase",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/xbox-price",
+      "status": "new",
+      "eventDate": null
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "ps6|devkits|rumor",
+      "subject": "",
+      "franchise": "PlayStation",
+      "eventType": "news",
+      "coreFact": "ps6|devkits|rumor",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/ps6-rumor",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "xbox|price|increase",
+      "subject": "",
+      "franchise": "Xbox",
+      "eventType": "news",
+      "coreFact": "xbox|price|increase",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/xbox-price",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        1
+      ]
+    }
+  ]
+}
+```

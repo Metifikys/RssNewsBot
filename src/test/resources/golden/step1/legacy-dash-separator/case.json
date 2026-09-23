@@ -1,0 +1,27 @@
+{
+  "category": "games",
+  "now": "2026-09-20T12:00:00",
+  "emoji": "🎮",
+  "description": "Render output separated by standalone --- lines (the legacy prompt's separator, 146ea63) splits into topics; the topic carrying a bare injected URL is dropped.",
+  "articles": [
+    {
+      "title": "Ubisoft closes the Tencent subsidiary deal",
+      "link": "https://news.example/ubisoft-tencent-deal",
+      "description": "Ubisoft finalized the new subsidiary with Tencent, valued at 4 billion euros.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "EA lays off 300 people across studios",
+      "link": "https://news.example/ea-layoffs",
+      "description": "Electronic Arts confirmed 300 layoffs, mostly at Respawn.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "CD Projekt is hiring for Cyberpunk 2",
+      "link": "https://news.example/cdpr-hiring",
+      "description": "CD Projekt posted 40 openings for the Cyberpunk sequel.",
+      "pubDate": "2026-09-20T10:00:00"
+    }
+  ],
+  "covered": []
+}

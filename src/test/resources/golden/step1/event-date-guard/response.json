@@ -1,0 +1,134 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "metroid-prime-4|release|date",
+      "subject": "",
+      "franchise": "Metroid",
+      "eventType": "news",
+      "coreFact": "metroid-prime-4|release|date",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 9,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/metroid-prime-4-date",
+      "status": "new",
+      "eventDate": "2026-12-04"
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "kingdom-hearts-4|status|dev",
+      "subject": "",
+      "franchise": "Kingdom Hearts",
+      "eventType": "news",
+      "coreFact": "kingdom-hearts-4|status|dev",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/kingdom-hearts-4-window",
+      "status": "new",
+      "eventDate": "2027"
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "bioshock-4|reveal|spring",
+      "subject": "",
+      "franchise": "BioShock",
+      "eventType": "news",
+      "coreFact": "bioshock-4|reveal|spring",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/bioshock-4-spring",
+      "status": "new",
+      "eventDate": "next spring"
+    },
+    {
+      "articleIndex": 3,
+      "eventKey": "persona-6|release|window",
+      "subject": "",
+      "franchise": "Persona",
+      "eventType": "news",
+      "coreFact": "persona-6|release|window",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/persona-6-quarter",
+      "status": "new",
+      "eventDate": "2026-q3"
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "metroid-prime-4|release|date",
+      "subject": "",
+      "franchise": "Metroid",
+      "eventType": "news",
+      "coreFact": "metroid-prime-4|release|date",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 9,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/metroid-prime-4-date",
+      "status": "new",
+      "eventDate": "2026-12-04",
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "kingdom-hearts-4|status|dev",
+      "subject": "",
+      "franchise": "Kingdom Hearts",
+      "eventType": "news",
+      "coreFact": "kingdom-hearts-4|status|dev",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/kingdom-hearts-4-window",
+      "status": "new",
+      "eventDate": "2027",
+      "articleIndices": [
+        1
+      ]
+    },
+    {
+      "eventKey": "bioshock-4|reveal|spring",
+      "subject": "",
+      "franchise": "BioShock",
+      "eventType": "news",
+      "coreFact": "bioshock-4|reveal|spring",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/bioshock-4-spring",
+      "status": "new",
+      "eventDate": "next spring",
+      "articleIndices": [
+        2
+      ]
+    },
+    {
+      "eventKey": "persona-6|release|window",
+      "subject": "",
+      "franchise": "Persona",
+      "eventType": "news",
+      "coreFact": "persona-6|release|window",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/persona-6-quarter",
+      "status": "new",
+      "eventDate": "2026-q3",
+      "articleIndices": [
+        3
+      ]
+    }
+  ]
+}

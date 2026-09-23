@@ -1136,6 +1136,20 @@ invariants: Telegram-valid HTML, chunk and caption limits without split surrogat
 layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it locally with
 `PropTestConfig(seed = …)`.
 
+**Step 1 golden tests** (`Step1GoldenTest`, no network): each directory under
+`src/test/resources/golden/step1/` holds an input (`case.json`: articles, covered context, digest
+config, pinned `now`), a saved raw model answer (`response.json`) and the expected result
+(`expected.json`: shortlist by URL with status / scores / `eventDate` / source links, drops with
+their reason, rejected rows saved, legacy fallback). The answer is replayed through the real
+`EventExtractor` — prompt building, URL filter, `eventDate` guard, cooldown, posts cap, ranker — and
+an optional `render.txt` through the delivery's topic preparation (`expected-topics.json`).
+`GOLDEN_UPDATE=1` rewrites the expected files from the current code (review the diff). Two manual
+modes call a live model and are skipped in the suite: `GoldenRecordManualTest`
+(`GOLDEN_RECORD=<provider>:<model>` or `dry`, `REPLAY_DB=<copy of news.db>`, `GOLDEN_CATEGORY`) builds
+a case from one prod digest window; `GoldenRerecordManualTest` (`GOLDEN_RERECORD=<provider>:<model>`)
+re-asks every recorded case with the current prompt files, writes `response.<model>.<date>.json`
+next to the golden one and prints the shortlist Jaccard, status / score changes and new drops.
+
 ---
 
 ## Database schema

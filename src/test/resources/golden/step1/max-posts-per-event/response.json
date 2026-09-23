@@ -1,0 +1,102 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "gta-6|delay|new-date",
+      "subject": "",
+      "franchise": "GTA",
+      "eventType": "news",
+      "coreFact": "gta-6|delay|new-date",
+      "importance": 9,
+      "newsworthiness": 9,
+      "digestFit": 9,
+      "relatedPreviousEventKey": "gta-6|delay|2026",
+      "url": "https://news.example/gta-6-new-date",
+      "status": "meaningful_update",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "gta-6|trailer|3",
+      "subject": "",
+      "franchise": "GTA",
+      "eventType": "news",
+      "coreFact": "gta-6|trailer|3",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": "gta-6|trailer|2",
+      "url": "https://news.example/gta-6-trailer-3",
+      "status": "meaningful_update",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "nightreign|dlc|announce",
+      "subject": "",
+      "franchise": "Elden Ring",
+      "eventType": "news",
+      "coreFact": "nightreign|dlc|announce",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/elden-ring-nightreign-dlc",
+      "status": "new",
+      "eventDate": null
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "gta-6|delay|new-date",
+      "subject": "",
+      "franchise": "GTA",
+      "eventType": "news",
+      "coreFact": "gta-6|delay|new-date",
+      "importance": 9,
+      "newsworthiness": 9,
+      "digestFit": 9,
+      "relatedPreviousEventKey": "gta-6|delay|2026",
+      "url": "https://news.example/gta-6-new-date",
+      "status": "meaningful_update",
+      "eventDate": null,
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "gta-6|trailer|3",
+      "subject": "",
+      "franchise": "GTA",
+      "eventType": "news",
+      "coreFact": "gta-6|trailer|3",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": "gta-6|trailer|2",
+      "url": "https://news.example/gta-6-trailer-3",
+      "status": "meaningful_update",
+      "eventDate": null,
+      "articleIndices": [
+        1
+      ]
+    },
+    {
+      "eventKey": "nightreign|dlc|announce",
+      "subject": "",
+      "franchise": "Elden Ring",
+      "eventType": "news",
+      "coreFact": "nightreign|dlc|announce",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/elden-ring-nightreign-dlc",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        2
+      ]
+    }
+  ]
+}

@@ -1,0 +1,198 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "resident-evil|requiem|reveal",
+      "subject": "Resident Evil Requiem",
+      "franchise": "Resident Evil",
+      "eventType": "news",
+      "coreFact": "resident-evil|requiem|reveal",
+      "importance": 9,
+      "newsworthiness": 9,
+      "digestFit": 9,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/re9-reveal",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "resident-evil|re4-vr|update",
+      "subject": "Resident Evil 4 VR",
+      "franchise": "Resident Evil",
+      "eventType": "news",
+      "coreFact": "resident-evil|re4-vr|update",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/re4-vr-update",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "monster-hunter|wilds|expansion",
+      "subject": "Monster Hunter Wilds",
+      "franchise": "Monster Hunter",
+      "eventType": "news",
+      "coreFact": "monster-hunter|wilds|expansion",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/mh-wilds-expansion",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 3,
+      "eventKey": "itch|bundle|charity",
+      "subject": "charity bundle",
+      "franchise": "itch.io",
+      "eventType": "news",
+      "coreFact": "itch|bundle|charity",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 2,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/indie-bundle",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 4,
+      "eventKey": "pokemon|legends-za|sales",
+      "subject": "Pokémon Legends Z-A",
+      "franchise": "Pokémon",
+      "eventType": "news",
+      "coreFact": "pokemon|legends-za|sales",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 2,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/pokemon-legends-za",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 5,
+      "eventKey": "gamescom|attendance|record",
+      "subject": "gamescom",
+      "franchise": "gamescom",
+      "eventType": "news",
+      "coreFact": "gamescom|attendance|record",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/gamescom-attendance",
+      "status": "new",
+      "eventDate": null
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "resident-evil|requiem|reveal",
+      "subject": "Resident Evil Requiem",
+      "franchise": "Resident Evil",
+      "eventType": "news",
+      "coreFact": "resident-evil|requiem|reveal",
+      "importance": 9,
+      "newsworthiness": 9,
+      "digestFit": 9,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/re9-reveal",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "resident-evil|re4-vr|update",
+      "subject": "Resident Evil 4 VR",
+      "franchise": "Resident Evil",
+      "eventType": "news",
+      "coreFact": "resident-evil|re4-vr|update",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/re4-vr-update",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        1
+      ]
+    },
+    {
+      "eventKey": "monster-hunter|wilds|expansion",
+      "subject": "Monster Hunter Wilds",
+      "franchise": "Monster Hunter",
+      "eventType": "news",
+      "coreFact": "monster-hunter|wilds|expansion",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/mh-wilds-expansion",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        2
+      ]
+    },
+    {
+      "eventKey": "itch|bundle|charity",
+      "subject": "charity bundle",
+      "franchise": "itch.io",
+      "eventType": "news",
+      "coreFact": "itch|bundle|charity",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 2,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/indie-bundle",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        3
+      ]
+    },
+    {
+      "eventKey": "pokemon|legends-za|sales",
+      "subject": "Pokémon Legends Z-A",
+      "franchise": "Pokémon",
+      "eventType": "news",
+      "coreFact": "pokemon|legends-za|sales",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 2,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/pokemon-legends-za",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        4
+      ]
+    },
+    {
+      "eventKey": "gamescom|attendance|record",
+      "subject": "gamescom",
+      "franchise": "gamescom",
+      "eventType": "news",
+      "coreFact": "gamescom|attendance|record",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/gamescom-attendance",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        5
+      ]
+    }
+  ]
+}

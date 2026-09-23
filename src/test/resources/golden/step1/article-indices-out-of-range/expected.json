@@ -1,0 +1,22 @@
+{
+  "fallbackToLegacy" : false,
+  "shortlist" : [ {
+    "url" : "https://news.example/valve-deckard-reveal",
+    "status" : "new",
+    "newsworthiness" : 8,
+    "digestFit" : 9,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/valve-deckard-reveal", "https://news.example/steam-frame-hands-on" ]
+  }, {
+    "url" : "https://news.example/switch-2-sales",
+    "status" : "new",
+    "newsworthiness" : 6,
+    "digestFit" : 7,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/switch-2-sales" ]
+  } ],
+  "drops" : [ ],
+  "rejectedSaved" : 1
+}

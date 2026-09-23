@@ -1,0 +1,25 @@
+{
+  "fallbackToLegacy" : false,
+  "shortlist" : [ {
+    "url" : "https://news.example/hollow-knight-silksong-dlc",
+    "status" : "new",
+    "newsworthiness" : 7,
+    "digestFit" : 8,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/hollow-knight-silksong-dlc" ]
+  }, {
+    "url" : "https://news.example/steam-next-fest-dates",
+    "status" : "new",
+    "newsworthiness" : 4,
+    "digestFit" : 5,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/steam-next-fest-dates" ]
+  } ],
+  "drops" : [ {
+    "url" : "https://evil.example/nintendo-direct-leak",
+    "reason" : "hallucinated_url"
+  } ],
+  "rejectedSaved" : 0
+}

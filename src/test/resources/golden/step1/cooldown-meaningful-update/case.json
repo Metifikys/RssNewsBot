@@ -1,0 +1,56 @@
+{
+  "category": "games",
+  "now": "2026-09-20T12:00:00",
+  "emoji": "🎮",
+  "description": "A meaningful_update 45 min after its story (cooldown 120) is dropped unless newsworthiness clears the override (8).",
+  "digest": {
+    "meaningfulUpdateCooldownMinutes": 120,
+    "newsworthinessOverride": 8
+  },
+  "articles": [
+    {
+      "title": "Hades II 1.1 patch notes are out",
+      "link": "https://news.example/hades-2-patch-notes",
+      "description": "Supergiant fixed a boss exploit an hour after the release-date announcement.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Silksong sells 5 million copies in a week",
+      "link": "https://news.example/silksong-sales-5m",
+      "description": "Team Cherry said Silksong passed 5 million sales, its fastest launch ever.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "The Witcher 4 gets a gameplay trailer",
+      "link": "https://news.example/witcher-4-trailer",
+      "description": "CD Projekt Red showed 8 minutes of gameplay of The Witcher 4.",
+      "pubDate": "2026-09-20T10:00:00"
+    }
+  ],
+  "covered": [
+    {
+      "eventKey": "hades-2|release|date",
+      "subject": "Hades II",
+      "franchise": "Hades",
+      "eventType": "release",
+      "coreFact": "Hades II 1.1 date announced",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "url": "https://news.example/hades-2-date",
+      "coveredAt": "2026-09-20T11:15:00"
+    },
+    {
+      "eventKey": "silksong|launch|reviews",
+      "subject": "Silksong",
+      "franchise": "Hollow Knight",
+      "eventType": "review",
+      "coreFact": "Silksong reviews are in",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "url": "https://news.example/silksong-reviews",
+      "coveredAt": "2026-09-20T11:30:00"
+    }
+  ]
+}

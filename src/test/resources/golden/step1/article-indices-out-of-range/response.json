@@ -1,0 +1,87 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "valve|steam-frame|reveal",
+      "subject": "",
+      "franchise": "Valve",
+      "eventType": "news",
+      "coreFact": "valve|steam-frame|reveal",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 9,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/valve-deckard-reveal",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "nintendo|switch-2|sales",
+      "subject": "",
+      "franchise": "Nintendo",
+      "eventType": "news",
+      "coreFact": "nintendo|switch-2|sales",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/switch-2-sales",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "valve|steam-frame|reveal",
+      "subject": "",
+      "franchise": "Valve",
+      "eventType": "news",
+      "coreFact": "valve|steam-frame|reveal",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 9,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/steam-frame-hands-on",
+      "status": "duplicate",
+      "eventDate": null
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "valve|steam-frame|reveal",
+      "subject": "",
+      "franchise": "Valve",
+      "eventType": "news",
+      "coreFact": "valve|steam-frame|reveal",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 9,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/valve-deckard-reveal",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        0,
+        7,
+        -1
+      ]
+    },
+    {
+      "eventKey": "nintendo|switch-2|sales",
+      "subject": "",
+      "franchise": "Nintendo",
+      "eventType": "news",
+      "coreFact": "nintendo|switch-2|sales",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/switch-2-sales",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        9
+      ]
+    }
+  ]
+}

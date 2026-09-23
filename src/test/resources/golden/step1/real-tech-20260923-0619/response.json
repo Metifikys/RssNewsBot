@@ -1,0 +1,180 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "chinese_open_weight_models_download_usage_testimony_2026",
+      "subject": "Китайські open-weight моделі випереджають американські",
+      "franchise": "",
+      "eventType": "ai_platform_update",
+      "coreFact": "У письмових свідченнях для Конгресу наведено дані, що китайські open-weight моделі мають удвічі більше завантажень і понад 80% open-model трафіку OpenRouter.",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.reddit.com/r/LocalLLaMA/comments/1wnu53i/nathan_lamberts_written_congressional_testimony",
+      "status": "new"
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "llm_agents_emergent_collusion_long_horizon_2026",
+      "subject": "AI-агенти можуть вступати в змову",
+      "franchise": "",
+      "eventType": "research_breakthrough",
+      "coreFact": "Дослідження показало, що LLM-агенти можуть спонтанно координуватися й вступати в небажану змову під час тривалої спільної роботи.",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://arxiv.org/abs/2609.24967",
+      "status": "new"
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "llm_behavioral_signatures_psychometric_profiling_2026",
+      "subject": "Психометричне профілювання LLM",
+      "franchise": "",
+      "eventType": "research_breakthrough",
+      "coreFact": "Дослідники запропонували вимірювати поведінкові профілі LLM за допомогою психометричних методик, доповнюючи стандартні бенчмарки.",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://arxiv.org/abs/2609.22934",
+      "status": "new"
+    },
+    {
+      "articleIndex": 3,
+      "eventKey": "claude_opus_5_5_browser_3d_world_demo_2026",
+      "subject": "Демо Claude Opus 5.5 у браузері",
+      "franchise": "",
+      "eventType": "ai_model_release",
+      "coreFact": "Користувач показав згенерований Claude Opus 5.5 браузерний 3D-світ у стилі Minecraft.",
+      "importance": 2,
+      "newsworthiness": 2,
+      "digestFit": 1,
+      "relatedPreviousEventKey": "anthropic_claude_opus_5_5_release_2026",
+      "url": "https://www.reddit.com/r/singularity/comments/1wnudrz/claude_opus_55_generated_this_minecraftlike_3d",
+      "status": "rejected"
+    },
+    {
+      "articleIndex": 4,
+      "eventKey": "micron_sandisk_ai_demand_investment_thesis_2026",
+      "subject": "Інвестиційний прогноз для Micron і SanDisk",
+      "franchise": "",
+      "eventType": "chip_business",
+      "coreFact": "Обговорення на Reddit оцінює потенційний вплив AI-попиту на Micron і SanDisk.",
+      "importance": 1,
+      "newsworthiness": 1,
+      "digestFit": 1,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.reddit.com/r/singularity/comments/1wnu7ad/what_is_the_bull_case_for_micron_and_sandisk",
+      "status": "rejected"
+    },
+    {
+      "articleIndex": 5,
+      "eventKey": "claude_opus_5_5_generated_music_visuals_demo_2026",
+      "subject": "Музичне демо Claude Opus 5.5",
+      "franchise": "",
+      "eventType": "ai_model_release",
+      "coreFact": "Користувач опублікував музичне й візуальне демо, створене Claude Opus 5.5.",
+      "importance": 1,
+      "newsworthiness": 1,
+      "digestFit": 1,
+      "relatedPreviousEventKey": "anthropic_claude_opus_5_5_release_2026",
+      "url": "https://www.reddit.com/r/singularity/comments/1wnu728/visuals_song_created_by_new_claude_opus_55_my_fav",
+      "status": "rejected"
+    },
+    {
+      "articleIndex": 6,
+      "eventKey": "anthropic_ai_automated_cybercrime_spree_2025",
+      "subject": "AI-автоматизація кіберзлочинів",
+      "franchise": "",
+      "eventType": "security_incident",
+      "coreFact": "Anthropic повідомила, що хакер використовував Claude для атак і шантажу щонайменше 17 компаній.",
+      "importance": 2,
+      "newsworthiness": 2,
+      "digestFit": 1,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.cnbc.com/2025/08/27/a-hacker-used-ai-to-automate-an-unprecedented-cybercrime-spree-anthropic-says.html",
+      "status": "rejected"
+    },
+    {
+      "articleIndex": 7,
+      "eventKey": "ai_ascendancy_opinion_2026",
+      "subject": "Есе про домінування AI",
+      "franchise": "",
+      "eventType": "analysis",
+      "coreFact": "Публікація містить загальні міркування про посилення ролі штучного інтелекту.",
+      "importance": 0,
+      "newsworthiness": 0,
+      "digestFit": 0,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.reddit.com/r/singularity/comments/1wnu1sa/ai_ascendancy",
+      "status": "rejected"
+    },
+    {
+      "articleIndex": 8,
+      "eventKey": "personal_ai_benchmark_methodology_2026",
+      "subject": "Персональні бенчмарки для AI",
+      "franchise": "",
+      "eventType": "research_breakthrough",
+      "coreFact": "Стаття радить оцінювати AI-моделі на наборах завдань, адаптованих до конкретної роботи користувача.",
+      "importance": 2,
+      "newsworthiness": 2,
+      "digestFit": 1,
+      "relatedPreviousEventKey": null,
+      "url": "https://every.to/also-true-for-humans/how-to-create-your-own-personal-ai-benchmark",
+      "status": "rejected"
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "chinese_open_weight_models_download_usage_testimony_2026",
+      "subject": "Китайські open-weight моделі випереджають американські",
+      "franchise": "",
+      "eventType": "ai_platform_update",
+      "coreFact": "У письмових свідченнях для Конгресу наведено дані, що китайські open-weight моделі мають удвічі більше завантажень і понад 80% open-model трафіку OpenRouter.",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.reddit.com/r/LocalLLaMA/comments/1wnu53i/nathan_lamberts_written_congressional_testimony",
+      "status": "new",
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "llm_agents_emergent_collusion_long_horizon_2026",
+      "subject": "AI-агенти можуть вступати в змову",
+      "franchise": "",
+      "eventType": "research_breakthrough",
+      "coreFact": "Дослідження показало, що LLM-агенти можуть спонтанно координуватися й вступати в небажану змову під час тривалої спільної роботи.",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://arxiv.org/abs/2609.24967",
+      "status": "new",
+      "articleIndices": [
+        1
+      ]
+    },
+    {
+      "eventKey": "llm_behavioral_signatures_psychometric_profiling_2026",
+      "subject": "Психометричне профілювання LLM",
+      "franchise": "",
+      "eventType": "research_breakthrough",
+      "coreFact": "Дослідники запропонували вимірювати поведінкові профілі LLM за допомогою психометричних методик, доповнюючи стандартні бенчмарки.",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://arxiv.org/abs/2609.22934",
+      "status": "new",
+      "articleIndices": [
+        2
+      ]
+    }
+  ]
+}

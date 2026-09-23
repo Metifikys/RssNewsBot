@@ -1,0 +1,30 @@
+{
+  "fallbackToLegacy" : false,
+  "shortlist" : [ {
+    "url" : "https://news.example/ubisoft-tencent-deal",
+    "status" : "new",
+    "newsworthiness" : 8,
+    "digestFit" : 8,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/ubisoft-tencent-deal" ]
+  }, {
+    "url" : "https://news.example/ea-layoffs",
+    "status" : "new",
+    "newsworthiness" : 7,
+    "digestFit" : 7,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/ea-layoffs" ]
+  }, {
+    "url" : "https://news.example/cdpr-hiring",
+    "status" : "new",
+    "newsworthiness" : 5,
+    "digestFit" : 6,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/cdpr-hiring" ]
+  } ],
+  "drops" : [ ],
+  "rejectedSaved" : 0
+}

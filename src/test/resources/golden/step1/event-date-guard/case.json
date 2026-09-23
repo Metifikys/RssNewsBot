@@ -1,0 +1,33 @@
+{
+  "category": "games",
+  "now": "2026-09-20T12:00:00",
+  "emoji": "🎮",
+  "description": "eventDate survives only in the known vocabulary AND with its year in the article text: a day is kept, a quarter is normalized, an invented year and free text are nulled.",
+  "articles": [
+    {
+      "title": "Metroid Prime 4 lands on December 4, 2026",
+      "link": "https://news.example/metroid-prime-4-date",
+      "description": "Nintendo dated Metroid Prime 4: Beyond for December 4, 2026 on Switch 2.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Kingdom Hearts 4 is still in development",
+      "link": "https://news.example/kingdom-hearts-4-window",
+      "description": "Square Enix says Kingdom Hearts 4 is progressing; no window was given.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "BioShock 4 aims for next spring",
+      "link": "https://news.example/bioshock-4-spring",
+      "description": "Cloud Chamber targets next spring for the reveal of BioShock 4.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Persona 6 dated for Q3 2026 in an investor deck",
+      "link": "https://news.example/persona-6-quarter",
+      "description": "Sega listed Persona 6 for the third quarter of 2026.",
+      "pubDate": "2026-09-20T10:00:00"
+    }
+  ],
+  "covered": []
+}

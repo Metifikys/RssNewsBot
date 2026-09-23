@@ -1,0 +1,27 @@
+{
+  "category": "games",
+  "now": "2026-09-20T12:00:00",
+  "emoji": "🎮",
+  "description": "articleIndices [0, 7, -1] against a 3-article batch: out-of-range indices are ignored, and the in-batch duplicate of the same event joins sourceLinks.",
+  "articles": [
+    {
+      "title": "Valve reveals the Steam Frame headset",
+      "link": "https://news.example/valve-deckard-reveal",
+      "description": "Valve announced its standalone VR headset, the Steam Frame.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Switch 2 passes 15 million units",
+      "link": "https://news.example/switch-2-sales",
+      "description": "Nintendo updated its hardware numbers: 15M Switch 2 sold.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Hands-on: Steam Frame is light and sharp",
+      "link": "https://news.example/steam-frame-hands-on",
+      "description": "Our first hour with Valve's new headset, the Steam Frame.",
+      "pubDate": "2026-09-20T10:00:00"
+    }
+  ],
+  "covered": []
+}

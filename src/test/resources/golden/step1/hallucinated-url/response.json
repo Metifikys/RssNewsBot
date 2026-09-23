@@ -1,0 +1,102 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "silksong|dlc|sea-of-sorrow",
+      "subject": "",
+      "franchise": "Hollow Knight",
+      "eventType": "news",
+      "coreFact": "silksong|dlc|sea-of-sorrow",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/hollow-knight-silksong-dlc",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "nintendo|direct|october",
+      "subject": "",
+      "franchise": "Nintendo",
+      "eventType": "news",
+      "coreFact": "nintendo|direct|october",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/nintendo-direct-october",
+      "status": "new",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "steam|next-fest|october",
+      "subject": "",
+      "franchise": "Steam",
+      "eventType": "news",
+      "coreFact": "steam|next-fest|october",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/steam-next-fest-dates",
+      "status": "new",
+      "eventDate": null
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "silksong|dlc|sea-of-sorrow",
+      "subject": "",
+      "franchise": "Hollow Knight",
+      "eventType": "news",
+      "coreFact": "silksong|dlc|sea-of-sorrow",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/hollow-knight-silksong-dlc",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "nintendo|direct|leak",
+      "subject": "",
+      "franchise": "Nintendo",
+      "eventType": "news",
+      "coreFact": "nintendo|direct|october",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://evil.example/nintendo-direct-leak",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        1
+      ]
+    },
+    {
+      "eventKey": "steam|next-fest|october",
+      "subject": "",
+      "franchise": "Steam",
+      "eventType": "news",
+      "coreFact": "steam|next-fest|october",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/steam-next-fest-dates",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        2
+      ]
+    }
+  ]
+}

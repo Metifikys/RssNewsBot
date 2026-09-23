@@ -1,0 +1,15 @@
+{
+  "category": "games",
+  "now": "2026-09-20T12:00:00",
+  "emoji": "🎮",
+  "description": "Prose instead of JSON → parse failure → legacy fallback, nothing saved.",
+  "articles": [
+    {
+      "title": "Tokyo Game Show 2026 schedule",
+      "link": "https://news.example/tgs-schedule",
+      "description": "The full TGS 2026 stream schedule is out.",
+      "pubDate": "2026-09-20T10:00:00"
+    }
+  ],
+  "covered": []
+}

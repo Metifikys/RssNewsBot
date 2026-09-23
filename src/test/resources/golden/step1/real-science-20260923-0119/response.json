@@ -1,0 +1,270 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "global_atmospheric_dust_decline_since_2003",
+      "subject": "Глобальний рівень атмосферного пилу знижується",
+      "franchise": "climate",
+      "eventType": "climate_research",
+      "coreFact": "Супутникові спостереження та кліматичне моделювання показують, що глобальний рівень атмосферного пилу знизився від 2003 року, попри окремі потужні пилові бурі.",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.nature.com/articles/d41586-026-02979-3",
+      "status": "new"
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "liquid_helium_cooled_quantum_electron_microscope_gaia",
+      "subject": "Електронний мікроскоп із охолодженням рідким гелієм",
+      "franchise": "physics",
+      "eventType": "engineering_breakthrough",
+      "coreFact": "Мікроскоп GAIA з охолодженням рідким гелієм має забезпечити тривале атомарне зображення поблизу абсолютного нуля, щоб спостерігати квантові властивості матеріалів.",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.nature.com/articles/d41586-026-02942-2",
+      "status": "new"
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "nasa_spaceflight_decompression_thrombosis_risk_review_2026",
+      "subject": "Ризики декомпресійної хвороби та тромбозів у космосі",
+      "franchise": "space",
+      "eventType": "safety_risk",
+      "coreFact": "NASA зібрала експертну панель для оновлення заходів проти декомпресійної хвороби й венозних тромбозів під час майбутніх місячних і далекокосмічних місій.",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.nasa.gov/organizations/ochmo/risks-of-decompression-sickness-and-venous-thromboembolism-during-spaceflight-and-patent-foramen-ovale-implications",
+      "status": "new"
+    },
+    {
+      "articleIndex": 3,
+      "eventKey": "apod_triple_alignment_plane_iss_sun_2026",
+      "subject": "Потрійне вирівнювання літака, МКС і Сонця",
+      "franchise": "astronomy",
+      "eventType": "notable_image",
+      "coreFact": "Фотограф зафіксував рідкісне одночасне проходження літака й МКС перед диском Сонця; шанс випадкового вирівнювання оцінюють приблизно як 1 до 30 мільйонів.",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://science.nasa.gov/image-article/apod-2026-september-22-chance-triple-alignment-plane-space-station-sun",
+      "status": "new"
+    },
+    {
+      "articleIndex": 4,
+      "eventKey": "two_headed_diamondback_terrapin_cape_cod_2026",
+      "subject": "Двоголова черепаха в Кейп-Коді",
+      "franchise": "biology",
+      "eventType": "oddity",
+      "coreFact": "У Кейп-Коді знайшли рідкісну двоголову черепаху діамантової черепахи; така біцефалія виникає через неповне розділення ембріона, а вид має природоохоронний статус.",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.popsci.com/environment/tiny-two-headed-turtle-found-in-cape-cod",
+      "status": "new"
+    },
+    {
+      "articleIndex": 5,
+      "eventKey": "zero_knowledge_proofs_mathematics_research_2026",
+      "subject": "Нульове розголошення в математичних дослідженнях",
+      "franchise": "mathematics",
+      "eventType": "explainer",
+      "coreFact": "Матеріал пояснює, як докази з нульовим розголошенням дають змогу підтвердити правильність математичного результату без розкриття самого доказу; практичний інтерес пов’язаний із майбутньою криптографією.",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.scientificamerican.com/article/why-mathematicians-are-hiding-research-results-in-zero-knowledge-proofs",
+      "status": "new"
+    },
+    {
+      "articleIndex": 6,
+      "eventKey": "greenworks_prime_day_electric_yard_tools_sale_2026",
+      "subject": "Знижки на електричні садові інструменти Greenworks",
+      "franchise": "consumer_tech",
+      "eventType": "buying_guide",
+      "coreFact": "Матеріал рекламує знижки на садові інструменти Greenworks, але не містить наукового результату.",
+      "importance": 0,
+      "newsworthiness": 0,
+      "digestFit": 0,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.popsci.com/gear/early-prime-big-deal-days-greenworks-sale",
+      "status": "rejected"
+    },
+    {
+      "articleIndex": 7,
+      "eventKey": "lro_detects_largest_new_moon_crater_2026",
+      "subject": "Найбільший нещодавно утворений кратер на Місяці",
+      "franchise": "astronomy",
+      "eventType": "astronomy_discovery",
+      "coreFact": "LRO виявив кратер Макґетчін завширшки понад 200 метрів, утворений недавнім ударом; це повторне висвітлення вже відомого відкриття.",
+      "importance": 9,
+      "newsworthiness": 9,
+      "digestFit": 9,
+      "relatedPreviousEventKey": "lro_detects_largest_new_moon_crater_2026",
+      "url": "https://www.scientificamerican.com/article/scientists-discover-largest-new-impact-crater-in-the-solar-system-ever-on-our-moon",
+      "status": "duplicate"
+    },
+    {
+      "articleIndex": 8,
+      "eventKey": "morning_coffee_sleep_quality_caffeine_study",
+      "subject": "Кава вранці та якість сну",
+      "franchise": "medicine",
+      "eventType": "medical_research",
+      "coreFact": "Невелике дослідження припускає, що кофеїн може зменшувати глибокий сон навіть після ранкового вживання, але це не є клінічною рекомендацією.",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 4,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.popsci.com/health/morning-coffee-bad-sleep",
+      "status": "rejected"
+    },
+    {
+      "articleIndex": 9,
+      "eventKey": "fire_amoeba_eukaryote_heat_tolerance_record_63c",
+      "subject": "Амеба-рекордсменка витримує 63 °C",
+      "franchise": "biology",
+      "eventType": "biology_discovery",
+      "coreFact": "У Каліфорнії виявили амебу Incendiamoeba cascadensis, яка розмножується за 63 °C — новий рекорд теплостійкості серед відомих еукаріотів; це повторне висвітлення події.",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 9,
+      "relatedPreviousEventKey": "fire_amoeba_eukaryote_heat_tolerance_record_63c",
+      "url": "https://science.nasa.gov/science-research/planetary-science/nasa-funded-research-finds-complex-life-defying-record-heat",
+      "status": "duplicate"
+    },
+    {
+      "articleIndex": 10,
+      "eventKey": "fire_amoeba_eukaryote_heat_tolerance_record_63c",
+      "subject": "Амеба-рекордсменка витримує 63 °C",
+      "franchise": "biology",
+      "eventType": "biology_discovery",
+      "coreFact": "Амеба Incendiamoeba cascadensis розмножується за 63 °C і короткочасно витримує ще вищі температури; це повторне висвітлення вже відомого відкриття.",
+      "importance": 8,
+      "newsworthiness": 8,
+      "digestFit": 9,
+      "relatedPreviousEventKey": "fire_amoeba_eukaryote_heat_tolerance_record_63c",
+      "url": "https://science.nasa.gov/earth/nasa-funded-research-finds-complex-life-defying-record-heat",
+      "status": "duplicate"
+    },
+    {
+      "articleIndex": 11,
+      "eventKey": "trump_rejects_global_ai_regulation_un_address_2026",
+      "subject": "Трамп відкинув міжнародне регулювання ШІ",
+      "franchise": "politics",
+      "eventType": "policy_funding",
+      "coreFact": "Матеріал описує політичну заяву Дональда Трампа проти міжнародного регулювання ШІ, але не містить наукового результату.",
+      "importance": 0,
+      "newsworthiness": 0,
+      "digestFit": 0,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.scientificamerican.com/article/trump-rejects-ai-regulation-citing-parallels-with-climate-change-in-un-address",
+      "status": "rejected"
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "global_atmospheric_dust_decline_since_2003",
+      "subject": "Глобальний рівень атмосферного пилу знижується",
+      "franchise": "climate",
+      "eventType": "climate_research",
+      "coreFact": "Супутникові спостереження та кліматичне моделювання показують, що глобальний рівень атмосферного пилу знизився від 2003 року, попри окремі потужні пилові бурі.",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 8,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.nature.com/articles/d41586-026-02979-3",
+      "status": "new",
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "liquid_helium_cooled_quantum_electron_microscope_gaia",
+      "subject": "Електронний мікроскоп із охолодженням рідким гелієм",
+      "franchise": "physics",
+      "eventType": "engineering_breakthrough",
+      "coreFact": "Мікроскоп GAIA з охолодженням рідким гелієм має забезпечити тривале атомарне зображення поблизу абсолютного нуля, щоб спостерігати квантові властивості матеріалів.",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.nature.com/articles/d41586-026-02942-2",
+      "status": "new",
+      "articleIndices": [
+        1
+      ]
+    },
+    {
+      "eventKey": "nasa_spaceflight_decompression_thrombosis_risk_review_2026",
+      "subject": "Ризики декомпресійної хвороби та тромбозів у космосі",
+      "franchise": "space",
+      "eventType": "safety_risk",
+      "coreFact": "NASA зібрала експертну панель для оновлення заходів проти декомпресійної хвороби й венозних тромбозів під час майбутніх місячних і далекокосмічних місій.",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.nasa.gov/organizations/ochmo/risks-of-decompression-sickness-and-venous-thromboembolism-during-spaceflight-and-patent-foramen-ovale-implications",
+      "status": "new",
+      "articleIndices": [
+        2
+      ]
+    },
+    {
+      "eventKey": "apod_triple_alignment_plane_iss_sun_2026",
+      "subject": "Потрійне вирівнювання літака, МКС і Сонця",
+      "franchise": "astronomy",
+      "eventType": "notable_image",
+      "coreFact": "Фотограф зафіксував рідкісне одночасне проходження літака й МКС перед диском Сонця; шанс випадкового вирівнювання оцінюють приблизно як 1 до 30 мільйонів.",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 7,
+      "relatedPreviousEventKey": null,
+      "url": "https://science.nasa.gov/image-article/apod-2026-september-22-chance-triple-alignment-plane-space-station-sun",
+      "status": "new",
+      "articleIndices": [
+        3
+      ]
+    },
+    {
+      "eventKey": "two_headed_diamondback_terrapin_cape_cod_2026",
+      "subject": "Двоголова черепаха в Кейп-Коді",
+      "franchise": "biology",
+      "eventType": "oddity",
+      "coreFact": "У Кейп-Коді знайшли рідкісну двоголову черепаху діамантової черепахи; така біцефалія виникає через неповне розділення ембріона, а вид має природоохоронний статус.",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.popsci.com/environment/tiny-two-headed-turtle-found-in-cape-cod",
+      "status": "new",
+      "articleIndices": [
+        4
+      ]
+    },
+    {
+      "eventKey": "zero_knowledge_proofs_mathematics_research_2026",
+      "subject": "Нульове розголошення в математичних дослідженнях",
+      "franchise": "mathematics",
+      "eventType": "explainer",
+      "coreFact": "Матеріал пояснює, як докази з нульовим розголошенням дають змогу підтвердити правильність математичного результату без розкриття самого доказу; практичний інтерес пов’язаний із майбутньою криптографією.",
+      "importance": 5,
+      "newsworthiness": 5,
+      "digestFit": 5,
+      "relatedPreviousEventKey": null,
+      "url": "https://www.scientificamerican.com/article/why-mathematicians-are-hiding-research-results-in-zero-knowledge-proofs",
+      "status": "new",
+      "articleIndices": [
+        5
+      ]
+    }
+  ]
+}

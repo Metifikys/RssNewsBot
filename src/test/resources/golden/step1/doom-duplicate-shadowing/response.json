@@ -1,0 +1,102 @@
+{
+  "extractions": [
+    {
+      "articleIndex": 0,
+      "eventKey": "doom-the-dark-ages|crunch|response",
+      "subject": "",
+      "franchise": "DOOM",
+      "eventType": "news",
+      "coreFact": "doom-the-dark-ages|crunch|response",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 7,
+      "relatedPreviousEventKey": "doom-the-dark-ages|crunch|report",
+      "url": "https://news.example/doom-dark-ages-crunch-followup",
+      "status": "meaningful_update",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 1,
+      "eventKey": "doom-the-dark-ages|dlc|roadmap",
+      "subject": "",
+      "franchise": "DOOM",
+      "eventType": "news",
+      "coreFact": "doom-the-dark-ages|dlc|roadmap",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 8,
+      "relatedPreviousEventKey": "doom-the-dark-ages|dlc|tease",
+      "url": "https://news.example/doom-dark-ages-dlc",
+      "status": "meaningful_update",
+      "eventDate": null
+    },
+    {
+      "articleIndex": 2,
+      "eventKey": "nightdive|remaster|tease",
+      "subject": "",
+      "franchise": "Nightdive",
+      "eventType": "news",
+      "coreFact": "nightdive|remaster|tease",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/quake-remaster",
+      "status": "new",
+      "eventDate": null
+    }
+  ],
+  "shortlist": [
+    {
+      "eventKey": "doom-the-dark-ages|crunch|response",
+      "subject": "",
+      "franchise": "DOOM",
+      "eventType": "news",
+      "coreFact": "doom-the-dark-ages|crunch|response",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 7,
+      "relatedPreviousEventKey": "doom-the-dark-ages|crunch|report",
+      "url": "https://news.example/doom-dark-ages-crunch-followup",
+      "status": "meaningful_update",
+      "eventDate": null,
+      "articleIndices": [
+        0
+      ]
+    },
+    {
+      "eventKey": "doom-the-dark-ages|dlc|roadmap",
+      "subject": "",
+      "franchise": "DOOM",
+      "eventType": "news",
+      "coreFact": "doom-the-dark-ages|dlc|roadmap",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 8,
+      "relatedPreviousEventKey": "doom-the-dark-ages|dlc|tease",
+      "url": "https://news.example/doom-dark-ages-dlc",
+      "status": "meaningful_update",
+      "eventDate": null,
+      "articleIndices": [
+        1
+      ]
+    },
+    {
+      "eventKey": "nightdive|remaster|tease",
+      "subject": "",
+      "franchise": "Nightdive",
+      "eventType": "news",
+      "coreFact": "nightdive|remaster|tease",
+      "importance": 4,
+      "newsworthiness": 4,
+      "digestFit": 6,
+      "relatedPreviousEventKey": null,
+      "url": "https://news.example/quake-remaster",
+      "status": "new",
+      "eventDate": null,
+      "articleIndices": [
+        2
+      ]
+    }
+  ]
+}

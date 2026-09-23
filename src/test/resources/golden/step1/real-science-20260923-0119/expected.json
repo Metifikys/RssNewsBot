@@ -1,0 +1,54 @@
+{
+  "fallbackToLegacy" : false,
+  "shortlist" : [ {
+    "url" : "https://www.nature.com/articles/d41586-026-02979-3",
+    "status" : "new",
+    "newsworthiness" : 7,
+    "digestFit" : 8,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://www.nature.com/articles/d41586-026-02979-3" ]
+  }, {
+    "url" : "https://www.nature.com/articles/d41586-026-02942-2",
+    "status" : "new",
+    "newsworthiness" : 7,
+    "digestFit" : 7,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://www.nature.com/articles/d41586-026-02942-2" ]
+  }, {
+    "url" : "https://www.nasa.gov/organizations/ochmo/risks-of-decompression-sickness-and-venous-thromboembolism-during-spaceflight-and-patent-foramen-ovale-implications",
+    "status" : "new",
+    "newsworthiness" : 7,
+    "digestFit" : 6,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://www.nasa.gov/organizations/ochmo/risks-of-decompression-sickness-and-venous-thromboembolism-during-spaceflight-and-patent-foramen-ovale-implications" ]
+  }, {
+    "url" : "https://science.nasa.gov/image-article/apod-2026-september-22-chance-triple-alignment-plane-space-station-sun",
+    "status" : "new",
+    "newsworthiness" : 5,
+    "digestFit" : 7,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://science.nasa.gov/image-article/apod-2026-september-22-chance-triple-alignment-plane-space-station-sun" ]
+  }, {
+    "url" : "https://www.popsci.com/environment/tiny-two-headed-turtle-found-in-cape-cod",
+    "status" : "new",
+    "newsworthiness" : 5,
+    "digestFit" : 6,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://www.popsci.com/environment/tiny-two-headed-turtle-found-in-cape-cod" ]
+  }, {
+    "url" : "https://www.scientificamerican.com/article/why-mathematicians-are-hiding-research-results-in-zero-knowledge-proofs",
+    "status" : "new",
+    "newsworthiness" : 5,
+    "digestFit" : 5,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://www.scientificamerican.com/article/why-mathematicians-are-hiding-research-results-in-zero-knowledge-proofs" ]
+  } ],
+  "drops" : [ ],
+  "rejectedSaved" : 6
+}

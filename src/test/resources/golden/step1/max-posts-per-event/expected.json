@@ -1,0 +1,25 @@
+{
+  "fallbackToLegacy" : false,
+  "shortlist" : [ {
+    "url" : "https://news.example/gta-6-trailer-3",
+    "status" : "meaningful_update",
+    "newsworthiness" : 7,
+    "digestFit" : 8,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/gta-6-trailer-3" ]
+  }, {
+    "url" : "https://news.example/elden-ring-nightreign-dlc",
+    "status" : "new",
+    "newsworthiness" : 7,
+    "digestFit" : 8,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/elden-ring-nightreign-dlc" ]
+  } ],
+  "drops" : [ {
+    "url" : "https://news.example/gta-6-new-date",
+    "reason" : "max_posts_per_event"
+  } ],
+  "rejectedSaved" : 0
+}

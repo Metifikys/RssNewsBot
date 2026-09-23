@@ -1,0 +1,39 @@
+{
+  "fallbackToLegacy" : false,
+  "shortlist" : [ {
+    "url" : "https://news.example/re9-reveal",
+    "status" : "new",
+    "newsworthiness" : 9,
+    "digestFit" : 9,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/re9-reveal" ]
+  }, {
+    "url" : "https://news.example/mh-wilds-expansion",
+    "status" : "new",
+    "newsworthiness" : 7,
+    "digestFit" : 8,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/mh-wilds-expansion" ]
+  }, {
+    "url" : "https://news.example/pokemon-legends-za",
+    "status" : "new",
+    "newsworthiness" : 8,
+    "digestFit" : 2,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/pokemon-legends-za" ]
+  } ],
+  "drops" : [ {
+    "url" : "https://news.example/re4-vr-update",
+    "reason" : "ranker: maxDigestItems=3 reached"
+  }, {
+    "url" : "https://news.example/indie-bundle",
+    "reason" : "ranker: digestFit=2<3 and newsworthiness=5<8"
+  }, {
+    "url" : "https://news.example/gamescom-attendance",
+    "reason" : "ranker: maxDigestItems=3 reached"
+  } ],
+  "rejectedSaved" : 0
+}

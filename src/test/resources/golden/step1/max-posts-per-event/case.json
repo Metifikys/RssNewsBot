@@ -1,0 +1,36 @@
+{
+  "category": "games",
+  "now": "2026-09-20T12:00:00",
+  "emoji": "🎮",
+  "description": "maxPostsPerEvent=2: an update whose story (own or related key) already has 2 posts in the window is dropped, newsworthiness 9 or not.",
+  "digest": {
+    "meaningfulUpdateCooldownMinutes": 0,
+    "maxPostsPerEvent": 2,
+    "updateWindowDays": 7
+  },
+  "articles": [
+    {
+      "title": "GTA 6 slips again, Take-Two names a new date",
+      "link": "https://news.example/gta-6-new-date",
+      "description": "Take-Two confirmed another delay of GTA 6 in its earnings call.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "GTA 6 trailer 3 breaks view records",
+      "link": "https://news.example/gta-6-trailer-3",
+      "description": "Rockstar released the third trailer, 90M views in 24 hours.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Elden Ring Nightreign announces a DLC",
+      "link": "https://news.example/elden-ring-nightreign-dlc",
+      "description": "FromSoftware revealed a paid expansion for Nightreign.",
+      "pubDate": "2026-09-20T10:00:00"
+    }
+  ],
+  "covered": [],
+  "postCounts": {
+    "gta-6|delay|2026": 2,
+    "gta-6|trailer|2": 1
+  }
+}

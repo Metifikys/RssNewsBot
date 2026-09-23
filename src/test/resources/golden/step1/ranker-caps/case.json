@@ -1,0 +1,57 @@
+{
+  "category": "games",
+  "now": "2026-09-20T12:00:00",
+  "emoji": "🎮",
+  "description": "Ranker: digestFit < 3 is dropped unless newsworthiness >= 8 (Pokémon passes by the override, the charity bundle does not), and maxDigestItems 3 cuts the rest by composite score. The render adds a topic with a foreign link, which the whitelist drops.",
+  "digest": {
+    "ranker": {
+      "enabled": true,
+      "newsworthinessWeight": 0.6
+    },
+    "maxDigestItems": 3,
+    "maxPerFranchise": 1,
+    "maxPerSubject": 1,
+    "minDigestFit": 3,
+    "newsworthinessOverride": 8,
+    "meaningfulUpdateCooldownMinutes": 0
+  },
+  "articles": [
+    {
+      "title": "Resident Evil 9 revealed at TGS",
+      "link": "https://news.example/re9-reveal",
+      "description": "Capcom opened TGS with Resident Evil Requiem gameplay.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Resident Evil 4 VR gets a free update",
+      "link": "https://news.example/re4-vr-update",
+      "description": "A small update adds new modes to Resident Evil 4 VR.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Monster Hunter Wilds expansion dated",
+      "link": "https://news.example/mh-wilds-expansion",
+      "description": "Capcom dated the first big expansion for Monster Hunter Wilds.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "A charity indie bundle raises $2M",
+      "link": "https://news.example/indie-bundle",
+      "description": "An itch.io bundle raised two million dollars for charity.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Pokémon Legends Z-A sells 10M",
+      "link": "https://news.example/pokemon-legends-za",
+      "description": "The Pokémon Company says Legends Z-A sold 10 million units.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "gamescom reports record attendance",
+      "link": "https://news.example/gamescom-attendance",
+      "description": "Koelnmesse counted 350,000 visitors this year.",
+      "pubDate": "2026-09-20T10:00:00"
+    }
+  ],
+  "covered": []
+}

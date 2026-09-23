@@ -1,0 +1,38 @@
+{
+  "fallbackToLegacy" : false,
+  "shortlist" : [ {
+    "url" : "https://news.example/metroid-prime-4-date",
+    "status" : "new",
+    "newsworthiness" : 8,
+    "digestFit" : 9,
+    "eventDate" : "2026-12-04",
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/metroid-prime-4-date" ]
+  }, {
+    "url" : "https://news.example/kingdom-hearts-4-window",
+    "status" : "new",
+    "newsworthiness" : 5,
+    "digestFit" : 6,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/kingdom-hearts-4-window" ]
+  }, {
+    "url" : "https://news.example/bioshock-4-spring",
+    "status" : "new",
+    "newsworthiness" : 5,
+    "digestFit" : 6,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/bioshock-4-spring" ]
+  }, {
+    "url" : "https://news.example/persona-6-quarter",
+    "status" : "new",
+    "newsworthiness" : 7,
+    "digestFit" : 8,
+    "eventDate" : "2026-Q3",
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/persona-6-quarter" ]
+  } ],
+  "drops" : [ ],
+  "rejectedSaved" : 0
+}

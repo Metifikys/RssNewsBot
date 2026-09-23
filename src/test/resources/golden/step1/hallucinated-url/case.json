@@ -1,0 +1,27 @@
+{
+  "category": "games",
+  "now": "2026-09-20T12:00:00",
+  "emoji": "🎮",
+  "description": "A shortlist item whose URL is not in the batch (invented or prompt-injected) is dropped; the rest pass untouched.",
+  "articles": [
+    {
+      "title": "Hollow Knight: Silksong gets its first free DLC",
+      "link": "https://news.example/hollow-knight-silksong-dlc",
+      "description": "Team Cherry announced the Sea of Sorrow expansion, free for all players.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Nintendo Direct set for October 2",
+      "link": "https://news.example/nintendo-direct-october",
+      "description": "Nintendo confirmed a 40-minute Direct focused on holiday titles.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Steam Next Fest returns in October",
+      "link": "https://news.example/steam-next-fest-dates",
+      "description": "Valve published the dates of the October edition of Steam Next Fest.",
+      "pubDate": "2026-09-20T10:00:00"
+    }
+  ],
+  "covered": []
+}

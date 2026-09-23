@@ -1,0 +1,25 @@
+{
+  "fallbackToLegacy" : false,
+  "shortlist" : [ {
+    "url" : "https://news.example/silksong-sales-5m",
+    "status" : "meaningful_update",
+    "newsworthiness" : 9,
+    "digestFit" : 8,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/silksong-sales-5m" ]
+  }, {
+    "url" : "https://news.example/witcher-4-trailer",
+    "status" : "new",
+    "newsworthiness" : 8,
+    "digestFit" : 9,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/witcher-4-trailer" ]
+  } ],
+  "drops" : [ {
+    "url" : "https://news.example/hades-2-patch-notes",
+    "reason" : "cooldown"
+  } ],
+  "rejectedSaved" : 0
+}

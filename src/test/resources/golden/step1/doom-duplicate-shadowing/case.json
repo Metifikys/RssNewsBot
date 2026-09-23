@@ -1,0 +1,58 @@
+{
+  "category": "games",
+  "now": "2026-09-20T12:00:00",
+  "emoji": "🎮",
+  "description": "The 4x DOOM crunch repeat (7046eaf): the related event fell out of the prompt context (maxContextEvents) but is 3 h old in covered_events; the keyed lookup still applies the 360-min cooldown. An update whose related key exists nowhere is kept.",
+  "digest": {
+    "meaningfulUpdateCooldownMinutes": 360,
+    "newsworthinessOverride": 8
+  },
+  "articles": [
+    {
+      "title": "id Software responds to the DOOM crunch report",
+      "link": "https://news.example/doom-dark-ages-crunch-followup",
+      "description": "id Software issued a statement on the crunch allegations around DOOM: The Dark Ages.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "DOOM: The Dark Ages DLC roadmap revealed",
+      "link": "https://news.example/doom-dark-ages-dlc",
+      "description": "Bethesda showed the first DLC roadmap for DOOM: The Dark Ages.",
+      "pubDate": "2026-09-20T10:00:00"
+    },
+    {
+      "title": "Quake 2 remaster team teases a new project",
+      "link": "https://news.example/quake-remaster",
+      "description": "Nightdive teased its next remaster in a short video.",
+      "pubDate": "2026-09-20T10:00:00"
+    }
+  ],
+  "covered": [
+    {
+      "eventKey": "bf6|beta|dates",
+      "subject": "Battlefield 6",
+      "franchise": "Battlefield",
+      "eventType": "beta",
+      "coreFact": "Battlefield 6 open beta dated",
+      "importance": 6,
+      "newsworthiness": 6,
+      "digestFit": 7,
+      "url": "https://news.example/bf6-beta",
+      "coveredAt": "2026-09-20T11:40:00"
+    }
+  ],
+  "coveredArchive": [
+    {
+      "eventKey": "doom-the-dark-ages|crunch|report",
+      "subject": "DOOM: The Dark Ages",
+      "franchise": "DOOM",
+      "eventType": "industry",
+      "coreFact": "Report: crunch at id Software",
+      "importance": 7,
+      "newsworthiness": 7,
+      "digestFit": 7,
+      "url": "https://news.example/doom-crunch-report",
+      "coveredAt": "2026-09-20T09:00:00"
+    }
+  ]
+}
