@@ -42,10 +42,23 @@ via a `/status` admin snapshot.
   stripped from descriptions, site chrome is scrubbed from extracted text by the operator's
   rules (`fetcher.scrubRulesFile`, see `scrub-rules.example.yaml`), and reddit link posts are
   repointed at the article they link to.
+- **Converted feeds** — non-RSS sources (Telegram channels, X accounts, …) come in through a
+  self-hosted converter (RSSHub); platform feeds (GitHub releases, YouTube, Mastodon, Bluesky) are
+  read directly. Per-feed options, all off for a plain feed: `kind` (`article` / `social` /
+  `release` / `video`) derives a title from the post's first line when the item has none
+  ([`FeedTitles`](src/main/kotlin/metifikys/fetch/FeedTitles.kt); `social` also replaces a title
+  that merely repeats the post), reads YouTube's `media:group` thumbnail and gives Step 1 a
+  `source` hint (`official account: <label>`); `minTextChars` drops stickers and one-emoji posts;
+  `titlePrefix` / `exclude` shape GitHub release titles and drop `-rc` / nightly builds;
+  `repointLinks` turns a short post with one outbound article link into that article
+  ([`SocialLinkExtractor`](src/main/kotlin/metifikys/fetch/SocialLinkExtractor.kt); never a social,
+  store, converter or private host), keeping the post URL in `articles.meta_json`.
+  `fetcher.pathScopedThrottleHosts` gives each converter route its own 429 throttle.
 - **Keyword mute** (`preferences.mute` + per-category `mute:`, plus `/mute` from the admin
   chat) — whole-word blocklist applied before Step 1; matching articles never reach an LLM.
-- **SSRF guard** — RFC-1918 / loopback / link-local hosts are rejected before any network
-  call; only `http`/`https` schemes are allowed.
+- **SSRF guard** — only `http`/`https` schemes are allowed; RFC-1918 / loopback / link-local
+  hosts are rejected unless the fetcher is built with `allowPrivateHosts` — which `NewsBot` does
+  for the feed AND the article fetcher, so a LAN RSSHub works (there is no per-host allowlist).
 - **No-redirect HTTP** — Telegram client refuses redirects so the bot token cannot leak to a
   third-party host.
 - **Image extraction from RSS** — falls back across `<enclosure>`, Media RSS module
@@ -817,7 +830,7 @@ first cycle.
 | `codexCli`        | no       | `codex exec` provider: same shape                           |
 | `database`        | yes      | SQLite file path (no `..`, must be readable)                |
 | `scheduler`       | yes      | `intervalMinutes` (default cadence + maintenance tick), `perCategory` (default `true`) |
-| `fetcher`         | no       | `maxConcurrentFetches`, `maxAttempts`, `retryDelaySeconds`, `fetchDeadlineSeconds`, `intervalMinutes` (decoupled ingestion), `scrubRulesFile` |
+| `fetcher`         | no       | `maxConcurrentFetches`, `maxAttempts`, `retryDelaySeconds`, `fetchDeadlineSeconds`, `intervalMinutes` (decoupled ingestion), `scrubRulesFile`, `pathScopedThrottleHosts` (per-route throttle for a converter host) |
 | `processing`      | no       | Stale timeout, min articles, batch thresholds, retention    |
 | `archive`         | no       | Copy-before-delete retention into `archive/news-archive-YYYY-MM.db` (off by default) |
 | `summaryHistory`  | no       | How many previous digests to inject as context, retention   |
@@ -871,6 +884,14 @@ feeds:                    # plain string OR object form
     fetchFullContent: true
     summarize: openai     # openai | openrouter | anthropic
     label: "Other News"   # name in the feed-health section / report (default: host + path)
+  - url: http://rsshub.lan:1200/telegram/channel/studio
+    kind: social          # article | social | release | video — converted / platform feeds
+    minTextChars: 40      # skip shorter items
+    repointLinks: true    # short post + one outbound link → ingest that article
+  - url: https://github.com/owner/repo/releases.atom
+    kind: release
+    titlePrefix: "Repo "  # prepended unless the title already starts with it
+    exclude: ["-rc", "nightly"]
 
 systemPrompt: …           # legacy single-step prompt
 userPrompt: …

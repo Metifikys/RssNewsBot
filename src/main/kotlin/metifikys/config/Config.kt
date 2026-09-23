@@ -613,7 +613,14 @@ data class FetcherConfig(
      * dotAll?}]`) applied to extracted article text before the length cut. Replaces the built-in
      * list shipped as `scrub-rules.yaml` inside the jar. Must exist at load time.
      */
-    val scrubRulesFile: String? = null
+    val scrubRulesFile: String? = null,
+    /**
+     * Hosts (`host:port` or `host`) whose throttle key includes the first two path segments, so
+     * each route of a feed converter such as RSSHub (`/telegram/channel`, `/twitter/user`) is rate-
+     * limited on its own: a 429 from the Twitter route no longer cools down every converted feed.
+     * Empty (default) = one throttle per host, as before.
+     */
+    val pathScopedThrottleHosts: List<String> = emptyList()
 )
 
 /**
@@ -644,12 +651,32 @@ class FeedConfigDeserializer : JsonDeserializer<FeedConfig>() {
             require(summarize == null || summarize in FeedConfig.SUMMARIZE_PROVIDERS) {
                 "Invalid 'summarize' value '$summarize' — must be one of ${FeedConfig.SUMMARIZE_PROVIDERS}"
             }
+            val kind = node.get("kind")?.asText()?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+            require(kind == null || kind in FeedConfig.KINDS) {
+                "Invalid feed 'kind' value '$kind' — must be one of ${FeedConfig.KINDS}"
+            }
+            val minTextChars = node.get("minTextChars")?.let { n ->
+                require(n.canConvertToInt() && n.asInt() >= 0) { "Feed 'minTextChars' must be a non-negative integer (got $n)" }
+                n.asInt()
+            }
+            val exclude = node.get("exclude")?.let { n ->
+                when {
+                    n.isArray -> n.map { it.asText() }
+                    n.isTextual -> listOf(n.asText())
+                    else -> throw IllegalArgumentException("Feed 'exclude' must be a list of strings (got $n)")
+                }
+            }.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }
             FeedConfig(
                 url = node.get("url")?.asText()?.takeIf { it.isNotBlank() }
                     ?: error("FeedConfig missing 'url' field"),
                 fetchFullContent = node.get("fetchFullContent")?.asBoolean() ?: false,
                 summarize = summarize,
-                label = node.get("label")?.asText()?.takeIf { it.isNotBlank() }
+                label = node.get("label")?.asText()?.takeIf { it.isNotBlank() },
+                kind = kind,
+                minTextChars = minTextChars,
+                titlePrefix = node.get("titlePrefix")?.asText()?.takeIf { it.isNotEmpty() },
+                exclude = exclude,
+                repointLinks = node.get("repointLinks")?.asBoolean() ?: false
             )
         }
     }
@@ -665,14 +692,42 @@ data class FeedConfig(
     val fetchFullContent: Boolean = false,
     /** When set, each article from this feed is summarized via the named provider before DB insert. */
     val summarize: String? = null,
-    /** Human name in the feed-health `/status` section and report; default = host + path. */
-    val label: String? = null
+    /** Human name in the feed-health `/status` section and report, and in the Step 1 source hint. */
+    val label: String? = null,
+    /**
+     * What the feed carries — for feeds a converter (RSSHub) or a platform produces: `article`,
+     * `social` (Telegram / X / Mastodon / Bluesky posts), `release` (GitHub releases), `video`
+     * (YouTube). Null (default) = an ordinary feed, handled exactly as before. Any kind derives a
+     * title from the post's first line when the item has none, and reads a YouTube-style
+     * `media:group` thumbnail; `social` also replaces a title that only repeats the post text;
+     * `social` / `release` / `video` hand Step 1 a `source` hint (`official account: …`).
+     */
+    val kind: String? = null,
+    /** Items whose text (description, else title) is shorter than this are not ingested ("🔥", a sticker). */
+    val minTextChars: Int? = null,
+    /** Prepended to every title that does not already start with it (`"Ollama "` + `"v0.12.3"`). */
+    val titlePrefix: String? = null,
+    /** Items whose title contains any of these (case-insensitive) are not ingested (`-rc`, `nightly`). */
+    val exclude: List<String> = emptyList(),
+    /**
+     * A short post (< 280 chars) with exactly one outbound link to a non-social, non-store page is
+     * ingested as that page — like a reddit link post — with the post URL kept in the article meta.
+     */
+    val repointLinks: Boolean = false
 ) {
     companion object {
         val SUMMARIZE_PROVIDERS = setOf("openai", "openrouter", "anthropic", "claudecli", "codexcli")
 
+        const val KIND_ARTICLE = "article"
+        const val KIND_SOCIAL = "social"
+        const val KIND_RELEASE = "release"
+        const val KIND_VIDEO = "video"
+        val KINDS = setOf(KIND_ARTICLE, KIND_SOCIAL, KIND_RELEASE, KIND_VIDEO)
+
         /** The keys the object form accepts ([FeedConfigDeserializer] rejects any other). */
-        val KEYS: Set<String> = linkedSetOf("url", "fetchFullContent", "summarize", "label")
+        val KEYS: Set<String> = linkedSetOf(
+            "url", "fetchFullContent", "summarize", "label", "kind", "minTextChars", "titlePrefix", "exclude", "repointLinks"
+        )
     }
 }
 

@@ -36,6 +36,8 @@ object ConfigChangelog {
         Entry("admin.moderation", "2026-09-23", "per-post delete / mute / more-less buttons in the admin chat"),
         Entry("health", "2026-09-23", "claude / codex login and usage-limit alerts in the admin chat"),
         Entry("feedHealth", "2026-09-23", "per-feed quality metrics + fetch health, /status 📡 Feeds section"),
+        Entry("categories.*.feeds[].kind", "2026-09-23", "converted feeds (RSSHub): social / release / video handling"),
+        Entry("fetcher.pathScopedThrottleHosts", "2026-09-23", "per-route 429 throttle for the RSSHub host"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */

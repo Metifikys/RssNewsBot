@@ -1,6 +1,8 @@
 package metifikys.ai.dedup
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -76,13 +78,21 @@ class EventExtractor(
         }
     }
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     private data class PromptArticle(
         val index: Int,            // 0-based
         val title: String,
         val url: String,
         val description: String,
-        val pubDate: String
+        val pubDate: String,
+        /**
+         * Converted-feed hint (`official account: Some Studio`, from `feeds[].kind` + `label`), so
+         * the model can tell a studio's own statement from a retelling. Absent from the JSON for
+         * every other article — the prompt of a config without `kind` is byte-for-byte unchanged.
+         */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val source: String? = null
     )
 
     private data class SelectedClient(
@@ -132,7 +142,8 @@ class EventExtractor(
                 title = article.title,
                 url = article.link,
                 description = article.promptText(),
-                pubDate = article.pubDate.toString()
+                pubDate = article.pubDate.toString(),
+                source = article.meta()?.source?.promptHint()
             )
         }
 

@@ -284,6 +284,24 @@ class EventExtractorTest {
     }
 
     @Test
+    fun `a converted-feed article carries its source hint, a plain article has no source key`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        val captured = slot<Map<String, String>>()
+        every { promptLoader.substitute(any(), capture(captured)) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { openAI.completeJson(any(), any(), any()) } returns "{}"
+        val social = article("https://a.com/2").copy(
+            metaJson = metifikys.model.ArticleMeta(source = metifikys.model.SourceMeta(kind = "social", label = "Studio X")).toJson()
+        )
+
+        extractor.extract("games", cat(), listOf(article("https://a.com/1"), social))
+
+        val batch = captured.captured.getValue("CURRENT_BATCH_JSON")
+        assertTrue(batch.contains("\"source\":\"official account: Studio X\""), batch)
+        assertEquals(1, Regex("\"source\"").findAll(batch).count(), batch)
+    }
+
+    @Test
     fun `extract drops recent meaningful update below override threshold`() {
         every { promptLoader.resolve(any()) } returns okResolved
         every { promptLoader.substitute(any(), any()) } answers { firstArg() }

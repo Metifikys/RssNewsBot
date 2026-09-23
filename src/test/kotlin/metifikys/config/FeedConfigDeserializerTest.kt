@@ -125,6 +125,38 @@ class FeedConfigDeserializerTest {
     }
 
     @Test
+    fun `converted-feed options parse, a plain entry keeps the defaults`() {
+        val f = parse(
+            """
+            url: https://github.com/ollama/ollama/releases.atom
+            kind: Release
+            label: Ollama
+            minTextChars: 10
+            titlePrefix: "Ollama "
+            exclude: ["-rc", " nightly "]
+            repointLinks: true
+            """
+        )
+        assertEquals("release", f.kind)
+        assertEquals("Ollama", f.label)
+        assertEquals(10, f.minTextChars)
+        assertEquals("Ollama ", f.titlePrefix)
+        assertEquals(listOf("-rc", "nightly"), f.exclude)
+        assertTrue(f.repointLinks)
+        assertEquals(FeedConfig("https://x/feed"), parse("url: https://x/feed"))
+        assertEquals(listOf("beta"), parse("url: https://x\nexclude: beta").exclude)
+    }
+
+    @Test
+    fun `unknown kind and negative minTextChars are rejected`() {
+        for (yaml in listOf("url: https://x\nkind: podcast", "url: https://x\nminTextChars: -1")) {
+            val ex = assertThrows<Exception> { parse(yaml) }
+            val root = generateSequence<Throwable>(ex) { it.cause }.last()
+            assertTrue(root.message!!.contains("kind") || root.message!!.contains("minTextChars"), root.message)
+        }
+    }
+
+    @Test
     fun `object missing url throws`() {
         val ex = assertThrows<Exception> {
             parse(

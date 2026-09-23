@@ -86,7 +86,8 @@ class NewsBot(
         maxConcurrentFetches = config.fetcher.maxConcurrentFetches,
         fetchDeadlineMs = config.fetcher.fetchDeadlineSeconds * 1000,
         hostThrottle = SHARED_HOST_THROTTLE,
-        healthRecorder = if (config.feedHealth.enabled) FeedHealthRecorder() else null
+        healthRecorder = if (config.feedHealth.enabled) FeedHealthRecorder() else null,
+        pathScopedThrottleHosts = config.fetcher.pathScopedThrottleHosts
     ),
     // Validation-only RssFetcher (validateFeedUrl); its lazy fetch pool never starts.
     articleFetcher: ArticleFetcher = ArticleFetcher(

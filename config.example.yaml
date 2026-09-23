@@ -140,6 +140,9 @@ scheduler:
 #                             # (login nudges, share bars). Copy scrub-rules.example.yaml and
 #                             # fill in your sites; unset = nothing is scrubbed.
 #                             # Shape: rules: [{name, regex, host?, dotAll?}]
+#   pathScopedThrottleHosts: ["192.168.77.7:1200"]  # a feed converter (RSSHub): throttle each
+#                             # route (/telegram/channel, /twitter/user) on its own, so a 429 from
+#                             # one upstream does not cool down every converted feed. Default: [].
 
 # Optional: per-cycle processing knobs.
 processing:
@@ -594,3 +597,23 @@ categories:
       #   fetchFullContent: true       # optional: fetch the full article body before summarizing
       #   summarize: openrouter         # one of: openai | openrouter
       #   label: "Example News"         # optional: name in the /status 📡 Feeds section and the report
+      #
+      # Feeds a converter (self-hosted RSSHub) or a platform produces. `kind` (article | social |
+      # release | video; unset = an ordinary feed, unchanged) derives a title from the post's first
+      # line when an item has none (Mastodon, Bluesky), reads YouTube's media:group thumbnail, and
+      # for `social` replaces a title that only repeats the post (RSSHub). social / release / video
+      # items reach Step 1 with a `source` hint ("official account: <label>").
+      # - url: http://192.168.77.7:1200/telegram/channel/some_studio/includeFwd=0&includeServiceMsg=0
+      #   kind: social
+      #   label: "Some Studio TG"
+      #   minTextChars: 40      # shorter items (a sticker, "🔥", "Анонс!") are not ingested
+      #   repointLinks: true    # a short post with ONE outbound article link becomes that article
+      #                         # (like a reddit link post); the post URL stays in the article meta
+      # - url: https://github.com/ollama/ollama/releases.atom
+      #   kind: release
+      #   titlePrefix: "Ollama "              # "v0.12.3" → "Ollama v0.12.3"
+      #   exclude: ["-rc", "-beta", "nightly"]  # title substrings (case-insensitive) not ingested
+      # - url: https://www.youtube.com/feeds/videos.xml?channel_id=UCLA_DiR1FfKNvjuUpBHmylQ
+      #   kind: video
+      #   label: "NASA"
+      # - { url: "https://mastodon.gamedev.place/@some_studio.rss", kind: social, label: "Some Studio" }

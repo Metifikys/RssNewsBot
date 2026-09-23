@@ -83,4 +83,18 @@ class HostThrottleTest {
         assertEquals(0, t.acquireDelayMs("h:80"))
         assertEquals(0, t.acquireDelayMs("h:80"))
     }
+
+    @Test
+    fun `path-scoped hosts get one key per converter route, other hosts one per host`() {
+        val scoped = setOf("192.168.77.7:1200")
+        val tg = HostThrottle.hostKey("http://192.168.77.7:1200/telegram/channel/a/includeFwd=0", scoped)
+        val tg2 = HostThrottle.hostKey("http://192.168.77.7:1200/telegram/channel/b", scoped)
+        val tw = HostThrottle.hostKey("http://192.168.77.7:1200/twitter/user/c/exclude_rts", scoped)
+        assertEquals("192.168.77.7:1200/telegram/channel", tg)
+        assertEquals(tg, tg2)
+        assertEquals("192.168.77.7:1200/twitter/user", tw)
+        assertEquals("reddit.com:443", HostThrottle.hostKey("https://reddit.com/r/a/.rss", scoped))
+        assertEquals("192.168.77.7:1200", HostThrottle.hostKey("http://192.168.77.7:1200/telegram/channel/a", emptySet()))
+        assertEquals("rsshub.local:80/x/y", HostThrottle.hostKey("http://rsshub.local/x/y/z", setOf("rsshub.local")), "bare host matches too")
+    }
 }

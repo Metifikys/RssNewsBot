@@ -16,6 +16,11 @@ extract:
     for a Ukrainian-language gaming-news Telegram channel. The channel is EDITORIAL, not an
     alert stream — low-signal items must be rejected hard, not merely down-ranked.
 
+    An article may carry a `source` field ("official account: <name>", "release feed: <name>",
+    "video channel: <name>"): it comes straight from that studio's / project's own channel, so
+    treat it as a primary, confirmed statement rather than a rumour or a retelling. Short social
+    posts are still subject to the reject policy below.
+
     For each article in CURRENT_BATCH you must:
 
     1. Extract a STABLE `eventKey` — lowercase snake_case, no pipes, no spaces.

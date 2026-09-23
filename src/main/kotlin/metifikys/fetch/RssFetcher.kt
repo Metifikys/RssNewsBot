@@ -12,6 +12,7 @@ import metifikys.log.RunContext
 import metifikys.model.Article
 import metifikys.model.ArticleMeta
 import metifikys.model.HtmlText
+import metifikys.model.SourceMeta
 import org.jsoup.Jsoup
 import java.net.HttpURLConnection
 import java.net.URL
@@ -65,8 +66,12 @@ class RssFetcher(
      * Per-feed fetch outcomes for the feed-health metrics (`feedHealth.enabled`); null records
      * nothing. One final outcome per feed per pass — a retry that later succeeds is a success.
      */
-    val healthRecorder: FeedHealthRecorder? = null
+    val healthRecorder: FeedHealthRecorder? = null,
+    /** `fetcher.pathScopedThrottleHosts`: hosts throttled per route instead of per host (lowercase). */
+    pathScopedThrottleHosts: Collection<String> = emptyList()
 ) {
+
+    private val pathScopedHosts: Set<String> = pathScopedThrottleHosts.map { it.trim().lowercase() }.toSet()
 
     companion object {
         /** Allowed URL schemes for RSS feeds. */
@@ -307,8 +312,8 @@ class RssFetcher(
     private fun withJitter(delayMs: Long): Long =
         delayMs + ThreadLocalRandom.current().nextLong(delayMs / 5 + 1)
 
-    /** Throttle key for a feed URL: lowercase authority (host:port). Falls back to the raw URL. */
-    private fun hostKey(url: String): String = HostThrottle.hostKey(url)
+    /** Throttle key for a feed URL: lowercase authority (host:port), per route for [pathScopedHosts]. */
+    private fun hostKey(url: String): String = HostThrottle.hostKey(url, pathScopedHosts)
 
     /** Waits for the fanned-out fetches until the deadline and gathers partial results. */
     private fun awaitFetches(
@@ -410,10 +415,17 @@ class RssFetcher(
         }
     }
 
-    /** Maps a parsed feed's entries to [Article]s (unchanged from the sequential fetcher). */
+    /**
+     * Maps a parsed feed's entries to [Article]s. The per-feed options of converted feeds apply
+     * here (all off for a plain feed): `kind` titles and thumbnails, `exclude`, `minTextChars`,
+     * `titlePrefix`, `repointLinks`.
+     */
     private fun toArticles(feed: SyndFeed, feedConfig: FeedConfig, category: String): List<Article> {
         val url = feedConfig.url
+        val kind = feedConfig.kind
         var rewritten = 0
+        var socialRewritten = 0
+        var dropped = 0
         val articles = feed.entries
             .filter { it.link?.isNotBlank() == true }
             .mapNotNull { entry ->
@@ -421,6 +433,28 @@ class RssFetcher(
                     val description = entry.description?.value
                         ?: entry.contents.firstOrNull()?.value
                         ?: ""
+                    // A converted feed's post often has no title (Mastodon, Bluesky) or one that only
+                    // repeats the post (RSSHub): take the post's first line instead.
+                    val baseTitle = if (kind != null) {
+                        FeedTitles.derive(entry.title, description, rewriteDuplicate = kind == FeedConfig.KIND_SOCIAL)
+                    } else {
+                        entry.title ?: ""
+                    }
+                    if (feedConfig.exclude.any { baseTitle.contains(it, ignoreCase = true) }) {
+                        dropped++
+                        return@mapNotNull null
+                    }
+                    feedConfig.minTextChars?.let { min ->
+                        val text = HtmlText.strip(description).ifBlank { HtmlText.strip(baseTitle) }.trim()
+                        if (text.codePointCount(0, text.length) < min) {
+                            dropped++
+                            return@mapNotNull null
+                        }
+                    }
+                    val title = feedConfig.titlePrefix
+                        ?.takeUnless { baseTitle.startsWith(it.trim(), ignoreCase = true) }
+                        ?.let { it + baseTitle }
+                        ?: baseTitle
                     val pubDate = entry.publishedDate
                         ?.toInstant()
                         ?.atZone(ZoneId.systemDefault())
@@ -436,25 +470,39 @@ class RssFetcher(
                     // piece of the card worth keeping.
                     val reddit = RedditLinkExtractor.rewrite(permalink, description)
                     if (reddit != null) rewritten++
+                    // The same idea for a converted social feed: "look at this" + one link = that article.
+                    val social = if (feedConfig.repointLinks && reddit == null) {
+                        SocialLinkExtractor.rewrite(permalink, description, url)
+                    } else null
+                    if (social != null) socialRewritten++
+                    val source = if (kind != null || social != null) {
+                        SourceMeta(
+                            kind = kind,
+                            label = feedConfig.label,
+                            postUrl = social?.postUrl,
+                            account = social?.account ?: SocialLinkExtractor.accountOf(permalink)
+                        )
+                    } else null
+                    val hn = HackerNewsMeta.fromDescription(description)
                     Article(
                         category = category,
-                        title = entry.title ?: "",
-                        link = reddit?.link ?: permalink,
+                        title = title,
+                        link = reddit?.link ?: social?.link ?: permalink,
                         // Store plain text: feed HTML (t.me mirrors, WordPress excerpts, reddit
                         // self-post bodies) otherwise eats a large share of the per-article
                         // prompt budget downstream. Image extraction below still sees the RAW
                         // description — the <img>/thumbnail lives in the markup being stripped.
                         description = HtmlText.strip(reddit?.description ?: description),
                         pubDate = pubDate,
-                        imageUrl = extractImageUrl(entry, description),
+                        imageUrl = extractImageUrl(entry, description, mediaGroups = kind != null),
                         // A rewritten entry has no body of its own, so the page behind the
                         // outbound link is the only source of text — fetch it regardless of
                         // what the feed's own `fetchFullContent` says.
-                        fetchFullContent = feedConfig.fetchFullContent || reddit != null,
+                        fetchFullContent = feedConfig.fetchFullContent || reddit != null || social != null,
                         summarize = feedConfig.summarize,
                         // hnrss items carry the HN id, points and comment count in the raw
                         // description; keep them for the footer badge before strip/enrich lose them.
-                        metaJson = HackerNewsMeta.fromDescription(description)?.let { ArticleMeta(hn = it).toJson() },
+                        metaJson = if (hn == null && source == null) null else ArticleMeta(hn = hn, source = source).toJson(),
                         feedUrl = url
                     )
                 } catch (e: Exception) {
@@ -467,10 +515,20 @@ class RssFetcher(
         if (rewritten > 0) {
             logger.info { "[RSS] $url → $rewritten reddit link post(s) repointed at their outbound article." }
         }
+        if (socialRewritten > 0) {
+            logger.info { "[RSS] $url → $socialRewritten short post(s) repointed at their one outbound link." }
+        }
+        if (dropped > 0) {
+            logger.info { "[RSS] $url → $dropped item(s) dropped by the feed's exclude / minTextChars." }
+        }
         return articles
     }
 
-    internal fun extractImageUrl(entry: SyndEntry, description: String): String? {
+    /**
+     * @param mediaGroups also read `media:group/media:thumbnail` (YouTube's Atom puts its only
+     *   picture there); on for feeds with a `kind`, off otherwise so plain feeds stay as they were.
+     */
+    internal fun extractImageUrl(entry: SyndEntry, description: String, mediaGroups: Boolean = false): String? {
         // 1. Enclosure
         entry.enclosures
             ?.firstOrNull { it.type?.startsWith("image/", ignoreCase = true) == true }
@@ -498,6 +556,14 @@ class RssFetcher(
                 ?.toString()
                 ?.takeIf { it.isNotBlank() }
                 ?.let { return it }
+
+            if (mediaGroups) {
+                mediaModule.mediaGroups
+                    ?.asSequence()
+                    ?.flatMap { g -> g.metadata?.thumbnail?.asSequence().orEmpty() }
+                    ?.firstNotNullOfOrNull { t -> t.url?.toString()?.takeIf { it.isNotBlank() } }
+                    ?.let { return it }
+            }
         }
 
         // 3. First <img> in description HTML

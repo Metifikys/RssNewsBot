@@ -121,5 +121,23 @@ class HostThrottle(
         } catch (e: Exception) {
             url
         }
+
+        /**
+         * [hostKey], plus the first two path segments for a host listed in [pathScopedHosts]
+         * (`host:port` or bare `host`): `192.168.77.7:1200/telegram/channel`. Each route of a feed
+         * converter then has its own cooldown, so one upstream's 429 does not stall the others.
+         */
+        fun hostKey(url: String, pathScopedHosts: Set<String>): String {
+            val key = hostKey(url)
+            if (pathScopedHosts.isEmpty()) return key
+            return try {
+                val parsed = URL(url)
+                if (key !in pathScopedHosts && parsed.host.lowercase() !in pathScopedHosts) return key
+                val route = parsed.path.split('/').filter { it.isNotEmpty() }.take(2)
+                if (route.isEmpty()) key else "$key/${route.joinToString("/")}"
+            } catch (e: Exception) {
+                key
+            }
+        }
     }
 }
