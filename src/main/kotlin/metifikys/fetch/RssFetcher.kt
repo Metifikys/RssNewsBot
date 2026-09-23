@@ -13,6 +13,7 @@ import metifikys.model.Article
 import metifikys.model.ArticleMeta
 import metifikys.model.HtmlText
 import metifikys.model.SourceMeta
+import metifikys.model.VideoMeta
 import org.jsoup.Jsoup
 import java.net.HttpURLConnection
 import java.net.URL
@@ -73,7 +74,9 @@ class RssFetcher(
      * `post.images`: category → the picker that filters feed images at ingest (logos, avatars,
      * too-small thumbnails). A category without one keeps the first image the feed offers.
      */
-    private val imagePickers: Map<String, ImagePicker> = emptyMap()
+    private val imagePickers: Map<String, ImagePicker> = emptyMap(),
+    /** Categories with the ▶️ trailer badge: their items remember the YouTube video they embed (`ArticleMeta.video`). */
+    private val videoCategories: Set<String> = emptySet()
 ) {
 
     private val pathScopedHosts: Set<String> = pathScopedThrottleHosts.map { it.trim().lowercase() }.toSet()
@@ -479,6 +482,7 @@ class RssFetcher(
                         )
                     } else null
                     val hn = HackerNewsMeta.fromDescription(description)
+                    val video = if (category in videoCategories) VideoLinks.fromFragment(description)?.let(::VideoMeta) else null
                     Article(
                         category = category,
                         title = title,
@@ -499,7 +503,7 @@ class RssFetcher(
                         summarize = feedConfig.summarize,
                         // hnrss items carry the HN id, points and comment count in the raw
                         // description; keep them for the footer badge before strip/enrich lose them.
-                        metaJson = if (hn == null && source == null) null else ArticleMeta(hn = hn, source = source).toJson(),
+                        metaJson = if (hn == null && source == null && video == null) null else ArticleMeta(hn = hn, source = source, video = video).toJson(),
                         feedUrl = url
                     )
                 } catch (e: Exception) {

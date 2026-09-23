@@ -70,8 +70,10 @@ class PostConfigTest {
 
     @Test
     fun `badges flags map to provider ids, and the global badges block is range-checked`() {
-        val config = load(yaml("post:\n  badges:\n    steam: true\n    github: true"))
-        assertEquals(setOf("steam", "github"), config.categories.getValue("gaming").post!!.badges!!.enabledIds)
+        val config = load(yaml("post:\n  badges:\n    steam: true\n    github: true\n    trailer: true"))
+        assertEquals(setOf("steam", "github", "trailer"), config.categories.getValue("gaming").post!!.badges!!.enabledIds)
+        assertEquals(listOf("major_announcement", "release_date", "major_dlc_expansion", "delay"), config.badges.trailerEventTypes)
+        assertTrue(config.badges.trailerFetchOnDelivery)
         assertEquals(5L, config.badges.timeoutSeconds)
         assertEquals("UA", config.badges.steamCountry)
 

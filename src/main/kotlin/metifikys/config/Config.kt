@@ -1212,12 +1212,15 @@ data class IntroConfig(
  * (no key, cached, hard timeout — see `badges:` at the top level for the knobs):
  * - [steam]: `🎮 Steam: ₴899 (−20%) · 92% позитивних (12 345) · реліз …` for game events with a subject;
  * - [hn]: `🔥 HN: 512 · 340 коментарів` for articles that came through an hnrss feed;
- * - [github]: `⭐ GitHub: 12.3k · Rust · оновлено …` when the article link is a repository.
+ * - [github]: `⭐ GitHub: 12.3k · Rust · оновлено …` when the article link is a repository;
+ * - [trailer]: `▶️ [Трейлер](https://youtu.be/…)` for the event types in `badges.trailerEventTypes` when
+ *   the article embeds a YouTube video whose title (YouTube oEmbed) names the subject / franchise.
  */
 data class BadgesConfig(
     val steam: Boolean = false,
     val hn: Boolean = false,
-    val github: Boolean = false
+    val github: Boolean = false,
+    val trailer: Boolean = false
 ) {
     /** Provider ids to run for this category, matching [metifikys.enrich.BadgeProvider.id]. */
     val enabledIds: Set<String>
@@ -1225,6 +1228,7 @@ data class BadgesConfig(
             if (steam) add("steam")
             if (hn) add("hn")
             if (github) add("github")
+            if (trailer) add("trailer")
         }
 }
 
@@ -1242,7 +1246,14 @@ data class BadgeSettings(
     /** Steam store country code — prices in that currency (UA → hryvnia). */
     val steamCountry: String = "UA",
     /** Steam store language for localized release dates. */
-    val steamLanguage: String = "ukrainian"
+    val steamLanguage: String = "ukrainian",
+    /** Step 1 event types that get the ▶️ trailer badge (`post.badges.trailer`). */
+    val trailerEventTypes: List<String> = listOf("major_announcement", "release_date", "major_dlc_expansion", "delay"),
+    /**
+     * When the topic's articles carry no video from ingest, fetch the post article's page at
+     * delivery (within the badge budget; the result is cached 7 days) and look for one there.
+     */
+    val trailerFetchOnDelivery: Boolean = true
 )
 
 data class ThreadsConfig(
@@ -1780,6 +1791,7 @@ object ConfigLoader {
         }
         require(badges.steamCountry.isNotBlank()) { "badges.steamCountry must not be blank" }
         require(badges.steamLanguage.isNotBlank()) { "badges.steamLanguage must not be blank" }
+        require(badges.trailerEventTypes.none { it.isBlank() }) { "badges.trailerEventTypes must not contain blank entries" }
 
         // Validate database path — no traversal, must not be blank
         val dbPath = config.database.path

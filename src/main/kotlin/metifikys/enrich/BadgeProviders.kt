@@ -9,7 +9,11 @@ private val logger = KotlinLogging.logger {}
 /** Composition root for the badge providers: builds only what some category actually enables. */
 object BadgeProviders {
 
-    fun resolverFor(config: AppConfig, db: NewsDatabase): BadgeResolver? {
+    /**
+     * @param pageHtml article page fetcher for the trailer badge's delivery-time lookup
+     *   (`badges.trailerFetchOnDelivery`); null = ingest meta only.
+     */
+    fun resolverFor(config: AppConfig, db: NewsDatabase, pageHtml: ((String) -> String?)? = null): BadgeResolver? {
         val needed = config.categories.values.mapNotNull { it.post?.badges?.enabledIds }.flatten().toSet()
         if (needed.isEmpty()) return null
         val settings = config.badges
@@ -21,6 +25,10 @@ object BadgeProviders {
             }
             if (HackerNewsBadgeProvider.ID in needed) add(HackerNewsBadgeProvider(http, cache))
             if (GitHubBadgeProvider.ID in needed) add(GitHubBadgeProvider(http, cache, token = settings.githubToken))
+            if (TrailerBadgeProvider.ID in needed) {
+                val fetchPage = pageHtml.takeIf { settings.trailerFetchOnDelivery }
+                add(TrailerBadgeProvider(http, cache, settings.trailerEventTypes, fetchPage))
+            }
         }
         logger.info {
             "[Badge] providers enabled: ${providers.map { it.id }} (timeout ${settings.timeoutSeconds}s each, " +

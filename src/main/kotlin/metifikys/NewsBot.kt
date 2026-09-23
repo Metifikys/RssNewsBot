@@ -93,7 +93,8 @@ class NewsBot(
         hostThrottle = SHARED_HOST_THROTTLE,
         healthRecorder = if (config.feedHealth.enabled) FeedHealthRecorder() else null,
         pathScopedThrottleHosts = config.fetcher.pathScopedThrottleHosts,
-        imagePickers = PostImages.ingestPickers(config)
+        imagePickers = PostImages.ingestPickers(config),
+        videoCategories = config.categories.filterValues { it.post?.badges?.trailer == true }.keys
     ),
     // Same guard rule as the feed fetcher: private addresses only for the configured feed hosts
     // (and fetcher.privateHostAllowlist) — never for a link that merely came out of a feed.
@@ -151,7 +152,7 @@ class NewsBot(
      * Optional live-data footer badges (Steam / HN / GitHub). Built only when some category
      * enables one via `post.badges`; null otherwise so no HTTP client is created.
      */
-    badgeResolver: BadgeResolver? = BadgeProviders.resolverFor(config, db),
+    badgeResolver: BadgeResolver? = BadgeProviders.resolverFor(config, db, articleFetcher::fetchPageHtml),
     /** Optional first-mention Wikipedia intro; built only when some category enables `post.intro`. */
     introProvider: WikipediaIntroProvider? =
         if (config.categories.values.any { it.post?.intro?.enabled == true }) {

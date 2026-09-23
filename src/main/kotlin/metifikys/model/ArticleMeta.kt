@@ -13,7 +13,9 @@ import kotlinx.serialization.json.Json
 data class ArticleMeta(
     val hn: HnMeta? = null,
     /** Set for items of feeds with a `kind` or `repointLinks` (converted feeds); see [SourceMeta]. */
-    val source: SourceMeta? = null
+    val source: SourceMeta? = null,
+    /** The YouTube video the item embeds, read at ingest for categories with the trailer badge; see [VideoMeta]. */
+    val video: VideoMeta? = null
 ) {
     fun toJson(): String = json.encodeToString(this)
 
@@ -64,3 +66,7 @@ data class HnMeta(
 ) {
     val discussionUrl: String get() = "https://news.ycombinator.com/item?id=$id"
 }
+
+/** A YouTube video the feed item embeds ([metifikys.fetch.VideoLinks]); unverified until the trailer badge checks its title. */
+@Serializable
+data class VideoMeta(val youtubeId: String)

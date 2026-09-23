@@ -61,7 +61,7 @@ class ArticleFetcher(
          * CSS selectors tried in priority order to locate the article's main content element.
          * First match yielding substantial text wins.
          */
-        private val ARTICLE_SELECTORS = listOf(
+        internal val ARTICLE_SELECTORS = listOf(
             "article",
             "[role=main]",
             "main",
@@ -318,6 +318,20 @@ class ArticleFetcher(
             extractOgImageCandidate(html, url)
         } catch (e: Exception) {
             logFetchFailure(url, "preview image", e)
+            null
+        }
+    }
+
+    /**
+     * The raw HTML of an article page for a footer lookup (the ▶️ trailer badge): one fetch through
+     * the guard and the shared host throttle. Null on any failure or a non-HTML response; never throws.
+     */
+    fun fetchPageHtml(url: String): String? {
+        if (url.isBlank() || !passesUrlValidation(url)) return null
+        return try {
+            fetchHtml(url)
+        } catch (e: Exception) {
+            logFetchFailure(url, "page", e)
             null
         }
     }

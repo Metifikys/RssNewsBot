@@ -295,6 +295,11 @@ weekly:
 #   githubToken: ""          # optional, env GITHUB_TOKEN wins: 5000 req/h instead of 60
 #   steamCountry: "UA"       # store region → prices in that currency
 #   steamLanguage: "ukrainian"
+#   # ▶️ trailer badge (post.badges.trailer): which Step 1 event types get it, and whether the post
+#   # article's page may be fetched at delivery when ingest found no video in the feed item (the
+#   # page fetch + YouTube oEmbed check share timeoutSeconds — consider 8 for this badge).
+#   trailerEventTypes: [major_announcement, release_date, major_dlc_expansion, delay]
+#   trailerFetchOnDelivery: true
 
 # Optional: reaction-feedback loop (phase 1 — aggregation only). When enabled, the reactions
 # collected by telegram.updatesPolling are periodically rolled up into per-dimension audience
@@ -449,10 +454,14 @@ categories:
       #   steam  — 🎮 Steam: ₴899 (−20%) · 92% позитивних (12 345) · реліз … (game events with a subject)
       #   hn     — 🔥 HN: 512 · 340 коментарів (articles that came through an hnrss.org feed)
       #   github — ⭐ GitHub: 12.3k · Rust · оновлено … (when the article link is a repository)
+      #   trailer — ▶️ Трейлер: the YouTube video the article embeds (feed item at ingest, else the
+      #            page at delivery), only when YouTube oEmbed knows it and its title names the
+      #            subject / franchise — a site's promo clip gets nothing. Event types: badges.trailerEventTypes.
       badges:
         steam: true
         hn: false
         github: false
+        trailer: false
       # One Wikipedia line the FIRST time a franchise (else subject) appears in this category:
       #   📚 Team Cherry: австралійська студія відеоігор · Вікіпедія
       # The page's short description when it has one, else the first sentence of the summary —

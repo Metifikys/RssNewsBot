@@ -130,6 +130,32 @@ class ConvertedFeedsTest {
     }
 
     @Test
+    fun `categories with the trailer badge remember the embedded video`() {
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0"><channel><title>Site</title>
+            <item><title>Silksong date</title><link>https://site.com/silksong</link>
+              <description>&lt;p&gt;Watch:&lt;/p&gt;&lt;iframe src="https://www.youtube.com/embed/aBcDeFgHiJ0"&gt;&lt;/iframe&gt;</description>
+            </item></channel></rss>
+        """.trimIndent().toByteArray()
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/feed") { ex ->
+            ex.sendResponseHeaders(200, xml.size.toLong())
+            ex.responseBody.use { it.write(xml) }
+        }
+        server.start()
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0, videoCategories = setOf("games"))
+        try {
+            val url = "http://localhost:${server.address.port}/feed"
+            assertEquals("aBcDeFgHiJ0", fetcher.fetchFeed(FeedConfig(url), "games").single().meta()?.video?.youtubeId)
+            assertNull(fetcher.fetchFeed(FeedConfig(url), "tech").single().metaJson)
+        } finally {
+            fetcher.shutdown()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun `with an image picker a small logo enclosure is skipped for the large media content`() {
         val xml = """
             <?xml version="1.0" encoding="UTF-8"?>

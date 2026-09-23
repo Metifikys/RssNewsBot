@@ -149,7 +149,11 @@ via a `/status` admin snapshot.
     subject (`#gaming #silksong`), Latin diacritics folded, Cyrillic kept.
   - **badges** — deterministic live-data lines from public APIs, cached with a hard time
     budget: Steam price / review score / release date, Hacker News points and comments,
-    GitHub stars.
+    GitHub stars, and `▶️ [Трейлер](https://youtu.be/…)` (`trailer`, event types `badges.trailerEventTypes`): the
+    YouTube video the article embeds ([`VideoLinks`](src/main/kotlin/metifikys/fetch/VideoLinks.kt) — the feed item at
+    ingest, else the post page at delivery with `trailerFetchOnDelivery`; article body only, no
+    sidebars / related blocks), shown only when YouTube's oEmbed knows it and its title names the
+    subject or franchise, so a site's promo clip gets no line; cached 7 days.
   - **intro** — the first time a franchise appears in the category, one Wikipedia line
     (`📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`), remembered in `entity_intros`.
   - **longForm** — the top-ranked events of a digest (composite ≥ `minComposite`, at most
