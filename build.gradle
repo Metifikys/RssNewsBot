@@ -18,6 +18,8 @@ dependencies {
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
     testImplementation 'io.mockk:mockk:1.13.10'
+    // Property-based tests (checkAll inside plain JUnit 5 @Test via runBlocking) — no extra test engine.
+    testImplementation 'io.kotest:kotest-property:5.9.1'
 
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'org.jsoup:jsoup:1.18.1'

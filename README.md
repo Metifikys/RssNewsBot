@@ -857,6 +857,12 @@ covers the log-only event-level pass), vector math, RSS
 fetching with SSRF rejection, Telegram sender, and end-to-end cycle behaviour with mocked
 providers.
 
+Property-based tests (`*PropertyTest.kt`, kotest-property) generate bullets with Cyrillic, astral
+emoji, HTML specials and flaired / paren-URL links up to 6000 chars and check the formatter
+invariants: Telegram-valid HTML, chunk and caption limits without split surrogates or half links,
+layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it locally with
+`PropTestConfig(seed = …)`.
+
 ---
 
 ## Database schema
@@ -948,5 +954,6 @@ deploy/             systemd unit, backup / vacuum / restart scripts
 | Logback + kotlin-logging | 1.5.6 / 7.0.3 | Structured logging                          |
 | JUnit Jupiter            | 5.10.2        | Test runner                                 |
 | MockK                    | 1.13.10       | Kotlin-friendly mocking                     |
+| kotest-property          | 5.9.1         | Property-based tests (`checkAll` inside JUnit 5 tests) |
 | Shadow plugin            | 8.3.6         | Fat-JAR packaging                           |
 | JaCoCo                   | 0.8.11        | Coverage reports                            |
