@@ -1331,7 +1331,7 @@ data class IntroConfig(
  *   (Steam's GetItems; no line without Ukrainian unless `badges.ukLocalizationShowMissing`);
  * - [deck]: `🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти)` for a Steam game (also on `patch`);
  * - [critic]: `🏆 Metacritic: 90` on release / review events of a released Steam game (the Metascore in
- *   Steam's appdetails).
+ *   Steam's appdetails), plus OpenCritic with `badges.openCriticKey`.
  */
 data class BadgesConfig(
     val steam: Boolean = false,
@@ -1378,7 +1378,12 @@ data class BadgeSettings(
      */
     val trailerFetchOnDelivery: Boolean = true,
     /** `post.badges.ukLocalization`: also say `🇺🇦 Без української` when a Steam game has none (noise for most indies). */
-    val ukLocalizationShowMissing: Boolean = false
+    val ukLocalizationShowMissing: Boolean = false,
+    /**
+     * Optional RapidAPI key for OpenCritic (env `OPENCRITIC_RAPIDAPI_KEY` wins): adds the OpenCritic
+     * score to `post.badges.critic`. Empty (default) = Metacritic from Steam only, no OpenCritic request.
+     */
+    val openCriticKey: String? = null
 )
 
 data class ThreadsConfig(
@@ -1937,7 +1942,8 @@ object ConfigLoader {
         validateStoryIntel(config)
 
         val badges = config.badges.copy(
-            githubToken = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() } ?: config.badges.githubToken
+            githubToken = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() } ?: config.badges.githubToken,
+            openCriticKey = System.getenv("OPENCRITIC_RAPIDAPI_KEY")?.takeIf { it.isNotBlank() } ?: config.badges.openCriticKey
         )
         require(badges.timeoutSeconds >= 1) { "badges.timeoutSeconds must be >= 1 (got ${badges.timeoutSeconds})" }
         require(badges.maxTotalSeconds >= badges.timeoutSeconds) {

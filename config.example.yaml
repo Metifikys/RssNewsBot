@@ -309,6 +309,10 @@ weekly:
 #   # 🇺🇦 badge (post.badges.ukLocalization): also post "🇺🇦 Без української" for a Steam game
 #   # without Ukrainian (off: for most indie games that line is noise).
 #   ukLocalizationShowMissing: false
+#   # 🏆 critic badge: OpenCritic next to Metacritic needs a RapidAPI key (OpenCritic's API
+#   # answers "API key is required" without one; the free plan allows 25 searches / 200 requests
+#   # a day, the bot searches at most 20). Env OPENCRITIC_RAPIDAPI_KEY wins. Empty = Metacritic only.
+#   openCriticKey: ""
 
 # telegra.ph account for the long-form Instant View pages (post.longForm.telegraph inside a
 # category). Token: env TELEGRAPH_TOKEN, else accessToken, else the one stored in bot_state
@@ -484,7 +488,7 @@ categories:
       #   deck   — 🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти) (Valve's Deck report +
       #            ProtonDB summary, both undocumented; game events as steam plus patch)
       #   critic — 🏆 Metacritic: 90 (the PC Metascore in Steam's appdetails; release / review events of a
-      #            game that is out — Steam fills it some days after release)
+      #            game that is out — Steam fills it some days after release; + OpenCritic with badges.openCriticKey)
       # The Steam-based badges share one store search + appdetails per game (cached in the DB).
       badges:
         steam: true

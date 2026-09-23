@@ -164,7 +164,8 @@ via a `/status` admin snapshot.
     reports; also on `patch` events), cached 24 h;
     `critic` — `🏆 [Metacritic](…): 90` on release / review events of a game that is out: the PC
     Metascore Steam's `appdetails` already carries (Metacritic has no API; Steam fills the field
-    some days after release).
+    some days after release), plus `OpenCritic: 91, рекомендують 97%` when `badges.openCriticKey` (env
+    `OPENCRITIC_RAPIDAPI_KEY`, a RapidAPI key) is set — without it no request goes to OpenCritic.
   - **intro** — the first time a franchise appears in the category, one Wikipedia line
     (`📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`), remembered in `entity_intros`.
   - **longForm** — the top-ranked events of a digest (composite ≥ `minComposite`, at most
