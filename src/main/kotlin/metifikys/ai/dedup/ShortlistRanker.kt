@@ -121,6 +121,15 @@ object ShortlistRanker {
         return Result(kept = kept, dropped = dropped)
     }
 
+    /**
+     * The item's composite score (0–10) without the affinity term, weighted as [rank] weighs it.
+     * Without a digest config, the [metifikys.config.RankerConfig] default weight applies.
+     */
+    fun compositeScore(item: ShortlistItem, config: DigestConfig?): Double {
+        val weightNews = (config?.ranker ?: metifikys.config.RankerConfig()).newsworthinessWeight.coerceIn(0.0, 1.0)
+        return composite(item, weightNews, 1.0 - weightNews)
+    }
+
     private fun composite(item: ShortlistItem, weightNews: Double, weightFit: Double): Double =
         weightNews * effectiveNewsworthiness(item) + weightFit * effectiveDigestFit(item)
 

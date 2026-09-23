@@ -67,8 +67,20 @@ data class ShortlistItem(
     val status: String,
     val articleIndices: List<Int> = emptyList(),
     /** See [ExtractionItem.eventDate]. */
-    val eventDate: String? = null
-)
+    val eventDate: String? = null,
+    /**
+     * Set by code right before render, never by Step 1: [DEPTH_LONG] for the digest's long-form
+     * events (see `post.longForm`), null for the usual short bullet. Travels with the shortlist
+     * through a pending batch, so delivery knows which bullets are long.
+     */
+    val depth: String? = null
+) {
+    val isLongForm: Boolean get() = depth == DEPTH_LONG
+
+    companion object {
+        const val DEPTH_LONG = "long"
+    }
+}
 
 /**
  * The news weight the ranker gates on: `newsworthiness` when Step 1 emitted it, else the older

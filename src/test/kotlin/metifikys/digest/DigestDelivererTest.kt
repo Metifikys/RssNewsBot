@@ -423,6 +423,43 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `a long-form post longer than a caption goes out as text with the image as preview`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any(), any()) } returns listOf(SentRef(-100L, 31L))
+
+        val withImage = article(1).copy(imageUrl = "https://img.example/1.jpg")
+        val body = "Перший абзац. ".repeat(40).trim() + "\n\n" + "Другий абзац. ".repeat(40).trim()
+        val summary = "• 🎮 **Story.** $body\n[Title 1](https://example.com/1)"
+        val long = shortlistItem("evt-1", withImage.link).copy(depth = ShortlistItem.DEPTH_LONG)
+        DigestDeliverer(configWithPost(null, enableImages = true), db, sender)
+            .deliver("tech", summary, listOf(withImage), listOf(long))
+
+        verify(exactly = 0) { sender.sendPhotoToChannel(any(), any(), any(), any()) }
+        verify { sender.sendToChannel("@tech", any(), true, null, "https://img.example/1.jpg") }
+        assertTrue(sent.captured.length > 1024)
+        assertTrue("\n\nДругий абзац." in sent.captured)
+    }
+
+    @Test
+    fun `a long-form post that fits a caption, or a short one, stays a photo post`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendPhotoToChannel(any(), any(), any(), any()) } returns SentRef(-100L, 32L)
+
+        val withImage = article(1).copy(imageUrl = "https://img.example/1.jpg")
+        val long = shortlistItem("evt-1", withImage.link).copy(depth = ShortlistItem.DEPTH_LONG)
+        DigestDeliverer(configWithPost(null, enableImages = true), db, sender)
+            .deliver("tech", "• **Story.** Short body.\n[Title 1](https://example.com/1)", listOf(withImage), listOf(long))
+
+        verify { sender.sendPhotoToChannel("@tech", "https://img.example/1.jpg", any(), null) }
+        verify(exactly = 0) { sender.sendToChannel(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
     fun `a photo Telegram cannot fetch falls back to a text post instead of failing the topic`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

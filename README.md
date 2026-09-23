@@ -129,6 +129,11 @@ via a `/status` admin snapshot.
     GitHub stars.
   - **intro** — the first time a franchise appears in the category, one Wikipedia line
     (`📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`), remembered in `entity_intros`.
+  - **longForm** — the top-ranked events of a digest (composite ≥ `minComposite`, at most
+    `maxPerDigest`) go to render marked `"depth": "long"`, with the article page refetched as
+    source text, and come back as a two-paragraph post; one longer than a photo caption is sent
+    as text with the image as a large link preview above it. Needs the render prompt's
+    LONG-FORM ITEMS block.
 - **Living trackers** (`trackers:` per category) — e.g. a pinned "📅 Найближчі релізи" message
   the bot edits after every digest from `release_date` / `delay` events and their `eventDate`
   (year cross-checked against the article), with `⏳ було <old date>` on a delay, a

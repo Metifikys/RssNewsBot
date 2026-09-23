@@ -183,11 +183,21 @@ class DigestDeliverer(
             val item = topicUrls[idx].firstNotNullOfOrNull { itemByUrl[it] }
             val eventKey = item?.eventKey
             val replyTo = eventKey?.let { replyTargets[it] }
-            val budget = if (image != null) TopicDecorator.CAPTION_BUDGET else TopicDecorator.TEXT_BUDGET
             val topicArticles = topicUrls[idx].mapNotNull { articleByLink[it] }
             val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget)
-            val outgoing = TopicDecorator.decorate(topic, footer, budget)
-            val refs: List<SentRef> = if (image != null) {
+            // Long-form (post.longForm): a text message with the image as a large link preview
+            // above it, so neither the body nor the footer is squeezed into the 1024-char caption.
+            // A long post that fits a caption anyway still goes out as a normal photo post.
+            val longOutgoing = if (item?.isLongForm == true && image != null) {
+                TopicDecorator.decorate(topic, footer, TopicDecorator.TEXT_BUDGET)
+                    .takeIf { it.length > TopicDecorator.CAPTION_BUDGET }
+            } else null
+            val budget = if (image != null) TopicDecorator.CAPTION_BUDGET else TopicDecorator.TEXT_BUDGET
+            val outgoing = longOutgoing ?: TopicDecorator.decorate(topic, footer, budget)
+            val refs: List<SentRef> = if (longOutgoing != null) {
+                logger.info { "[Category:$categoryName][LongForm] $eventKey: ${outgoing.length} chars as text + image preview" }
+                sender.sendToChannel(channelId, outgoing, disablePreview = true, replyToMessageId = replyTo, previewImageUrl = image)
+            } else if (image != null) {
                 // Single post: photo + caption. Caption is truncated to Telegram's 1024-char
                 // limit inside TelegramSender (with markdown→plain-text fallback on parse errors).
                 // A photo Telegram cannot fetch ("failed to get HTTP URL content") must not fail

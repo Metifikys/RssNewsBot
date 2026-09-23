@@ -16,6 +16,7 @@ import metifikys.digest.DigestDeliverer
 import metifikys.config.dayOfWeekParsed
 import metifikys.config.timeParsed
 import metifikys.digest.EventSemanticAnalyzer
+import metifikys.digest.LongForm
 import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.TrackerUpdater
 import metifikys.digest.WeeklyDigest
@@ -160,7 +161,8 @@ class NewsBot(
         deliverer = deliverer,
         eventExtractor = eventExtractor,
         errorLog = errorLog,
-        eventSemanticAnalyzer = eventSemanticAnalyzer
+        eventSemanticAnalyzer = eventSemanticAnalyzer,
+        longFormTextFetcher = LongForm.TextFetcher(articleFetcher::fetchFullText)
     )
 
     private val digestCycle = DigestCycle(

@@ -61,6 +61,32 @@ class PromptBuilderTest {
     }
 
     @Test
+    fun `a long-form item carries depth and its article's full text, a short one neither`() {
+        val articles = listOf(
+            Article(category = "games", title = "T0", link = "https://a.com/0", description = "rss 0",
+                fullText = "f".repeat(3000)),
+            Article(category = "games", title = "T1", link = "https://a.com/1", description = "rss 1",
+                fullText = "stray full text")
+        )
+        val shortlist = listOf(
+            ShortlistItem(eventKey = "long", coreFact = "x", url = "https://a.com/0", status = "new",
+                articleIndices = listOf(0), depth = ShortlistItem.DEPTH_LONG),
+            ShortlistItem(eventKey = "short", coreFact = "y", url = "https://a.com/1", status = "new",
+                articleIndices = listOf(1))
+        )
+
+        val prompt = PromptBuilder.buildRenderUserPrompt("games", "🎮", "{{SHORTLIST_JSON}}", shortlist, articles)
+
+        val (long, short) = json.parseToJsonElement(prompt).jsonArray.map { it.jsonObject }
+        assertEquals("long", long.getValue("depth").jsonPrimitive.content)
+        assertEquals(3000, long.getValue("sourceArticles").jsonArray.single().jsonObject
+            .getValue("description").jsonPrimitive.content.length)
+        assertTrue("depth" !in short)
+        assertEquals("rss 1", short.getValue("sourceArticles").jsonArray.single().jsonObject
+            .getValue("description").jsonPrimitive.content)
+    }
+
+    @Test
     fun `buildRenderUserPrompt falls back to shortlist url when articleIndices are absent`() {
         val articles = listOf(
             Article(

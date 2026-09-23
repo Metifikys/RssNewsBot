@@ -55,7 +55,12 @@ open class CategoryProcessor(
      * near-duplicates against recently-covered events. Never mutates state. Null in tests /
      * when no category has opted in via `semanticDedup.eventEnabled`.
      */
-    private val eventSemanticAnalyzer: EventSemanticAnalyzer? = null
+    private val eventSemanticAnalyzer: EventSemanticAnalyzer? = null,
+    /**
+     * Refetches an article page for a long-form event (`post.longForm`). Null (tests, or no
+     * fetcher wired) = long items are still marked, but render gets only the RSS text.
+     */
+    private val longFormTextFetcher: LongForm.TextFetcher? = null
 ) {
 
     private companion object {
@@ -472,8 +477,18 @@ open class CategoryProcessor(
         // shortlist passes through (sync Ready, extract-batch callback, and startup resume all
         // converge here). Logs near-duplicates; when eventHardThreshold is set, also drops the
         // highest-confidence cross-cycle dupes. Fail-open — returns the input on any error.
-        val renderShortlist: List<ShortlistItem>? =
+        val analyzedShortlist: List<ShortlistItem>? =
             if (shortlist != null) (eventSemanticAnalyzer?.analyzeAndFilter(name, shortlist) ?: shortlist) else null
+        val longForm = categoryConfig.post?.longForm
+        // Long-form: mark the top events on the final render set (after Layer 3.5 drops), so the
+        // cap counts only events that can actually be posted.
+        val renderShortlist: List<ShortlistItem>? = analyzedShortlist?.let { list ->
+            if (longForm == null) list else LongForm.mark(list, longForm, categoryConfig.dedup?.digest)
+        }
+        if (longForm != null && renderShortlist != null) {
+            val longKeys = renderShortlist.filter { it.isLongForm }.map { it.eventKey }
+            logger.info { "[Category:$name]$chunkLabel[LongForm] long=${longKeys.ifEmpty { "none" }} (minComposite=${longForm.minComposite})" }
+        }
 
         // Every event was hard-rejected as a cross-cycle duplicate → nothing left to render.
         if (shortlist != null && renderShortlist != null && renderShortlist.isEmpty()) {
@@ -487,6 +502,8 @@ open class CategoryProcessor(
 
         val effectiveArticles = if ((isBatchingStuck || useBatchFallback) && shortlist == null) {
             articles.take(SYNC_FALLBACK_CAP)
+        } else if (longForm != null && renderShortlist != null && longFormTextFetcher != null && renderShortlist.any { it.isLongForm }) {
+            LongForm.attachFullText(name, renderShortlist, articles, longForm, longFormTextFetcher)
         } else {
             articles
         }

@@ -39,6 +39,8 @@ object PromptBuilder {
         val status: String,
         val articleIndices: List<Int> = emptyList(),
         val eventDate: String? = null,
+        /** "long" for a long-form event (post.longForm); omitted for a short bullet. */
+        val depth: String? = null,
         val sourceArticles: List<RenderSourceArticle> = emptyList()
     )
 
@@ -126,7 +128,7 @@ object PromptBuilder {
             RenderSourceArticle(
                 articleIndex = index,
                 title = article.title,
-                description = article.promptText(),
+                description = article.fullText?.takeIf { isLongForm && it.isNotBlank() } ?: article.promptText(),
                 url = article.link
             )
         }
@@ -144,6 +146,7 @@ object PromptBuilder {
             status = status,
             articleIndices = articleIndices,
             eventDate = eventDate,
+            depth = depth,
             sourceArticles = sourceArticles
         )
     }

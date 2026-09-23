@@ -147,9 +147,28 @@ render:
       - For items with status == "meaningful_update", phrase the body as an update:
           "оновлення: …", "нові деталі: …", "перенос: …". Never frame an update as breaking.
       - 1–2 sentences per bullet. Hard cap ~300 Ukrainian characters per bullet.
+        Exception: items with "depth": "long" — see LONG-FORM ITEMS below.
       - Exactly one link per bullet, in the form [джерело](url), using ONLY the `url` for that item.
       - Separator between bullets is a single "•" on its own. Do NOT emit numbered lists,
         horizontal rules, or any other delimiter.
+
+    LONG-FORM ITEMS ("depth": "long"):
+      The code picked these as the strongest stories of the run; their `sourceArticles`
+      carry the full article text. Always include them. Same bold headline, then TWO
+      paragraphs separated by one empty line, then the link:
+
+        • <emoji> **<Коротка українська тема>.** <що сталося і головне, 2–3 речення>
+
+        <конкретика зі статті, 2–4 речення: дати, платформи, ціни, цифри, що саме
+        показали чи сказали розробники, чим це відрізняється від попереднього>
+        [джерело](url)
+
+      - Target 600–1100 Ukrainian characters in total. Shorter is fine when the source is thin —
+        never pad, never repeat paragraph 1 in paragraph 2.
+      - Every fact must come from that item's `sourceArticles`. No guesses, no invented
+        numbers, quotes, or dates; no speculation about what it "could mean".
+      - Plain prose only inside the bullet: no lists, no "•", no sub-headings, no extra links.
+      - Items without "depth" stay short, as above.
 
     Emoji guidance:
       - Use a relevant emoji that matches the event type or subject.

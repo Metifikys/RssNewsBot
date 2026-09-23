@@ -28,6 +28,9 @@ object TopicFormatter {
 
     private val HEADLINE_TERMINALS = setOf('.', '!', '?', '…', ':')
 
+    private val PARAGRAPH_BREAK = Regex("""\n[ \t\r]*\n\s*""")
+    private val WHITESPACE_RUN = Regex("""\s+""")
+
     // URL group tolerates one level of balanced parentheses inside the URL itself
     // (e.g. Wikipedia/MDN `..._(disambiguation)` links) so extractUrls no longer truncates.
     private const val URL_BODY = """[^()]*(?:\([^()]*\)[^()]*)*"""
@@ -61,7 +64,13 @@ object TopicFormatter {
         val emoji = match.groups["emoji"]?.value?.trim().orEmpty()
         val rawHeadline = match.groups["headline"]!!.value.trim()
         val headline = if (rawHeadline.lastOrNull() in HEADLINE_TERMINALS) rawHeadline else "$rawHeadline."
-        val body = match.groups["body"]?.value?.replace(Regex("""\s+"""), " ")?.trim().orEmpty()
+        // Whitespace inside a paragraph collapses to one space; a blank line between paragraphs
+        // (a long-form body, `post.longForm`) survives as the paragraph break.
+        val body = match.groups["body"]?.value.orEmpty()
+            .split(PARAGRAPH_BREAK)
+            .map { it.replace(WHITESPACE_RUN, " ").trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n\n")
         val link = match.groups["link"]!!.value
 
         val titleLine = if (emoji.isEmpty()) "**$headline**" else "$emoji **$headline**"

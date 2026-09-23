@@ -17,7 +17,12 @@ data class Article(
     /** Ephemeral — not persisted. Provider name from [FeedConfig.summarize][metifikys.config.FeedConfig.summarize]. */
     val summarize: String? = null,
     /** Persisted. Source-specific signals captured at ingestion, see [ArticleMeta]. Null for most feeds. */
-    val metaJson: String? = null
+    val metaJson: String? = null,
+    /**
+     * Ephemeral — not persisted. Article page text refetched right before render for a
+     * long-form event (`post.longForm`); the renderer uses it instead of [promptText].
+     */
+    val fullText: String? = null
 ) {
     /** Parsed [metaJson]; null when absent or malformed. */
     fun meta(): ArticleMeta? = ArticleMeta.parse(metaJson)

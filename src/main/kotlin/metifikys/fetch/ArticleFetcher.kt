@@ -273,6 +273,30 @@ class ArticleFetcher(
         }
     }
 
+    /**
+     * Page text of [url] for a long-form render (`post.longForm`), cut to [maxChars] — the same
+     * markdown.new → Jsoup chain as [enrich], but independent of [maxContentLength] and without
+     * the meta-description fallback (a lede is no better than what the article row already has).
+     * Null on any failure; never throws.
+     */
+    fun fetchFullText(url: String, maxChars: Int): String? {
+        if (url.isBlank() || !passesUrlValidation(url)) return null
+        return try {
+            val text = fetchMarkdownNew(url)?.let { cleanExtractedText(it, url) }?.takeIf { it.isNotBlank() }
+                ?: fetchHtml(url)?.let { html -> extractText(html, url)?.let { cleanExtractedText(it, url) } }
+                    ?.takeIf { it.isNotBlank() }
+            if (text == null) {
+                logger.info { "[ArticleFetcher] Long-form: no text extracted from '$url'" }
+            } else {
+                logger.info { "[ArticleFetcher] Long-form: fetched '$url' (${text.length} chars, using ${minOf(text.length, maxChars)})" }
+            }
+            text?.take(maxChars)
+        } catch (e: Exception) {
+            logFetchFailure(url, "long-form text", e)
+            null
+        }
+    }
+
     /** SSRF guard shared by every fetch path. Returns false (and logs) when the URL is rejected. */
     private fun passesUrlValidation(url: String): Boolean {
         if (!enforceUrlValidation) return true

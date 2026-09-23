@@ -45,6 +45,18 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `an image preview replaces the disable flag and rides on the first chunk only`() = withFakeApi { s, bodies ->
+        val text = "a".repeat(3000) + "\n" + "b".repeat(3000)
+        s.sendToChannel("@ch", text, disablePreview = true, previewImageUrl = "https://img/1.jpg")
+        assertEquals(2, bodies.size)
+        val preview = """"link_preview_options":{"url":"https://img/1.jpg","prefer_large_media":true,"show_above_text":true}"""
+        assertTrue(preview in bodies[0], bodies[0])
+        assertFalse("disable_web_page_preview" in bodies[0], bodies[0])
+        assertFalse("link_preview_options" in bodies[1], bodies[1])
+        assertTrue(""""disable_web_page_preview":true""" in bodies[1], bodies[1])
+    }
+
+    @Test
     fun `only the first chunk of a long message carries the reply`() = withFakeApi { s, bodies ->
         val text = "a".repeat(3000) + "\n" + "b".repeat(3000)
         s.sendToChannel("@ch", text, replyToMessageId = 11L)

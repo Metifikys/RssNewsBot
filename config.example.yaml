@@ -302,6 +302,18 @@ categories:
         languages: [uk]           # Wikipedia languages to try, in order; text is printed as found
         maxPerDigest: 2
         repeatAfterDays: 365
+      # Longer posts for the strongest stories. After ranking, the first `maxPerDigest` events
+      # whose composite score (newsworthiness/digestFit, weighted as in dedup.digest.ranker)
+      # reaches `minComposite` are sent to render with "depth": "long" and the article page
+      # refetched (up to `sourceChars`), so the two-paragraph body is written from the article,
+      # not padded from the RSS blurb. The render prompt must know `depth` — see the LONG-FORM
+      # ITEMS block in prompts/games-dedup.example.yaml. A long post longer than a photo caption
+      # (1024 chars) goes out as text with the image as a large preview above it.
+      longForm:
+        enabled: true
+        maxPerDigest: 1
+        minComposite: 8.0
+        sourceChars: 5000
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),

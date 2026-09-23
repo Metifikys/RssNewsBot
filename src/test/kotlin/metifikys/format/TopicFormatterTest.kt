@@ -87,6 +87,17 @@ class TopicFormatterTest {
     }
 
     @Test
+    fun `applyStrictTopicLayout keeps a long-form paragraph break but collapses line wraps`() {
+        val topic = "🎮 **Silksong — дата.** Team Cherry назвала дату.\nРеліз на всіх платформах.\n\n" +
+            "  Ціна — 20 доларів.\r\n\r\nДругий абзац\nпродовжується. [Source](https://x/y)"
+        assertEquals(
+            "🎮 **Silksong — дата.**\n\nTeam Cherry назвала дату. Реліз на всіх платформах.\n\n" +
+                "Ціна — 20 доларів.\n\nДругий абзац продовжується.\n\n[Source](https://x/y)",
+            TopicFormatter.applyStrictLayout(topic)
+        )
+    }
+
+    @Test
     fun `applyStrictTopicLayout works without an emoji prefix`() {
         val topic = "**Splatoon Raiders — 23 липня.** Дата релізу підтверджена. [Source](https://x/y)"
         val out = TopicFormatter.applyStrictLayout(topic)

@@ -618,7 +618,31 @@ data class PostConfig(
     /** Live-data badge lines (Steam / HN / GitHub) under each bullet; see [BadgesConfig]. */
     val badges: BadgesConfig? = null,
     /** One Wikipedia line the first time a franchise / subject appears in the category; see [IntroConfig]. */
-    val intro: IntroConfig? = null
+    val intro: IntroConfig? = null,
+    /** Longer posts for the top-ranked events of a digest; see [LongFormConfig]. */
+    val longForm: LongFormConfig? = null
+)
+
+/**
+ * Long-form posts: the top-ranked events of a digest get a two-paragraph body instead of the
+ * usual 1–3 sentences. Which events is decided in code, not by the renderer: walking the
+ * post-ranker shortlist in order, the first [maxPerDigest] items whose composite score
+ * (newsworthiness/digestFit weighted as in `dedup.digest.ranker`) is >= [minComposite] are marked
+ * `depth = "long"`. For those the article page is fetched again with a [sourceChars] budget, so
+ * the renderer has real material for the extra text instead of padding a 1000-char RSS blurb.
+ *
+ * A long post goes out as a text message (4096-char budget) with the article image as a large
+ * link preview above the text, instead of a photo whose caption is capped at 1024 chars.
+ * The render prompt must handle the `depth` field (see `prompts/games-dedup.example.yaml`).
+ */
+data class LongFormConfig(
+    val enabled: Boolean = true,
+    /** Cap on long posts per delivered digest. */
+    val maxPerDigest: Int = 1,
+    /** Composite score (0–10) an event needs to qualify. */
+    val minComposite: Double = 8.0,
+    /** Characters of the refetched article text passed to the renderer for a long item. */
+    val sourceChars: Int = 5000
 )
 
 /**
@@ -1202,6 +1226,11 @@ object ConfigLoader {
             category.post?.let { post ->
                 post.threads?.let { t ->
                     require(t.maxAgeDays >= 1) { "Category '$name' post.threads.maxAgeDays must be >= 1 (got ${t.maxAgeDays})" }
+                }
+                post.longForm?.let { l ->
+                    require(l.maxPerDigest >= 1) { "Category '$name' post.longForm.maxPerDigest must be >= 1 (got ${l.maxPerDigest})" }
+                    require(l.minComposite in 0.0..10.0) { "Category '$name' post.longForm.minComposite must be within 0..10 (got ${l.minComposite})" }
+                    require(l.sourceChars >= 500) { "Category '$name' post.longForm.sourceChars must be >= 500 (got ${l.sourceChars})" }
                 }
                 post.intro?.let { i ->
                     require(i.languages.isNotEmpty()) { "Category '$name' post.intro.languages must not be empty" }
