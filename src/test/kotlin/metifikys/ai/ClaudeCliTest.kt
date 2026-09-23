@@ -59,17 +59,19 @@ class ClaudeCliTest {
 
     @Test
     fun `timeout is terminal for both retry loops and carries the CLI output tail`() {
+        // Same margins as CodexCliTest: a 1s timeout raced the shim's first echo on a slow start.
         val cmd = shim(
-            winBody = "echo still-waiting-upstream 1>&2\r\nping -n 5 127.0.0.1 >nul",
-            shBody = "echo still-waiting-upstream >&2\nsleep 5"
+            winBody = "echo still-waiting-upstream 1>&2\r\nping -n 61 127.0.0.1 >nul",
+            shBody = "echo still-waiting-upstream >&2\nsleep 60"
         )
-        // Default maxRetries (2) + outer maxRetry=3: without the fail-fast this would take minutes.
-        val cli = ClaudeCli(endpoint(), command = cmd, timeoutSeconds = 1)
+        // Default maxRetries (2) + outer maxRetry=3. Without the fail-fast a second attempt would
+        // first sit out the 60s retry back-off, so finishing under 30s proves a single attempt.
+        val cli = ClaudeCli(endpoint(), command = cmd, timeoutSeconds = 5, retryBackoffMillis = 60_000L)
         val started = System.nanoTime()
         val ex = assertThrows<CliTimeoutException> { cli.completeJson("sys", "hello", maxRetry = 3) }
         val elapsedSec = (System.nanoTime() - started) / 1_000_000_000.0
         assertTrue(ex.message?.contains("still-waiting-upstream") == true, "output tail missing: ${ex.message}")
-        assertTrue(elapsedSec < 15, "expected a single attempt, took ${elapsedSec}s")
+        assertTrue(elapsedSec < 30, "expected a single attempt, took ${elapsedSec}s")
     }
 
     @Test

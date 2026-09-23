@@ -96,18 +96,24 @@ class CodexCliTest {
         // 2026-09-04: a hung `codex exec` (OpenAI/Codex incident, ~132 KB Step-1 prompt) was
         // retried 3× inner × 4× outer = 12 × 20 min ≈ 4 h. A timeout must fail on the first
         // attempt and say what the CLI printed before it was killed.
+        //
+        // The timeout is 5s, not 1s: the shim has to print its line before the clock runs out, and
+        // a fresh .cmd (argv scan loop, AV scan of the new file) sometimes needed over a second to
+        // reach its first echo, so the tail came back "<no output>" in ~1 of 3 runs. The child
+        // sleeps far past the timeout, so the kill is still what ends the attempt.
         val cmd = shim(
-            winBody = "echo still-waiting-upstream 1>&2\r\nping -n 5 127.0.0.1 >nul",
-            shBody = "echo still-waiting-upstream >&2\nsleep 5"
+            winBody = "echo still-waiting-upstream 1>&2\r\nping -n 61 127.0.0.1 >nul",
+            shBody = "echo still-waiting-upstream >&2\nsleep 60"
         )
-        // Default maxRetries (2) + outer maxRetry=3: without the fail-fast this would take minutes.
-        val cli = CodexCli(endpoint(), command = cmd, timeoutSeconds = 1)
+        // Default maxRetries (2) + outer maxRetry=3. Without the fail-fast a second attempt would
+        // first sit out the 60s retry back-off, so finishing under 30s proves a single attempt.
+        val cli = CodexCli(endpoint(), command = cmd, timeoutSeconds = 5, retryBackoffMillis = 60_000L)
         val started = System.nanoTime()
         val ex = assertThrows<CliTimeoutException> { cli.completeJson("sys", "hello", maxRetry = 3) }
         val elapsedSec = (System.nanoTime() - started) / 1_000_000_000.0
         assertTrue(ex.message?.contains("timed out") == true, "got: ${ex.message}")
         assertTrue(ex.message?.contains("still-waiting-upstream") == true, "output tail missing: ${ex.message}")
-        assertTrue(elapsedSec < 15, "expected a single attempt, took ${elapsedSec}s")
+        assertTrue(elapsedSec < 30, "expected a single attempt, took ${elapsedSec}s")
     }
 
     @Test
