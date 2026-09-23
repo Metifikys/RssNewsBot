@@ -21,6 +21,8 @@ object DigestMessagesTable : Table("digest_messages") {
     val eventKey = varchar("event_key", 3000).nullable()
     val articleLinks = text("article_links").default("")   // newline-separated article links in this message
     val sentAt = datetime("sent_at").index()
+    /** Experiment arm of the post for reaction analysis (see [DigestMessageRow.variant]); null = none. */
+    val variant = varchar("variant", 20).nullable()
 
     override val primaryKey = PrimaryKey(chatId, messageId)
 
@@ -53,8 +55,20 @@ data class DigestMessageRow(
     val category: String,
     val eventKey: String?,
     val articleLinks: String,
-    val sentAt: LocalDateTime
-)
+    val sentAt: LocalDateTime,
+    /**
+     * Which experiment arm the post belongs to, so reactions can be compared per arm: `explore`
+     * (the anti-bubble pick), `persona` / `control` (the editor-remark A/B). Null for an ordinary
+     * post and for every row written before the column existed.
+     */
+    val variant: String? = null
+) {
+    companion object {
+        const val VARIANT_EXPLORE = "explore"
+        const val VARIANT_PERSONA = "persona"
+        const val VARIANT_CONTROL = "control"
+    }
+}
 
 /** A single emoji's current aggregated count on a message. */
 data class ReactionCount(val emoji: String, val count: Int)
@@ -173,6 +187,7 @@ internal class DigestMessageRepository : DigestMessageStore {
                     it[eventKey] = r.eventKey
                     it[articleLinks] = r.articleLinks
                     it[sentAt] = r.sentAt
+                    it[variant] = r.variant
                 }
             }
         }
@@ -225,7 +240,8 @@ internal class DigestMessageRepository : DigestMessageStore {
                             category = row[DigestMessagesTable.category],
                             eventKey = key,
                             articleLinks = row[DigestMessagesTable.articleLinks],
-                            sentAt = row[DigestMessagesTable.sentAt]
+                            sentAt = row[DigestMessagesTable.sentAt],
+                            variant = row[DigestMessagesTable.variant]
                         )
                     )
                 }
@@ -327,7 +343,8 @@ internal class DigestMessageRepository : DigestMessageStore {
         category = this[DigestMessagesTable.category],
         eventKey = this[DigestMessagesTable.eventKey],
         articleLinks = this[DigestMessagesTable.articleLinks],
-        sentAt = this[DigestMessagesTable.sentAt]
+        sentAt = this[DigestMessagesTable.sentAt],
+        variant = this[DigestMessagesTable.variant]
     )
 
     override fun fetchDigestMessage(chatId: Long, messageId: Long): DigestMessageRow? = transaction {

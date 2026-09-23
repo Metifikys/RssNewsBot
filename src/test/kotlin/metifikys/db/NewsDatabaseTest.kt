@@ -513,4 +513,16 @@ class NewsDatabaseTest {
 
         assertTrue(db.fetchLatestDigestMessagesByEventKeys("tech", emptyList(), older).isEmpty())
     }
+
+    @Test
+    fun `digest message variant round-trips and defaults to null`() {
+        val at = LocalDateTime.now().withNano(0)
+        db.insertDigestMessages(listOf(
+            DigestMessageRow(-100L, 60L, "gaming", "evt-x", "", at, variant = DigestMessageRow.VARIANT_EXPLORE),
+            DigestMessageRow(-100L, 61L, "gaming", "evt-y", "", at)
+        ))
+        assertEquals("explore", db.fetchDigestMessage(-100L, 60L)?.variant)
+        assertEquals(null, db.fetchDigestMessage(-100L, 61L)?.variant)
+        assertEquals("explore", db.fetchLatestDigestMessagesByEventKeys("gaming", setOf("evt-x"), at.minusDays(1)).getValue("evt-x").variant)
+    }
 }

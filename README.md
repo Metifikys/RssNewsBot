@@ -137,6 +137,11 @@ via a `/status` admin snapshot.
   `UNPROCESSED`, success wins on overlap.
 - **Post presentation** (`post:` per category, every sub-block optional; only the text that goes
   to Telegram changes — the stored summary and the reaction rows keep the clean bullet):
+  - **Footer order** — the lines under a bullet always come in one order, which is also the
+    priority when a caption is tight (the last lines are dropped first,
+    [`FooterLines`](src/main/kotlin/metifikys/format/FooterLines.kt)): 💬 persona, badges
+    (incl. ▶️ trailer), 📚 intro, 🧭 anti-bubble, 🔗 other channel, story lines (📢 / 🥇, ⚖️, 🌀),
+    📰 also, hashtags. A slot whose feature is off stays empty.
   - **threads** — a `meaningful_update` bullet is sent as a Telegram *reply* to the latest post
     about the same story (looked up in `digest_messages` by the item's related/own event key),
     so the channel shows a quote header that jumps to it.
@@ -1052,7 +1057,7 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 | `llm_calls`          | Per-call token + USD ledger feeding the `/status` cost panel             |
 | `article_embeddings` | One vector per article (Float32 little-endian blob, `dim * 4` bytes)     |
 | `event_embeddings`   | One vector per `(category, event_key)` for the log-only event-level analyzer (Float32 LE blob) |
-| `digest_messages`    | One row per delivered Telegram message linking `(chat_id, message_id)` → category + `event_key` + article links, for reaction attribution |
+| `digest_messages`    | One row per delivered Telegram message linking `(chat_id, message_id)` → category + `event_key` + article links, for reaction attribution; `variant` tags an experiment arm (`explore` / `persona` / `control`, null otherwise) |
 | `reaction_counts`    | Current aggregated reaction counts per `(chat_id, message_id, emoji)` from `message_reaction_count` updates (replace-all per message) |
 | `bot_state`          | Key/value store for restart-surviving runtime state (the Telegram `getUpdates` offset, tracker message ids + body hashes, `/pause` state as `pause:<category>`) |
 | `audience_affinity`  | Reaction-feedback scores per `(category, dimension, key)` with `n_tone` evidence counts, rebuilt on the maintenance tick |

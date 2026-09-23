@@ -12,6 +12,8 @@ import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
 import metifikys.enrich.BadgeResolver
 import metifikys.enrich.WikipediaIntroProvider
+import metifikys.format.FooterLines
+import metifikys.format.FooterLines.Slot
 import metifikys.format.Hashtags
 import metifikys.format.TopicDecorator
 import metifikys.format.TopicFormatter
@@ -420,10 +422,13 @@ class DigestDeliverer(
     }
 
     /**
-     * Footer lines for one bullet, in display order (most valuable first — [TopicDecorator]
-     * drops from the end when the message budget is tight): live-data badges, the first-mention
-     * intro, the story lines (📢 / 🥇, ⚖️ — resolved per digest), then the hashtag line. Lookups run
-     * under their time budgets and never throw.
+     * Footer lines for one bullet, in [FooterLines.Slot] order — display order and priority at
+     * once ([TopicDecorator] drops from the end when the message budget is tight): 💬 persona,
+     * badges (▶️ trailer included), 📚 intro, 🧭 anti-bubble, 🔗 other channel, the story lines
+     * (📢 / 🥇, ⚖️, 🌀 — resolved per digest), 📰 also, hashtags. Every URL a line carries is
+     * deterministic and added after the whitelist filter, so none reaches `saveSummary`,
+     * `previousUrls` or `digest_messages.article_links`. Lookups run under their time budgets
+     * and never throw.
      */
     private fun buildFooter(
         categoryName: String,
@@ -435,10 +440,10 @@ class DigestDeliverer(
         storyLines: List<String> = emptyList()
     ): List<String> {
         if (post == null) return emptyList()
-        val lines = mutableListOf<String>()
+        val footer = FooterLines()
         val enabledBadges = post.badges?.enabledIds.orEmpty()
         if (badgeResolver != null && enabledBadges.isNotEmpty()) {
-            lines += badgeResolver.resolve(enabledBadges, item, topicArticles, badgeDeadline, "[Category:$categoryName]")
+            footer.addAll(Slot.BADGES, badgeResolver.resolve(enabledBadges, item, topicArticles, badgeDeadline, "[Category:$categoryName]"))
         }
         val introCfg = post.intro
         if (introProvider != null && introCfg != null && introCfg.enabled && item != null && introBudget.remaining > 0) {
@@ -449,13 +454,14 @@ class DigestDeliverer(
                 null
             }
             if (line != null) {
-                lines += line
+                footer.add(Slot.INTRO, line)
                 introBudget.remaining--
             }
         }
-        lines += storyLines
+        footer.addAll(Slot.STORY, storyLines)
         val tags = Hashtags.forItem(item, post.hashtags)
-        if (tags.isNotEmpty()) lines += tags.joinToString(" ")
+        if (tags.isNotEmpty()) footer.add(Slot.HASHTAGS, tags.joinToString(" "))
+        val lines = footer.build()
         if (lines.isNotEmpty()) logger.debug { "[Category:$categoryName][Post] footer: $lines" }
         return lines
     }
