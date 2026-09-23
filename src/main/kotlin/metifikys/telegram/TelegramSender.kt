@@ -258,53 +258,67 @@ class TelegramSender(
         return post("sendMessage", payload, chatId)
     }
 
+    /** HTTP status and body of one Bot API call. */
+    private class RawResponse(val httpCode: Int, val body: String) {
+        val isSuccessful: Boolean get() = httpCode in 200..299
+    }
+
+    /** The error envelope of a non-2xx response, or null when the body is not one. */
+    private fun RawResponse.error(): SendMessageResponse? =
+        runCatching { json.decodeFromString(SendMessageResponse.serializer(), body) }.getOrNull()
+
     /**
-     * POSTs [payload] to the given Bot API [endpoint] and classifies the outcome as a [SendResult].
-     * The numeric chat id comes from the response `chat.id`; if absent it falls back to [chatId]
-     * when that is already numeric (a `@username` target yields 0).
-     *
-     * BUG-007: on HTTP 429 the `parameters.retry_after` seconds are honored and the SAME request is
-     * retried exactly once ([retryOn429] guards against a second retry). A 400 maps to [SendResult.BadRequest]
-     * (caller may retry as plain text); everything else (429-after-retry, 5xx, network) maps to
-     * [SendResult.Transient] (no plain-text fallback — the markup was valid).
+     * POSTs [payload] to the given Bot API [endpoint] — the transport every Bot API method goes
+     * through. BUG-007: on 429 the `parameters.retry_after` seconds are honored and the SAME request
+     * is retried exactly once; a second 429 is returned to the caller. Network errors propagate.
      */
-    private fun post(endpoint: String, payload: String, chatId: String, retryOn429: Boolean = true): SendResult {
-        val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
+    private fun execute(endpoint: String, payload: String, chatId: String, retryOn429: Boolean = true): RawResponse {
         val request = Request.Builder()
             .url("$apiBaseUrl/bot$botToken/$endpoint")
-            .post(body)
+            .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
+        val response = client.newCall(request).execute().use { RawResponse(it.code, it.body?.string().orEmpty()) }
+        if (response.isSuccessful || !retryOn429) return response
+        val err = response.error()
+        if ((err?.error_code ?: response.httpCode) != 429) return response
+        val retryAfter = (err?.parameters?.retry_after ?: DEFAULT_RETRY_AFTER_SEC).coerceIn(1, MAX_RETRY_AFTER_SEC)
+        logger.warn { "Telegram $endpoint 429 for $chatId — retrying once after ${retryAfter}s" }
+        Thread.sleep(retryAfter * 1000)
+        return execute(endpoint, payload, chatId, retryOn429 = false)
+    }
+
+    /**
+     * POSTs [payload] to the given Bot API [endpoint] (via [execute], so 429 is honored) and
+     * classifies the outcome as a [SendResult]. The numeric chat id comes from the response
+     * `chat.id`; if absent it falls back to [chatId] when that is already numeric (a `@username`
+     * target yields 0).
+     *
+     * A 400 maps to [SendResult.BadRequest] (caller may retry as plain text); everything else
+     * (429-after-retry, 5xx, network) maps to [SendResult.Transient] (no plain-text fallback — the
+     * markup was valid).
+     */
+    private fun post(endpoint: String, payload: String, chatId: String): SendResult {
         return try {
-            client.newCall(request).execute().use { response ->
-                val responseBody = response.body?.string().orEmpty()
-                if (response.isSuccessful) {
-                    val parsed = json.decodeFromString(SendMessageResponse.serializer(), responseBody)
-                    val result = parsed.result?.takeIf { parsed.ok }
-                    return@use if (result != null) {
-                        val resolvedChatId = result.chat?.id ?: chatId.toLongOrNull() ?: 0L
-                        SendResult.Ok(SentRef(resolvedChatId, result.message_id))
-                    } else {
-                        SendResult.Transient
-                    }
+            val response = execute(endpoint, payload, chatId)
+            if (response.isSuccessful) {
+                val parsed = json.decodeFromString(SendMessageResponse.serializer(), response.body)
+                val result = parsed.result?.takeIf { parsed.ok }
+                return if (result != null) {
+                    val resolvedChatId = result.chat?.id ?: chatId.toLongOrNull() ?: 0L
+                    SendResult.Ok(SentRef(resolvedChatId, result.message_id))
+                } else {
+                    SendResult.Transient
                 }
-                val err = runCatching { json.decodeFromString(SendMessageResponse.serializer(), responseBody) }.getOrNull()
-                val code = err?.error_code ?: response.code
-                when {
-                    code == 429 && retryOn429 -> {
-                        val retryAfter = (err?.parameters?.retry_after ?: DEFAULT_RETRY_AFTER_SEC)
-                            .coerceIn(1, MAX_RETRY_AFTER_SEC)
-                        logger.warn { "Telegram $endpoint 429 for $chatId — retrying once after ${retryAfter}s" }
-                        Thread.sleep(retryAfter * 1000)
-                        post(endpoint, payload, chatId, retryOn429 = false)
-                    }
-                    code == 400 -> {
-                        logger.warn { "Telegram $endpoint HTTP 400 for $chatId — ${err?.description ?: "bad request"}" }
-                        SendResult.BadRequest(err?.description)
-                    }
-                    else -> {
-                        logger.warn { "Telegram $endpoint HTTP $code for $chatId" }
-                        SendResult.Transient
-                    }
+            }
+            val err = response.error()
+            when (val code = err?.error_code ?: response.httpCode) {
+                400 -> {
+                    logger.warn { "Telegram $endpoint HTTP 400 for $chatId — ${err?.description ?: "bad request"}" }
+                    SendResult.BadRequest(err?.description)
+                }
+                else -> {
+                    logger.warn { "Telegram $endpoint HTTP $code for $chatId" }
+                    SendResult.Transient
                 }
             }
         } catch (e: Exception) {
@@ -371,19 +385,13 @@ class TelegramSender(
     fun unpinChatMessage(chatId: String, messageId: Long): Boolean =
         postBoolean("unpinChatMessage", json.encodeToString(PinMessageRequest(chatId, messageId)), chatId)
 
-    /** For Bot API methods whose `result` is a bare `true`. */
+    /** For Bot API methods whose `result` is a bare `true`. Goes through [execute], so 429 is honored. */
     private fun postBoolean(endpoint: String, payload: String, chatId: String): Boolean {
-        val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val request = Request.Builder()
-            .url("$apiBaseUrl/bot$botToken/$endpoint")
-            .post(body)
-            .build()
         return try {
-            client.newCall(request).execute().use { response ->
-                val ok = response.isSuccessful && response.body?.string().orEmpty().contains("\"ok\":true")
-                if (!ok) logger.warn { "Telegram $endpoint failed for $chatId (HTTP ${response.code})" }
-                ok
-            }
+            val response = execute(endpoint, payload, chatId)
+            val ok = response.isSuccessful && response.body.contains("\"ok\":true")
+            if (!ok) logger.warn { "Telegram $endpoint failed for $chatId (HTTP ${response.httpCode})" }
+            ok
         } catch (e: Exception) {
             logger.warn(e) { "Telegram $endpoint failed for $chatId" }
             false
@@ -391,20 +399,8 @@ class TelegramSender(
     }
 
     /** Deletes a previously sent message. Returns true on success. */
-    fun deleteMessage(chatId: String, messageId: Long): Boolean {
-        val payload = json.encodeToString(DeleteMessageRequest(chatId, messageId))
-        val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val request = Request.Builder()
-            .url("$apiBaseUrl/bot$botToken/deleteMessage")
-            .post(body)
-            .build()
-        return try {
-            client.newCall(request).execute().use { it.isSuccessful }
-        } catch (e: Exception) {
-            logger.warn(e) { "deleteMessage failed for $chatId/$messageId" }
-            false
-        }
-    }
+    fun deleteMessage(chatId: String, messageId: Long): Boolean =
+        postBoolean("deleteMessage", json.encodeToString(DeleteMessageRequest(chatId, messageId)), chatId)
 
     fun chunkMessage(text: String, maxLen: Int = 4096): List<String> {
         if (text.length <= maxLen) return listOf(text)

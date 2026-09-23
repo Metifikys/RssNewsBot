@@ -128,6 +128,38 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `pin, unpin and delete honour a 429 retry_after and retry once`() {
+        val paths = mutableListOf<String>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { ex ->
+            ex.requestBody.readBytes()
+            paths += ex.requestURI.path
+            // Every odd request is rate-limited, the retry that follows succeeds.
+            val (code, resp) = if (paths.size % 2 == 1) {
+                429 to """{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":1}}"""
+            } else {
+                200 to """{"ok":true,"result":true}"""
+            }
+            val bytes = resp.toByteArray()
+            ex.sendResponseHeaders(code, bytes.size.toLong())
+            ex.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}")
+            assertTrue(s.pinChatMessage("@ch", 7L))
+            assertTrue(s.unpinChatMessage("@ch", 7L))
+            assertTrue(s.deleteMessage("@ch", 7L))
+            assertEquals(
+                listOf("pinChatMessage", "pinChatMessage", "unpinChatMessage", "unpinChatMessage", "deleteMessage", "deleteMessage"),
+                paths.map { it.substringAfterLast('/') }
+            )
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun `photo posts reply too`() = withFakeApi { s, bodies ->
         val ref = s.sendPhotoToChannel("@ch", "https://img.example/1.jpg", caption = "cap", replyToMessageId = 11L)
         assertEquals(SentRef(-100123L, 42L), ref)
