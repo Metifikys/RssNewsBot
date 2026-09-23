@@ -802,6 +802,42 @@ class DigestDelivererTest {
         assertEquals("https://cdn.example.com/hero.jpg", deliver(null, cfg))
         assertEquals(null, deliver(null, cfg.copy(fromCluster = false)))
     }
+
+    // ── post.crossLinks (🔗) ─────────────────────────────────────────────────
+
+    @Test
+    fun `cross link sits after the intro slot and before the hashtags`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val vector = metifikys.digest.VectorMath.encode(floatArrayOf(1f, 0f))
+        every { db.fetchEventEmbeddings("tech", any()) } returns mapOf(
+            "evt-1" to metifikys.db.EventEmbeddingRow("tech", "evt-1", "S", "", "m", vector, LocalDateTime.now())
+        )
+        every { db.fetchRecentEventEmbeddings("science", any(), any()) } returns listOf(
+            metifikys.db.EventEmbeddingRow("science", "sci-1", "Big study", "", "m", vector, LocalDateTime.now())
+        )
+        every { db.fetchLatestDigestMessagesByEventKeys("science", setOf("sci-1"), any()) } returns
+            mapOf("sci-1" to DigestMessageRow(-100L, 5L, "science", "sci-1", "", LocalDateTime.now()))
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+        val base = configWithPost(
+            PostConfig(
+                hashtags = HashtagsConfig(category = "#tech"),
+                crossLinks = metifikys.config.CrossLinksConfig(categories = listOf("science"))
+            )
+        )
+        val cfg = base.copy(categories = base.categories + ("science" to CategoryConfig(
+            emoji = "🔬", feeds = listOf(FeedConfig("https://example.com/sci")), channelId = "@science"
+        )))
+        DigestDeliverer(cfg, db, sender)
+            .deliver("tech", "• **Story.**\n\n[Src](https://example.com/1)", listOf(article(1)), listOf(shortlistItem("evt-1", "https://example.com/1")))
+        assertEquals(
+            "**Story.**\n\n[Src](https://example.com/1)\n\n🔗 У 🔬 Science: [Big study](https://t.me/science/5)\n#tech",
+            sent.captured
+        )
+        verify { db.saveSummary("tech", match { "t.me" !in it }, 1) }
+    }
 }
 
 private typealias ImageCandidateOrNull = metifikys.fetch.ImageCandidate?

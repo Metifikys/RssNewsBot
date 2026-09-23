@@ -52,6 +52,7 @@ object ConfigChangelog {
         Entry("categories.*.post.official", "2026-09-23", "link the post to the press release / studio blog when the event cluster has one"),
         Entry("categories.*.post.images", "2026-09-23", "og:image first, no logos / avatars / small thumbnails, cluster fallback (needs enableImages)"),
         Entry("categories.*.post.badges.trailer", "2026-09-23", "▶️ trailer link: embedded YouTube video verified via oEmbed (badges.trailerEventTypes)"),
+        Entry("categories.*.post.crossLinks", "2026-09-23", "🔗 link to the related post in another category's channel (needs semanticDedup.eventEnabled; start with logOnly: true)"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */

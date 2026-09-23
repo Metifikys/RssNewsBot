@@ -165,4 +165,24 @@ class PostConfigTest {
         assertThrows<IllegalArgumentException> { load(yaml("post:\n  images:\n    minWidth: 500")) }
         assertThrows<IllegalArgumentException> { load(yaml("enableImages: true\npost:\n  images:\n    timeoutSeconds: 10\n    maxTotalSeconds: 5")) }
     }
+
+    @Test
+    fun `crossLinks block is parsed and needs known categories with event vectors`() {
+        val sd = "semanticDedup:\n  eventEnabled: true"
+        val ok = load(
+            yaml("$sd\npost:\n  crossLinks:\n    categories: [politics]\n    minSimilarity: 0.85\n    logOnly: true")
+                .replace("    channelId: \"@politics\"\n", "    channelId: \"@politics\"\n    $sd\n".replace("\n  eventEnabled", "\n      eventEnabled"))
+        )
+        val c = ok.categories.getValue("gaming").post!!.crossLinks!!
+        assertEquals(listOf("politics"), c.categories)
+        assertEquals(0.85, c.minSimilarity)
+        assertEquals(3L, c.maxAgeDays)
+        assertTrue(c.logOnly)
+
+        // politics has no semanticDedup.eventEnabled
+        assertThrows<IllegalArgumentException> { load(yaml("$sd\npost:\n  crossLinks:\n    categories: [politics]")) }
+        assertThrows<IllegalArgumentException> { load(yaml("$sd\npost:\n  crossLinks:\n    categories: [nope]")) }
+        assertThrows<IllegalArgumentException> { load(yaml("$sd\npost:\n  crossLinks:\n    categories: []")) }
+        assertThrows<IllegalArgumentException> { load(yaml("$sd\npost:\n  crossLinks:\n    categories: [gaming]")) }
+    }
 }

@@ -1017,7 +1017,30 @@ data class PostConfig(
     /** Link the post to the official source (press release, studio blog) when the cluster has it; see [OfficialConfig]. */
     val official: OfficialConfig? = null,
     /** Better post pictures: og:image first, logos / avatars / small thumbnails dropped; see [PostImagesConfig]. */
-    val images: PostImagesConfig? = null
+    val images: PostImagesConfig? = null,
+    /** `🔗 У 🖥 Tech: …` — the related post another category's channel already carries; see [CrossLinksConfig]. */
+    val crossLinks: CrossLinksConfig? = null
+)
+
+/**
+ * `🔗 У 🖥 Tech: [<subject>](https://t.me/…)`: the post about the same story that another
+ * category's channel already carries. The event's Layer-3.5 vector (`event_embeddings`, stored
+ * before delivery) is compared with the vectors of [categories] from the last [maxAgeDays] days,
+ * same embedding model only; the best one at cosine >= [minSimilarity] whose event actually
+ * reached its channel (`digest_messages`) is linked. No LLM, no new embedding call — this
+ * category and every listed one need `semanticDedup.eventEnabled`. A listed category that shares
+ * this category's channel is skipped. The link only points back (the newer post to the older).
+ *
+ * Every event with a candidate logs `[CrossLink] <key> ~ tech:<key2> sim=0.84`; [logOnly] keeps
+ * the line out of the post, to calibrate the threshold first (wordings differ between channels).
+ * `t.me/c/…` links (numeric channel ids) open only for members of that channel.
+ */
+data class CrossLinksConfig(
+    val enabled: Boolean = true,
+    val categories: List<String> = emptyList(),
+    val minSimilarity: Double = 0.82,
+    val maxAgeDays: Long = 3,
+    val logOnly: Boolean = false
 )
 
 /**
@@ -1933,6 +1956,21 @@ object ConfigLoader {
                     }
                     require(!o.enabled || category.dedup != null) {
                         "Category '$name' post.official needs a dedup: block — the candidates are Step 1's event clusters"
+                    }
+                }
+                post.crossLinks?.takeIf { it.enabled }?.let { c ->
+                    require(c.categories.isNotEmpty()) { "Category '$name' post.crossLinks.categories must not be empty" }
+                    require(name !in c.categories) { "Category '$name' post.crossLinks.categories must not list the category itself" }
+                    require(c.minSimilarity in 0.0..1.0) {
+                        "Category '$name' post.crossLinks.minSimilarity must be in [0.0, 1.0] (got ${c.minSimilarity})"
+                    }
+                    require(c.maxAgeDays >= 1) { "Category '$name' post.crossLinks.maxAgeDays must be >= 1 (got ${c.maxAgeDays})" }
+                    for (other in listOf(name) + c.categories) {
+                        val otherCfg = config.categories[other]
+                        require(otherCfg != null) { "Category '$name' post.crossLinks.categories: unknown category '$other'" }
+                        require(otherCfg.semanticDedup?.eventEnabled == true) {
+                            "Category '$name' post.crossLinks needs semanticDedup.eventEnabled on '$other' — the links compare the stored event vectors"
+                        }
                     }
                 }
                 post.images?.let { i ->

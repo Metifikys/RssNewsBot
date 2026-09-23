@@ -556,6 +556,19 @@ categories:
       #   ignore: []
       #   timeoutSeconds: 5
       #   maxTotalSeconds: 20
+      # 🔗 У 🖥 Tech: [<subject>](https://t.me/…) — the post about the same story that another
+      # category's channel already carries: this event's Layer-3.5 vector is compared with the
+      # listed categories' event vectors of the last maxAgeDays days (same model only); the best
+      # one at cosine >= minSimilarity that actually reached its channel is linked. No LLM, no
+      # new embedding call; this category and every listed one need semanticDedup.eventEnabled.
+      # A listed category on the same channel is skipped. Logs [CrossLink] <key> ~ tech:<key2>
+      # sim=0.84 — start with logOnly: true to calibrate the threshold. t.me/c/… links (numeric
+      # channel ids) open only for members of that channel.
+      # crossLinks:
+      #   categories: [tech]
+      #   minSimilarity: 0.82
+      #   maxAgeDays: 3
+      #   logOnly: true
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),

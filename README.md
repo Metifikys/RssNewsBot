@@ -212,6 +212,13 @@ via a `/status` admin snapshot.
     `ogimage`), then the topic's stored images, then the cluster's (`fromCluster`); `probe` sizes an
     undeclared picture from its first 64 KB (`Range` GET through the SSRF guard). No acceptable
     picture → a text post.
+  - **crossLinks** — `🔗 У 🖥 Tech: [<subject>](https://t.me/…)`: the post about the same story
+    in another category's channel. The event's stored Layer-3.5 vector (`event_embeddings`) is
+    compared with those of `categories` over `maxAgeDays` (same model); the best match at cosine
+    >= `minSimilarity` that has a `digest_messages` row is linked (a category on the same channel
+    is skipped). No LLM, no extra embedding call; needs `semanticDedup.eventEnabled` on both
+    sides ([`CrossLinks`](src/main/kotlin/metifikys/digest/CrossLinks.kt)). `[CrossLink]` logs
+    each match; `logOnly` keeps the line out. Links point back only (newer post → older).
 - **Industry barometer** (opt-in, `weekly.barometer`, needs `storyIntel`) — after the weekly
   roundup, a 1200×675 PNG of distinct subjects per ISO week over the last 12 weeks from
   `event_history`, one panel per series with its own scale: layoffs / closures (by type, or a

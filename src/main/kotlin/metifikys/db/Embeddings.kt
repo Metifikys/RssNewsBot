@@ -137,6 +137,9 @@ interface EmbeddingStore {
      */
     fun fetchRecentEventEmbeddings(category: String, sinceDays: Long, limit: Int): List<EventEmbeddingRow>
 
+    /** The stored vectors of [eventKeys] in [category], keyed by event key (the cross-channel links). */
+    fun fetchEventEmbeddings(category: String, eventKeys: Collection<String>): Map<String, EventEmbeddingRow>
+
     /** Deletes event embedding rows older than [retentionDays] (by `created_at`). */
     fun pruneOldEventEmbeddings(retentionDays: Long)
 }
@@ -282,6 +285,26 @@ internal class EmbeddingRepository : EmbeddingStore {
                 }
         }
     }
+
+    override fun fetchEventEmbeddings(category: String, eventKeys: Collection<String>): Map<String, EventEmbeddingRow> {
+        if (eventKeys.isEmpty()) return emptyMap()
+        return transaction {
+            EventEmbeddingsTable
+                .selectAll()
+                .where { (EventEmbeddingsTable.category eq category) and (EventEmbeddingsTable.eventKey inList eventKeys.toSet()) }
+                .associate { it[EventEmbeddingsTable.eventKey] to it.toEventEmbeddingRow() }
+        }
+    }
+
+    private fun ResultRow.toEventEmbeddingRow() = EventEmbeddingRow(
+        category = this[EventEmbeddingsTable.category],
+        eventKey = this[EventEmbeddingsTable.eventKey],
+        subject = this[EventEmbeddingsTable.subject],
+        franchise = this[EventEmbeddingsTable.franchise],
+        model = this[EventEmbeddingsTable.model],
+        vector = this[EventEmbeddingsTable.vector].bytes,
+        createdAt = this[EventEmbeddingsTable.createdAt]
+    )
 
     override fun pruneOldEventEmbeddings(retentionDays: Long) {
         val cutoff = LocalDateTime.now().minusDays(retentionDays)

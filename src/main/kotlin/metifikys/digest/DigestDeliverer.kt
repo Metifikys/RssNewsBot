@@ -174,6 +174,8 @@ class DigestDeliverer(
         val introBudget = IntroBudget(postCfg?.intro?.maxPerDigest ?: 0)
         // Story lines (📢 / 🥇 / ⚖️): one cluster lookup per digest, before the send loop; eventKey → lines.
         val storyLinesByKey = resolveStoryLines(categoryName, shortlist, resolvedArticles, postCfg?.storyLines)
+        // 🔗 the related post in another category's channel: one vector / digest_messages lookup per digest.
+        val crossLinkByKey = crossLinks.resolve(categoryName, shortlist, postCfg?.crossLinks)
         // Feed url → its `label`, for the names in the 📰 also line.
         val feedLabels = categoryConfig.feeds.mapNotNull { f -> f.label?.let { f.url to it } }.toMap()
 
@@ -216,7 +218,7 @@ class DigestDeliverer(
             val replyTo = eventKey?.let { replyTargets[it] }
             val topicArticles = topicUrls[idx].mapNotNull { articleByLink[it] }
             val storyLines = eventKey?.let { storyLinesByKey[it] }.orEmpty()
-            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLines, articleByLink, feedLabels)
+            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLines, articleByLink, feedLabels, eventKey?.let { crossLinkByKey[it] })
             // Long-form (post.longForm): a text message with the image as a large link preview
             // above it, so neither the body nor the footer is squeezed into the 1024-char caption.
             // A long post that fits a caption anyway still goes out as a normal photo post.
@@ -349,6 +351,7 @@ class DigestDeliverer(
 
     private val storyClusters = StoryClusterLoader(config, db)
     private val historyRecorder = EventHistoryRecorder(config, db)
+    private val crossLinks = CrossLinks(config, db)
 
     /**
      * `post.storyLines`: eventKey → the story footer lines, from one `event_articles` lookup per
@@ -452,7 +455,8 @@ class DigestDeliverer(
         introBudget: IntroBudget,
         storyLines: List<String> = emptyList(),
         articleByLink: Map<String, Article> = emptyMap(),
-        feedLabels: Map<String, String> = emptyMap()
+        feedLabels: Map<String, String> = emptyMap(),
+        crossLink: String? = null
     ): List<String> {
         if (post == null) return emptyList()
         val footer = FooterLines()
@@ -473,6 +477,7 @@ class DigestDeliverer(
                 introBudget.remaining--
             }
         }
+        footer.add(Slot.CROSS_LINK, crossLink)
         footer.addAll(Slot.STORY, storyLines)
         val alsoCfg = post.also
         if (alsoCfg != null && alsoCfg.enabled && item != null) {
