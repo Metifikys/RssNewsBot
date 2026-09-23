@@ -71,7 +71,9 @@ class DigestDeliverer(
     /** telegra.ph pages for long posts (`post.longForm.telegraph`); null when no category sets it. */
     private val telegraph: TelegraphPublisher? = null,
     /** The editor persona's remark under the top event (`post.persona`); null when no category sets it. */
-    private val personaWriter: PersonaWriter? = null
+    private val personaWriter: PersonaWriter? = null,
+    /** Sampled, log-only judge of the sent posts against their sources (`factCheck`); null when off. */
+    private val factChecker: FactChecker? = null
 ) {
 
     /**
@@ -159,6 +161,9 @@ class DigestDeliverer(
         val digestMessageRows = mutableListOf<DigestMessageRow>()
         val moderated = mutableListOf<ModeratedPost>()
         val moderate = moderationNotifier?.appliesTo(categoryName) == true
+        // factCheck: the clean topic of every sent post with the sources its render saw.
+        val checkFacts = factChecker?.appliesTo(categoryName) == true
+        val factCheckPosts = mutableListOf<FactChecker.Post>()
         val sentAt = LocalDateTime.now()
 
         // post.images: one og:image / probe budget per delivered digest.
@@ -275,6 +280,15 @@ class DigestDeliverer(
                         variant = variant
                     )
                 }
+                if (checkFacts) {
+                    val first = refs.first()
+                    val sources = if (item != null) {
+                        metifikys.ai.PromptBuilder.renderSourcesFor(item, resolvedArticles)
+                    } else {
+                        topicArticles.mapIndexed { i, a -> metifikys.ai.PromptBuilder.RenderSource(i, a.title, a.promptText(), a.link) }
+                    }
+                    factCheckPosts += FactChecker.Post(first.chatId, first.messageId, eventKey, topic, sources)
+                }
                 if (moderate) {
                     val first = refs.first()
                     moderated += ModeratedPost(
@@ -307,6 +321,8 @@ class DigestDeliverer(
             }
             // After the channel sends: the admin-chat messages go out on the notifier's own thread.
             moderationNotifier?.afterDigest(categoryName, moderated)
+            // Log-only fact check of the sent posts, on the checker's own thread.
+            if (factCheckPosts.isNotEmpty()) factChecker?.afterDelivery(categoryName, categoryConfig, factCheckPosts)
         }
 
         when {

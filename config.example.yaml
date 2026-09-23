@@ -192,6 +192,26 @@ processing:
   # (The Step-1 extract batch is separate; disable it by using a non-batch extract endpoint.)
   primaryMaxPending: 2     # primary batch capacity before promoting to fallback (0 = batch off)
   secondaryMaxPending: 1   # additional capacity on the fallback before sync render
+  # shadowRetentionDays: 30  # how long `llm.shadow` pairs stay in shadow_runs
+
+# Optional: 🧐 LLM fact-check of the sent posts (off by default). After a digest went out, a
+# share of its posts goes to a judge model with EXACTLY the source text the render saw (the
+# long-form full text included); the judge lists claims the sources do not support. Log-only:
+# verdicts land in `fact_checks` and /status (`🧐 Fact-check 7d: …`, plus ⚠️ with links to the
+# latest unsupported posts above the threshold) — no post is ever edited, deleted or held back.
+# Own thread, never delays delivery; a judge failure is a warning. Posts are Ukrainian and sources
+# mostly English, so pick a multilingual judge and give a free model a fallback. Expect false
+# alarms on general context at first: review them (bench/factcheck-dump.mjs) and tune the prompt.
+# factCheck:
+#   enabled: true
+#   sampleRate: 0.2                  # share of sent posts that are checked
+#   categories: []                   # empty = every category
+#   judge: { provider: openrouter, model: "nvidia/nemotron-3-ultra-550b-a55b:free",
+#            fallback: { provider: codexcli, model: gpt-5.4-mini } }
+#   promptFile: "prompts/factcheck.yaml"   # omit = built-in Ukrainian prompt (see prompts/factcheck.example.yaml)
+#   alert: { windowDays: 7, minChecks: 10, maxUnsupportedRate: 0.15 }
+#   retentionDays: 90
+#   queueSize: 32                    # checks waiting for the judge; more are dropped
 
 # Optional: include previous digest summaries as context to avoid repeating
 # already-covered news. Summaries are stored in the database and injected

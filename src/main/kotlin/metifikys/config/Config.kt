@@ -531,7 +531,46 @@ data class AppConfig(
      * without any pricing knowledge. Batch-API calls are auto-halved by
      * [metifikys.ai.LlmPricing].
      */
-    val pricing: List<LlmPriceEntry> = emptyList()
+    val pricing: List<LlmPriceEntry> = emptyList(),
+    /** Sampled, log-only LLM judge of the delivered posts against their sources; see [FactCheckConfig]. */
+    val factCheck: FactCheckConfig = FactCheckConfig()
+)
+
+/**
+ * `factCheck`: after a digest went out, a share ([sampleRate]) of its posts is sent to a judge
+ * model together with EXACTLY the source text the render saw (the long-form full text included),
+ * which lists the post's claims the sources do not support. Log-only: the verdict lands in
+ * `fact_checks` and `/status` (🧐 line, ⚠️ with links to the latest unsupported posts once the
+ * rate over [alert] passes the threshold); nothing is edited, deleted or held back. Runs on its
+ * own thread, never delays delivery; a judge failure is a warning and no row.
+ *
+ * The post is Ukrainian and the sources are mostly English, so the judge must be multilingual;
+ * with a free OpenRouter model give it a `fallback`. Expect false alarms on general context the
+ * render may add ("studio X, the makers of Y") — review the first weeks by hand and tune
+ * [promptFile] (keys `factCheck.system` / `factCheck.user`, see `prompts/factcheck.example.yaml`).
+ */
+data class FactCheckConfig(
+    val enabled: Boolean = false,
+    /** Share of delivered posts that are checked, 0.0–1.0. */
+    val sampleRate: Double = 0.2,
+    /** Categories to check; empty = every category. */
+    val categories: List<String> = emptyList(),
+    /** The judge model (required when enabled); may carry an on-failure `fallback` chain. */
+    val judge: LlmOverride? = null,
+    /** Own prompts; null = the built-in Ukrainian prompt. */
+    val promptFile: String? = null,
+    val alert: FactCheckAlertConfig = FactCheckAlertConfig(),
+    /** How long `fact_checks` rows are kept, days. */
+    val retentionDays: Long = 90,
+    /** Checks waiting for the judge beyond the one in flight; more are dropped. */
+    val queueSize: Int = 32
+)
+
+/** When `/status` raises ⚠️: at least [minChecks] checks in [windowDays] and an unsupported share above [maxUnsupportedRate]. */
+data class FactCheckAlertConfig(
+    val windowDays: Long = 7,
+    val minChecks: Int = 10,
+    val maxUnsupportedRate: Double = 0.15
 )
 
 /**
@@ -1863,6 +1902,22 @@ object ConfigLoader {
         }
         require(config.processing.shadowRetentionDays >= 1) {
             "processing.shadowRetentionDays must be >= 1 (got ${config.processing.shadowRetentionDays})"
+        }
+        config.factCheck.takeIf { it.enabled }?.let { fc ->
+            val judge = requireNotNull(fc.judge) { "factCheck.judge is required when factCheck.enabled (provider + model of the judge)" }
+            validateOverride("factCheck", "judge", judge, config.openrouter, config.anthropic, config.claudeCli, config.codexCli)
+            require(!judge.batch) { "factCheck.judge: batch=true is not supported — the judge runs synchronously" }
+            require(fc.sampleRate in 0.0..1.0) { "factCheck.sampleRate must be in [0.0, 1.0] (got ${fc.sampleRate})" }
+            require(fc.retentionDays >= 1) { "factCheck.retentionDays must be >= 1 (got ${fc.retentionDays})" }
+            require(fc.queueSize >= 1) { "factCheck.queueSize must be >= 1 (got ${fc.queueSize})" }
+            require(fc.alert.windowDays >= 1) { "factCheck.alert.windowDays must be >= 1 (got ${fc.alert.windowDays})" }
+            require(fc.alert.minChecks >= 1) { "factCheck.alert.minChecks must be >= 1 (got ${fc.alert.minChecks})" }
+            require(fc.alert.maxUnsupportedRate in 0.0..1.0) {
+                "factCheck.alert.maxUnsupportedRate must be in [0.0, 1.0] (got ${fc.alert.maxUnsupportedRate})"
+            }
+            for (c in fc.categories) {
+                require(c in config.categories) { "factCheck.categories references unknown category '$c' — must match a key under categories:" }
+            }
         }
         config.archive?.let { a ->
             require(a.rotation in ArchiveConfig.ROTATIONS) {

@@ -3,6 +3,7 @@ package metifikys.ai.dedup
 import metifikys.ai.PromptBuilder
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
+import metifikys.digest.FactChecker
 import metifikys.digest.WeeklyDigest
 import java.io.File
 
@@ -31,7 +32,8 @@ class PromptValidator(
 ) {
 
     fun validate(config: AppConfig): List<PromptFinding> =
-        config.categories.flatMap { (name, cat) -> validateCategory(name, cat, config) } + validateWeekly(config)
+        config.categories.flatMap { (name, cat) -> validateCategory(name, cat, config) } + validateWeekly(config) +
+            validateFactCheck(config)
 
     /** Categories whose `dedup.promptFile` is [file] (canonical) — the ones a hot reload affects. */
     fun categoriesUsing(file: File, config: AppConfig): List<String> =
@@ -121,6 +123,21 @@ class PromptValidator(
             val message = if (it.level == PromptFinding.Level.ERROR) "${it.message} — no shadow run" else it.message
             it.copy(level = level, slot = "shadow:${it.slot}", message = message)
         }
+    }
+
+    /** `factCheck.promptFile`: WARN when it cannot be used — the judge then runs on the built-in prompt. */
+    fun validateFactCheck(config: AppConfig): List<PromptFinding> {
+        val fc = config.factCheck.takeIf { it.enabled } ?: return emptyList()
+        val file = fc.promptFile ?: return emptyList()
+        val out = mutableListOf<PromptFinding>()
+        FactChecker.promptFileProblem(file, baseDir)?.let {
+            out += PromptFinding(PromptFinding.Level.WARN, "factCheck", "promptFile", "$it — the built-in prompt is used")
+        }
+        FactChecker.loadPrompts(file, baseDir)?.let { p ->
+            unknownIn(p.system, FactChecker.PLACEHOLDERS)?.let { out += PromptFinding(PromptFinding.Level.WARN, "factCheck", "system", it) }
+            unknownIn(p.user, FactChecker.PLACEHOLDERS)?.let { out += PromptFinding(PromptFinding.Level.WARN, "factCheck", "user", it) }
+        }
+        return out
     }
 
     fun validateWeekly(config: AppConfig): List<PromptFinding> {

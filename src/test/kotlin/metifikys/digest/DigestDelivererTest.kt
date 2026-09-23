@@ -961,6 +961,32 @@ class DigestDelivererTest {
         verify(exactly = 1) { writer.write(any(), any(), any(), any(), any()) }
         verify { db.saveSummary("tech", match { "💬" !in it }, 2) }
     }
+    // ── factCheck ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `the fact checker gets the clean topic without the footer and the render's sources`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendToChannel(any(), any(), any(), any()) } returns listOf(SentRef(-100L, 11L))
+        val checker = mockk<FactChecker>(relaxed = true)
+        every { checker.appliesTo("tech") } returns true
+        val posts = slot<List<FactChecker.Post>>()
+        every { checker.afterDelivery("tech", any(), capture(posts)) } returns Unit
+
+        val articles = listOf(article(1))
+        val shortlist = listOf(shortlistItem("evt-1", article(1).link).copy(franchise = "Hollow Knight", articleIndices = listOf(0)))
+        val summary = "• **Story.**\n\nBody.\n\n[Title 1](https://example.com/1)"
+        DigestDeliverer(configWithPost(PostConfig(hashtags = HashtagsConfig(category = "#tech"))), db, sender, factChecker = checker)
+            .deliver("tech", summary, articles, shortlist)
+
+        val post = posts.captured.single()
+        assertEquals("**Story.**\n\nBody.\n\n[Title 1](https://example.com/1)", post.topic)
+        assertEquals(11L, post.messageId)
+        assertEquals("evt-1", post.eventKey)
+        assertEquals(listOf("https://example.com/1"), post.sources.map { it.url })
+        assertEquals("desc 1", post.sources.single().text)
+    }
 }
 
 private typealias ImageCandidateOrNull = metifikys.fetch.ImageCandidate?

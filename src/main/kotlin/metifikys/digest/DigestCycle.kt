@@ -416,6 +416,7 @@ class DigestCycle(
         db.deleteOldEventArticles(config.storyIntel.retentionDays)
         db.deleteOldEventHistory(config.storyIntel.historyRetentionDays)
         db.deleteOldShadowRuns(config.processing.shadowRetentionDays)
+        db.deleteOldFactChecks(config.factCheck.retentionDays)
     }
 
     /**

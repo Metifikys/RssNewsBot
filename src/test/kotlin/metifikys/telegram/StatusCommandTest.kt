@@ -249,4 +249,48 @@ class StatusCommandTest {
         every { db.fetchEventArticlesSince(any(), any()) } returns storyRows()
         assertTrue("Хто першим" !in firstSourceStatus(false, db).build())
     }
+
+    // ── factCheck ─────────────────────────────────────────────────────────────
+
+    private fun factConfig() = AppConfig(
+        telegram = metifikys.config.TelegramConfig(botToken = "t"),
+        openai = metifikys.config.OpenAIConfig(apiKey = "sk"),
+        database = metifikys.config.DatabaseConfig(path = ":memory:"),
+        scheduler = metifikys.config.SchedulerConfig(intervalMinutes = 60),
+        categories = mapOf("tech" to CategoryConfig(emoji = "💻", feeds = listOf(FeedConfig("https://e.com/rss")), channelId = "-1001234567890")),
+        factCheck = metifikys.config.FactCheckConfig(
+            enabled = true, judge = metifikys.config.LlmOverride("openai", "m"),
+            alert = metifikys.config.FactCheckAlertConfig(windowDays = 7, minChecks = 4, maxUnsupportedRate = 0.2)
+        )
+    )
+
+    private fun check(verdict: String, messageId: Long) = metifikys.db.FactCheckRow(
+        "tech", -1001234567890L, messageId, "k$messageId", "post", 100, verdict, "[]", "openai", "m", LocalDateTime.now().minusHours(messageId)
+    )
+
+    @Test
+    fun `fact-check section is hidden below minChecks`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchFactChecks(any()) } returns listOf(check("supported", 1), check("unsupported", 2))
+        val text = StatusCommand(factConfig(), db, CycleErrorLog()).build()
+        assertTrue("Fact-check" !in text, text)
+    }
+
+    @Test
+    fun `fact-check line, and the warning with links once unsupported passes the threshold`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchFactChecks(any()) } returns listOf(
+            check("supported", 1), check("minor", 2), check("supported", 3), check("supported", 4), check("supported", 5)
+        )
+        val calm = StatusCommand(factConfig(), db, CycleErrorLog()).build()
+        assertTrue("🧐 Fact-check 7d: 5 · unsupported 0 (0%) · minor 1" in calm, calm)
+        assertTrue("⚠️ unsupported" !in calm, calm)
+
+        every { db.fetchFactChecks(any()) } returns listOf(
+            check("unsupported", 1), check("unsupported", 2), check("supported", 3), check("supported", 4)
+        )
+        val alarmed = StatusCommand(factConfig(), db, CycleErrorLog()).build()
+        assertTrue("🧐 Fact-check 7d: 4 · unsupported 2 (50%) · minor 0" in alarmed, alarmed)
+        assertTrue("⚠️ unsupported above 20%: https://t.me/c/1234567890/1 https://t.me/c/1234567890/2" in alarmed, alarmed)
+    }
 }

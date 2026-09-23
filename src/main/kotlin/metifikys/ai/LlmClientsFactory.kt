@@ -68,6 +68,16 @@ class LlmClientsFactory(
     }
 
     /**
+     * The `factCheck.judge` client, metered as [LlmUseCase.JUDGE] under [category] so `/status`
+     * shows its calls per category; null when no judge is configured. Sync, with its fallback chain.
+     */
+    fun forJudge(category: CategoryConfig?): LlmClient? {
+        val ovr = config.factCheck.judge ?: return null
+        val primary = meter(client(overrideEndpoint(ovr), batchCapable = false), category, LlmUseCase.JUDGE)
+        return withFallback(ovr, primary, category, LlmUseCase.JUDGE)
+    }
+
+    /**
      * Client for the global `openrouter:` default, honoring the `models:` priority ladder:
      * the first model is primary and each later one serves as the on-failure fallback for
      * the one before it ([FallbackLlmClient] chain). Free-tier endpoints come and go by

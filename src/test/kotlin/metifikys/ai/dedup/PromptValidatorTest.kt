@@ -254,4 +254,15 @@ class PromptValidatorTest {
         val findings = PromptValidator(PromptLoader(tmp.toFile()), tmp.toFile()).validate(config(shadowCat))
         assertTrue(findings.none { it.slot.startsWith("shadow:") }, findings.toString())
     }
+
+    @Test
+    fun `an unusable factCheck prompt file is a WARN, the built-in prompt is used`() {
+        val fc = metifikys.config.FactCheckConfig(
+            enabled = true, judge = metifikys.config.LlmOverride("openai", "m"), promptFile = "prompts/factcheck.yaml"
+        )
+        val findings = PromptValidator(PromptLoader(tmp.toFile()), tmp.toFile()).validate(config().copy(factCheck = fc))
+        val f = findings.single { it.category == "factCheck" }
+        assertEquals(Level.WARN, f.level)
+        assertTrue("built-in prompt" in f.message, f.message)
+    }
 }

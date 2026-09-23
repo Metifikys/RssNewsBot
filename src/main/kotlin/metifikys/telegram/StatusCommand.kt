@@ -95,6 +95,7 @@ class StatusCommand(
         appendReactionsSection(sb)
         appendVariantsSection(sb)
         appendShadowLine(sb)
+        appendFactCheckSection(sb)
         appendAffinitySection(sb)
         appendFeedHealthSection(sb)
         appendFirstSourceSection(sb)
@@ -178,6 +179,23 @@ class StatusCommand(
             val arms = byCategory[name] ?: continue
             sb.append("  ${escapeMarkdown(name)}: ${arms.joinToString(" | ") { metifikys.feedback.VariantStats.cell(it) }}\n")
         }
+    }
+
+    /**
+     * `factCheck`: `🧐 Fact-check 7d: …` over the alert window, plus ⚠️ with links to the latest
+     * unsupported posts above the threshold; hidden below `alert.minChecks` or on a query failure.
+     */
+    private fun appendFactCheckSection(sb: StringBuilder) {
+        val fc = config.factCheck.takeIf { it.enabled } ?: return
+        val rows = try {
+            db.fetchFactChecks(LocalDateTime.now().minusDays(fc.alert.windowDays))
+        } catch (e: Exception) {
+            logger.warn(e) { "[/status] fetchFactChecks failed — omitting the fact-check section" }
+            return
+        }
+        val lines = metifikys.digest.FactChecker.statusLines(rows, fc.alert) { config.categories[it]?.channelId } ?: return
+        sb.append('\n')
+        lines.forEach { sb.append(it).append('\n') }
     }
 
     /** `llm.shadow`: one line over the last 24h of `shadow_runs`; omitted without runs or on a query failure. */

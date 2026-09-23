@@ -26,6 +26,7 @@ import metifikys.digest.MuteRegistry
 import metifikys.digest.PauseStore
 import metifikys.digest.PersonaWriter
 import metifikys.digest.ShadowRunner
+import metifikys.digest.FactChecker
 import metifikys.digest.PostImages
 import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.TrackerUpdater
@@ -251,6 +252,10 @@ class NewsBot(
     private val moderationNotifier: ModerationNotifier? =
         moderationExecutor?.let { ModerationNotifier(config, db, muteRegistry, sender, it) }
 
+    /** `factCheck`: the log-only judge of sent posts; null when off. */
+    private val factChecker: FactChecker? =
+        if (config.factCheck.enabled) FactChecker(config.factCheck, db, { llmClientsFactory.forJudge(it) }) else null
+
     internal val deliverer =
         DigestDeliverer(
             config, db, sender, badgeResolver, introProvider, trackerUpdater, moderationNotifier,
@@ -260,7 +265,8 @@ class NewsBot(
             } else null,
             personaWriter = if (config.categories.values.any { it.post?.persona?.enabled == true }) {
                 PersonaWriter({ llmClientsFactory.forPersona(it) })
-            } else null
+            } else null,
+            factChecker = factChecker
         )
 
     /** `llm.shadow` B runs; only when some category configures a shadow. */
@@ -446,6 +452,7 @@ class NewsBot(
             adminExecutor?.shutdownNow()
             moderationExecutor?.shutdownNow()
             shadowRunner?.shutdown()
+            factChecker?.shutdown()
             val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             try {
                 for (executor in executors) {

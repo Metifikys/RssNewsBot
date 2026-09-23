@@ -319,6 +319,15 @@ via a `/status` admin snapshot.
 - **`/status` admin snapshot** — per-category last digest + ready count + pending batches +
   24h/7d LLM cost (per provider × category), posted one-message-at-a-time so the admin chat
   always shows the latest state.
+- **🧐 Fact-check** (opt-in, `factCheck:`) — after delivery a sampled share of the sent posts
+  goes, on its own thread, to a judge model together with exactly the sources the render saw
+  (`PromptBuilder.renderSourcesFor`: the item's articles, long-form full text included; for a
+  legacy topic the articles it links); the judge answers
+  `{verdict: supported|minor|unsupported, claims: [...]}` and the row lands in `fact_checks`.
+  Log-only — nothing is edited or blocked. `/status`: `🧐 Fact-check 7d: 42 · unsupported 3 (7%)
+  · minor 5` once `alert.minChecks` checks exist, and a ⚠️ line with links to the 3 latest
+  unsupported posts above `alert.maxUnsupportedRate`. `node bench/factcheck-dump.mjs` lists the
+  verdicts with their claims for calibrating the prompt (`prompts/factcheck.example.yaml`).
 - **Admin commands** (opt-in, `admin.commands.enabled`) — the same `getUpdates` poller also
   subscribes to `message` + `callback_query` and routes them to
   [`AdminCommandRouter`](src/main/kotlin/metifikys/telegram/AdminCommandRouter.kt) /
@@ -1009,6 +1018,7 @@ first cycle.
 | `storyIntel`      | no       | Record story clusters in `event_articles` and delivered events in `event_history`: `enabled`, `retentionDays` (180, ≥ `weekly.lookbackDays`), `historyRetentionDays` (1095), `domainAliases` (off by default; the story lines need it) |
 | `telegraph`       | no       | telegra.ph account for `post.longForm.telegraph`: `accessToken` (env `TELEGRAPH_TOKEN`), `shortName`, `authorName`, `authorUrl`, `timeoutSeconds` |
 | `pricing`         | no       | USD/1M tokens per (provider, model)                          |
+| `factCheck`       | no       | 🧐 Log-only LLM judge of sent posts vs. their render sources: `enabled`, `sampleRate` (0.2), `categories`, `judge` (+ `fallback`), `promptFile` (`factCheck.system` / `.user`), `alert` (`windowDays` 7, `minChecks` 10, `maxUnsupportedRate` 0.15), `retentionDays` (90), `queueSize` (off by default) |
 | `categories`      | yes      | Map of category name → `CategoryConfig`                     |
 
 ### `processing` knobs (all optional)
@@ -1188,6 +1198,7 @@ next to the golden one and prints the shortlist Jaccard, status / score changes 
 | `tracker_entries`    | Living-tracker state per `(category, tracker, entity)`: event date, previous date, status, latest post |
 | `admin_mutes`        | Keyword mutes added from Telegram (`/mute`, suggestions, moderation), merged over the YAML mute lists; `category` null = global |
 | `admin_feedback`     | Explicit 👍/👎/🗑 per post from the moderation buttons (last press wins), with the post's category, event and send time; kept apart from `reaction_counts`, which every reaction update replaces |
+| `fact_checks`        | `factCheck` verdicts: per judged post its category, `chat_id` / `message_id`, event key, post text (no footer), source chars, `verdict` (`supported` / `minor` / `unsupported`), the judge's `claims_json`, judge provider / model, `checked_at`; kept `factCheck.retentionDays` (90) |
 | `shadow_runs`        | `llm.shadow` pairs: per Step 1 batch or render, A's and B's provider / model / prompt hash, the post-processed output of each (Step 1 shortlist + drops, or the prepared topics; B's raw answer when it did not parse), their links, B's error and latency; kept `processing.shadowRetentionDays` |
 | `mute_suggestions`   | Mute proposals sent to the admin chat with their evidence, 30-day hit counts, message id and decision (`pending`/`approved`/`rejected`) |
 
@@ -1202,7 +1213,7 @@ batch is pending:
 - `deleteOldBatches(2)` — completed/failed batch records.
 - `deleteOldDigestMessages(90)` / `deleteOldReactionCounts(90)` — reaction-tracking retention.
 - `deleteOldLlmCalls(llmCallRetentionDays)` / `pruneOldEmbeddings(embeddingRetentionDays)`.
-- `deleteOldShadowRuns(shadowRetentionDays)` — `llm.shadow` pairs (30 days).
+- `deleteOldShadowRuns(shadowRetentionDays)` — `llm.shadow` pairs (30 days); `deleteOldFactChecks(factCheck.retentionDays)` (90).
 - `deleteOldBadgeCache(7)` / `deleteOldEntityIntros(730)` / `deleteOldTrackerEntries(365)` — footer
   badge cache, first-mention memory, tracker rows not touched by any digest.
 

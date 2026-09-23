@@ -862,4 +862,33 @@ $shadow
             load(shadowYaml("                render: { provider: openrouter, model: m }\n                sampleRate: 1.5"))
         }
     }
+
+    @Test
+    fun `factCheck needs a judge when enabled and a known category`() {
+        val base = """
+            telegram:
+              botToken: "tok"
+            openai:
+              apiKey: "sk-test"
+            database:
+              path: "test.db"
+            scheduler:
+              intervalMinutes: 60
+            categories:
+              tech:
+                emoji: "💻"
+                channelId: "@tech"
+                feeds:
+                  - https://example.com/feed
+        """.trimIndent()
+        assertThrows<IllegalArgumentException> { load("$base\nfactCheck:\n  enabled: true") }
+        assertThrows<IllegalArgumentException> {
+            load("$base\nfactCheck:\n  enabled: true\n  judge: { provider: openai, model: m }\n  categories: [gaming]")
+        }
+        val ok = load("$base\nfactCheck:\n  enabled: true\n  sampleRate: 0.5\n  judge: { provider: openai, model: m }")
+        assertEquals(0.5, ok.factCheck.sampleRate)
+        assertEquals("m", ok.factCheck.judge?.model)
+        // Off by default: no block, no judge needed.
+        assertEquals(false, load(base).factCheck.enabled)
+    }
 }

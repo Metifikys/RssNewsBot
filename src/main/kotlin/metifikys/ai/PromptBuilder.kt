@@ -126,14 +126,27 @@ object PromptBuilder {
             .replace("{{EMOJI}}", emoji)
     }
 
-    private fun ShortlistItem.toRenderPromptItem(articles: List<Article>): RenderShortlistItem {
-        val sourceArticles = resolveSourceArticles(articles).map { (index, article) ->
-            RenderSourceArticle(
+    /** One source article of a shortlist item exactly as the render prompt shows it to the model. */
+    data class RenderSource(val articleIndex: Int, val title: String, val text: String, val url: String)
+
+    /**
+     * The source articles the render sees for [item]: its resolved `articleIndices` (or its url), with
+     * the long-form `fullText` for a long item and `promptText()` otherwise. The fact checker judges a
+     * post against exactly these, so a fact the render took from the full text is not "unsupported".
+     */
+    fun renderSourcesFor(item: ShortlistItem, articles: List<Article>): List<RenderSource> =
+        item.resolveSourceArticles(articles).map { (index, article) ->
+            RenderSource(
                 articleIndex = index,
                 title = article.title,
-                description = article.fullText?.takeIf { isLongForm && it.isNotBlank() } ?: article.promptText(),
+                text = article.fullText?.takeIf { item.isLongForm && it.isNotBlank() } ?: article.promptText(),
                 url = article.link
             )
+        }
+
+    private fun ShortlistItem.toRenderPromptItem(articles: List<Article>): RenderShortlistItem {
+        val sourceArticles = renderSourcesFor(this, articles).map { s ->
+            RenderSourceArticle(articleIndex = s.articleIndex, title = s.title, description = s.text, url = s.url)
         }
         return RenderShortlistItem(
             eventKey = eventKey,

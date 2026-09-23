@@ -137,6 +137,20 @@ answer when it did not parse), render as the two sides' topics next to each othe
 went through the same post-processing (Step 1 without the audience term), so a difference is
 the models' or prompts', not the code's.
 
+## Fact checks (`factcheck-dump.mjs`)
+
+The bot's `factCheck` judge stores a verdict per sampled post in `fact_checks`. Before trusting
+the `/status` ⚠️ alert, estimate the judge's precision by hand:
+
+```bash
+node bench/factcheck-dump.mjs [db=logs/news.db] [out=scratch/factcheck.md] [--days 14] [--category tech] [--verdict unsupported]
+```
+
+Per category: checks, unsupported and minor share, average source size; then every verdict other
+than `supported` (or only `--verdict`) with the post and each flagged claim as a checkbox with the
+judge's note — tick the real ones; false alarms point at what to tell the prompt
+(`prompts/factcheck.example.yaml`).
+
 ## Jev (TypeSafe) pre-filter benchmark (`jev-*.mjs`)
 
 Question: can a cheap "decision model" (`typesafe/jev-1.13` via OpenRouter's
