@@ -145,6 +145,19 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `chunkMessage hard split does not cut an emoji surrogate pair`() {
+        // 🔥 straddles the 4096 boundary of a single over-long line.
+        val text = "a".repeat(4095) + "🔥" + "b".repeat(10)
+        val chunks = sender.chunkMessage(text, maxLen = 4096)
+        assertEquals(text, chunks.joinToString(""))
+        for (chunk in chunks) {
+            assertTrue(chunk.length <= 4096)
+            assertFalse(chunk.last().isHighSurrogate(), "chunk ends with an unpaired high surrogate")
+            assertFalse(chunk.first().isLowSurrogate(), "chunk starts with an unpaired low surrogate")
+        }
+    }
+
+    @Test
     fun `chunkMessage preserves all content`() {
         val lines = (1..100).map { "Line $it: ${"x".repeat(60)}" }
         val text = lines.joinToString("\n")

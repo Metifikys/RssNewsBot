@@ -419,11 +419,14 @@ class TelegramSender(
                 if (current.isNotEmpty()) chunks.add(current.toString())
                 current.clear()
                 if (line.length > maxLen) {
-                    // single line too long — hard split
+                    // single line too long — hard split, never between the halves of a
+                    // surrogate pair (same invalid-UTF-16 → 400 failure as BUG-009's captions)
                     var start = 0
                     while (start < line.length) {
-                        chunks.add(line.substring(start, minOf(start + maxLen, line.length)))
-                        start += maxLen
+                        var end = minOf(start + maxLen, line.length)
+                        if (end < line.length && end - start > 1 && line[end - 1].isHighSurrogate()) end--
+                        chunks.add(line.substring(start, end))
+                        start = end
                     }
                 } else {
                     current.append(line)
