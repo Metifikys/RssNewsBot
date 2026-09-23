@@ -168,6 +168,14 @@ via a `/status` admin snapshot.
     median lag, retelling share) is a `/status` section `🥇 Хто першим`, an optional weekly block
     (`weekly.sourceLeaderboard`, copiers off by default) and the "Who writes first" section of
     `bench/db-audit/report.mjs`.
+    **conflicts**: `⚖️ Джерела розходяться: дата 14.10.2026 (ign.com) чи 21.10.2026 (pcgamer.com)` —
+    dates, prices and head counts read deterministically from each member's title + teaser
+    ([`FactSlots`](src/main/kotlin/metifikys/story/FactSlots.kt),
+    [`ConflictDetector`](src/main/kotlin/metifikys/story/ConflictDetector.kt)) that disagree between
+    outlets (`minSupport` outlets per value; dates beyond `dateToleranceDays`, amounts beyond 1%; an
+    article with several values in a slot is skipped). `mode: log` (default) only logs
+    `[StoryConflict]` — plus `[StoryConflict][late]` when a Layer 2 reprint contradicts its cluster —
+    so the precision can be checked before `mode: post` adds the line.
 - **Living trackers** (`trackers:` per category) — e.g. a pinned "📅 Найближчі релізи" message
   the bot edits after every digest from `release_date` / `delay` events and their `eventDate`
   (year cross-checked against the article), with `⏳ було <old date>` on a delay, a

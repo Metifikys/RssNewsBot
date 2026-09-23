@@ -2,6 +2,7 @@ package metifikys.digest
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.AppConfig
+import metifikys.config.ConflictLineConfig
 import metifikys.config.PostConfig
 import metifikys.config.StoryLinesConfig
 import metifikys.config.ThreadsConfig
@@ -15,6 +16,7 @@ import metifikys.format.TopicDecorator
 import metifikys.format.TopicFormatter
 import metifikys.model.Article
 import metifikys.model.ShortlistItem
+import metifikys.story.ConflictDetector
 import metifikys.story.Genealogy
 import metifikys.story.Hype
 import metifikys.story.StoryClusterLoader
@@ -160,8 +162,8 @@ class DigestDeliverer(
         // One badge time budget per delivered digest, shared by all its bullets; one intro cap too.
         val badgeDeadline = badgeResolver?.newDeadline() ?: 0L
         val introBudget = IntroBudget(postCfg?.intro?.maxPerDigest ?: 0)
-        // Story lines (📢 / 🥇): one cluster lookup per digest, before the send loop; eventKey → line.
-        val storyLineByKey = resolveStoryLines(categoryName, shortlist, resolvedArticles, postCfg?.storyLines)
+        // Story lines (📢 / 🥇 / ⚖️): one cluster lookup per digest, before the send loop; eventKey → lines.
+        val storyLinesByKey = resolveStoryLines(categoryName, shortlist, resolvedArticles, postCfg?.storyLines)
 
         val sentTopics = mutableListOf<String>()
         val failedTopicIdx = mutableListOf<Int>()
@@ -195,8 +197,8 @@ class DigestDeliverer(
             val eventKey = item?.eventKey
             val replyTo = eventKey?.let { replyTargets[it] }
             val topicArticles = topicUrls[idx].mapNotNull { articleByLink[it] }
-            val storyLine = eventKey?.let { storyLineByKey[it] }
-            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLine)
+            val storyLines = eventKey?.let { storyLinesByKey[it] }.orEmpty()
+            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLines)
             // Long-form (post.longForm): a text message with the image as a large link preview
             // above it, so neither the body nor the footer is squeezed into the 1024-char caption.
             // A long post that fits a caption anyway still goes out as a normal photo post.
@@ -330,44 +332,62 @@ class DigestDeliverer(
     private val storyClusters = StoryClusterLoader(config, db)
 
     /**
-     * `post.storyLines`: eventKey → the story footer line, from one `event_articles` lookup per
-     * digest (an update's `relatedPreviousEventKey` chain included). Needs `storyIntel.enabled`;
-     * any failure yields no lines, never a failed digest.
+     * `post.storyLines`: eventKey → the story footer lines, from one `event_articles` lookup per
+     * digest (an update's `relatedPreviousEventKey` chain included): the 📢 / 🥇 line, then the ⚖️
+     * sources-disagree line (`conflicts.mode: post`; in `log` mode it is only logged as
+     * `[StoryConflict]`). Needs `storyIntel.enabled`; any failure yields no lines, never a failed digest.
      */
     private fun resolveStoryLines(
         category: String,
         shortlist: List<ShortlistItem>?,
         batch: List<Article>,
         cfg: StoryLinesConfig?
-    ): Map<String, String> {
+    ): Map<String, List<String>> {
         if (!config.storyIntel.enabled || cfg == null || shortlist.isNullOrEmpty()) return emptyMap()
         val hype = cfg.hype?.takeIf { it.enabled }
         val first = cfg.first?.takeIf { it.enabled }
-        if (hype == null && first == null) return emptyMap()
+        val conflicts = cfg.conflicts?.takeIf { it.enabled }
+        if (hype == null && first == null && conflicts == null) return emptyMap()
         val stories = shortlist.associate { it.eventKey to listOfNotNull(it.eventKey, it.relatedPreviousEventKey) }
         val loaded = storyClusters.load(category, stories, batch, withVectors = hype != null && hype.reprintSimilarity < 1.0)
-        val out = LinkedHashMap<String, String>()
+        val out = LinkedHashMap<String, List<String>>()
         for ((key, l) in loaded) {
-            val line = try {
-                StoryLines.line(
-                    hype?.let { Hype.analyze(l.cluster, l.texts, l.vectors, it.reprintSimilarity) }, hype,
-                    first?.let { Genealogy.first(l.cluster) }, first
+            val lines = try {
+                listOfNotNull(
+                    StoryLines.line(
+                        hype?.let { Hype.analyze(l.cluster, l.texts, l.vectors, it.reprintSimilarity) }, hype,
+                        first?.let { Genealogy.first(l.cluster) }, first
+                    ),
+                    conflicts?.let { conflictLine(category, key, l, it) }
                 )
             } catch (e: Exception) {
-                logger.warn(e) { "[Category:$category][Story] $key: story line failed — sending without it" }
-                null
-            } ?: continue
-            out[key] = line
-            logger.info { "[Category:$category][Story] $key: $line (${l.cluster.members.size} article(s))" }
+                logger.warn(e) { "[Category:$category][Story] $key: story lines failed — sending without them" }
+                emptyList()
+            }
+            if (lines.isEmpty()) continue
+            out[key] = lines
+            logger.info { "[Category:$category][Story] $key: ${lines.joinToString(" / ")} (${l.cluster.members.size} article(s))" }
         }
         return out
     }
 
     /**
+     * `post.storyLines.conflicts`: logs every slot the cluster's sources disagree on as
+     * `[StoryConflict]`; returns the footer line only in `post` mode.
+     */
+    private fun conflictLine(category: String, key: String, l: StoryClusterLoader.Loaded, cfg: ConflictLineConfig): String? {
+        val found = ConflictDetector.detect(l.cluster, l.texts, cfg.minSupport, cfg.dateToleranceDays)
+        for (c in found) {
+            logger.info { "[StoryConflict] cat=$category $key ${ConflictDetector.describe(c.slot, c.unit, c.values)} mode=${cfg.mode}" }
+        }
+        return if (cfg.mode == ConflictLineConfig.MODE_POST) StoryLines.conflict(found) else null
+    }
+
+    /**
      * Footer lines for one bullet, in display order (most valuable first — [TopicDecorator]
      * drops from the end when the message budget is tight): live-data badges, the first-mention
-     * intro, the story line (📢 / 🥇, resolved per digest), then the hashtag line. Lookups run under
-     * their time budgets and never throw.
+     * intro, the story lines (📢 / 🥇, ⚖️ — resolved per digest), then the hashtag line. Lookups run
+     * under their time budgets and never throw.
      */
     private fun buildFooter(
         categoryName: String,
@@ -376,7 +396,7 @@ class DigestDeliverer(
         post: PostConfig?,
         badgeDeadline: Long,
         introBudget: IntroBudget,
-        storyLine: String? = null
+        storyLines: List<String> = emptyList()
     ): List<String> {
         if (post == null) return emptyList()
         val lines = mutableListOf<String>()
@@ -397,7 +417,7 @@ class DigestDeliverer(
                 introBudget.remaining--
             }
         }
-        if (storyLine != null) lines += storyLine
+        lines += storyLines
         val tags = Hashtags.forItem(item, post.hashtags)
         if (tags.isNotEmpty()) lines += tags.joinToString(" ")
         if (lines.isNotEmpty()) logger.debug { "[Category:$categoryName][Post] footer: $lines" }

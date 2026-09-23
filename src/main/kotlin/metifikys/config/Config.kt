@@ -961,8 +961,36 @@ data class StoryLinesConfig(
     /** `📢 9 видань · 1 першоджерело`; see [HypeLineConfig]. */
     val hype: HypeLineConfig? = null,
     /** `🥇 першим був X (+2 год)`; see [FirstLineConfig]. */
-    val first: FirstLineConfig? = null
+    val first: FirstLineConfig? = null,
+    /** `⚖️ Джерела розходяться: …`; see [ConflictLineConfig]. */
+    val conflicts: ConflictLineConfig? = null
 )
+
+/**
+ * Sources disagree: the story cluster's articles state different dates, prices or head counts
+ * (deterministic slot extraction from title + teaser, [metifikys.story.FactSlots]). Two values
+ * conflict when each is stated by at least [minSupport] outlets and they are incompatible — dates
+ * whose periods do not overlap even widened by [dateToleranceDays] (`Q4 2026` and 14.10.2026
+ * agree), prices in one currency or counts more than 1% apart. An article with several disagreeing
+ * values in one slot (deluxe editions, regional dates) is skipped for that slot.
+ *
+ * [mode] `log` (the default) only writes `[StoryConflict]` lines — and `[StoryConflict][late]` when a
+ * Layer 2 reprint states a value the cluster does not — so the precision can be checked before
+ * anything is posted; `post` also adds the footer line
+ * `⚖️ Джерела розходяться: дата 14.10.2026 (ign.com) чи 21.10.2026 (pcgamer.com)`. For `post`,
+ * [minSupport] 2 is recommended.
+ */
+data class ConflictLineConfig(
+    val enabled: Boolean = true,
+    val mode: String = MODE_LOG,
+    val minSupport: Int = 1,
+    val dateToleranceDays: Int = 1
+) {
+    companion object {
+        const val MODE_LOG = "log"
+        const val MODE_POST = "post"
+    }
+}
 
 /**
  * Who of our sources had the story first: the outlet whose earliest article has the smallest
@@ -1667,7 +1695,7 @@ object ConfigLoader {
                     require(t.maxAgeDays >= 1) { "Category '$name' post.threads.maxAgeDays must be >= 1 (got ${t.maxAgeDays})" }
                 }
                 post.storyLines?.let { s ->
-                    val anyOn = s.hype?.enabled == true || s.first?.enabled == true
+                    val anyOn = s.hype?.enabled == true || s.first?.enabled == true || s.conflicts?.enabled == true
                     require(!anyOn || config.storyIntel.enabled) {
                         "Category '$name' post.storyLines needs storyIntel.enabled: true — the lines read the story clusters it records"
                     }
@@ -1683,6 +1711,15 @@ object ConfigLoader {
                     s.first?.let { f ->
                         require(f.minOutlets >= 2) { "Category '$name' post.storyLines.first.minOutlets must be >= 2 (got ${f.minOutlets})" }
                         require(f.minLeadMinutes >= 0) { "Category '$name' post.storyLines.first.minLeadMinutes must be >= 0 (got ${f.minLeadMinutes})" }
+                    }
+                    s.conflicts?.let { c ->
+                        require(c.mode in setOf(ConflictLineConfig.MODE_LOG, ConflictLineConfig.MODE_POST)) {
+                            "Category '$name' post.storyLines.conflicts.mode must be log or post (got '${c.mode}')"
+                        }
+                        require(c.minSupport >= 1) { "Category '$name' post.storyLines.conflicts.minSupport must be >= 1 (got ${c.minSupport})" }
+                        require(c.dateToleranceDays >= 0) {
+                            "Category '$name' post.storyLines.conflicts.dateToleranceDays must be >= 0 (got ${c.dateToleranceDays})"
+                        }
                     }
                 }
                 post.longForm?.let { l ->

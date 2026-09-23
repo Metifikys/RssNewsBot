@@ -634,4 +634,42 @@ class DigestDelivererTest {
             sent.captured
         )
     }
+
+    // ── post.storyLines.conflicts (⚖️) ───────────────────────────────────────
+
+    private fun conflictDb(): NewsDatabase {
+        val db = storyDb()
+        every { db.fetchArticlesByLinks(any()) } answers {
+            firstArg<List<String>>().map { link ->
+                val date = if (link.contains("delta.com")) "October 21" else "October 14"
+                Article(category = "tech", title = "Game launches $date", link = link, description = "d")
+            }
+        }
+        return db
+    }
+
+    private fun conflictConfig(mode: String) = configWithPost(
+        PostConfig(
+            hashtags = HashtagsConfig(category = "#tech"),
+            storyLines = metifikys.config.StoryLinesConfig(conflicts = metifikys.config.ConflictLineConfig(mode = mode, minSupport = 1))
+        )
+    ).copy(storyIntel = metifikys.config.StoryIntelConfig(enabled = true))
+
+    @Test
+    fun `sources-disagree line is posted in post mode and only logged in log mode`() {
+        val outputs = listOf("post", "log").associateWith { mode ->
+            val sender = mockk<TelegramSender>(relaxed = true)
+            val sent = slot<String>()
+            every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+            DigestDeliverer(conflictConfig(mode), conflictDb(), sender)
+                .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", listOf(article(1)), listOf(shortlistItem("evt-1", article(1).link)))
+            sent.captured
+        }
+        assertEquals(
+            "**Story.**\n\n[Title 1](https://example.com/1)\n\n" +
+                "⚖️ Джерела розходяться: дата 14.10.2026 (alpha.com, beta.com, gamma.com) чи 21.10.2026 (delta.com)\n#tech",
+            outputs["post"]
+        )
+        assertEquals("**Story.**\n\n[Title 1](https://example.com/1)\n\n#tech", outputs["log"])
+    }
 }

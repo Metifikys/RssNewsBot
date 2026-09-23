@@ -3,6 +3,7 @@ package metifikys.story
 import metifikys.config.FirstLineConfig
 import metifikys.config.HypeLineConfig
 import metifikys.config.SourceLeaderboardConfig
+import metifikys.digest.TrackerDates
 
 /**
  * Footer lines built from story clusters (`post.storyLines`) and the weekly "who writes first"
@@ -89,6 +90,58 @@ object StoryLines {
         }
         return sb.toString()
     }
+
+    /**
+     * `⚖️ Джерела розходяться: дата 14.10.2026 (ign.com, eurogamer.net) чи 21.10.2026 (pcgamer.com)` —
+     * the first of [conflicts] (dates before prices before counts); null when there is none.
+     */
+    fun conflict(conflicts: List<ConflictDetector.Conflict>): String? {
+        val c = conflicts.firstOrNull() ?: return null
+        val values = c.values.take(MAX_CONFLICT_VALUES).joinToString(" чи ") { v ->
+            val shown = v.domains.take(MAX_CONFLICT_DOMAINS).joinToString(", ")
+            val more = if (v.domains.size > MAX_CONFLICT_DOMAINS) " +${v.domains.size - MAX_CONFLICT_DOMAINS}" else ""
+            "${factValue(v.fact)} ($shown$more)"
+        }
+        return "⚖️ Джерела розходяться: ${slotLabel(c.slot, c.unit)} $values"
+    }
+
+    private fun slotLabel(slot: FactSlots.Slot, unit: String): String = when (slot) {
+        FactSlots.Slot.DATE -> "дата"
+        FactSlots.Slot.PRICE -> "ціна"
+        FactSlots.Slot.COUNT -> when (unit) {
+            FactSlots.UNIT_LAYOFFS -> "звільнення"
+            FactSlots.UNIT_STAFF -> "штат"
+            FactSlots.UNIT_LAYOFFS + "%" -> "частка звільнених"
+            else -> "частка штату"
+        }
+    }
+
+    /** `14.10.2026`, `$69.99`, `€1.5 млрд`, `70 CAD`, `300`, `10%`. */
+    fun factValue(f: FactSlots.Fact): String = when (f.slot) {
+        FactSlots.Slot.DATE -> TrackerDates.display(f.value)
+        FactSlots.Slot.COUNT -> if (f.unit.endsWith("%")) "${f.value}%" else f.value
+        FactSlots.Slot.PRICE -> {
+            val amount = f.value.toBigDecimalOrNull()
+            val shown = when {
+                amount == null -> f.value
+                amount >= BILLION -> "${(amount.divide(BILLION)).stripTrailingZeros().toPlainString()} млрд"
+                amount >= MILLION -> "${(amount.divide(MILLION)).stripTrailingZeros().toPlainString()} млн"
+                else -> f.value
+            }
+            when (f.unit) {
+                "USD" -> "$$shown"
+                "EUR" -> "€$shown"
+                "GBP" -> "£$shown"
+                "UAH" -> "₴$shown"
+                else -> "$shown ${f.unit}"
+            }
+        }
+    }
+
+    private const val MAX_CONFLICT_VALUES = 3
+    private const val MAX_CONFLICT_DOMAINS = 3
+    private val MILLION = java.math.BigDecimal(1_000_000)
+    private val BILLION = java.math.BigDecimal(1_000_000_000)
 
     /** Ukrainian plural: 1 / 21 → [one], 2–4 / 22–24 → [few], else [many]. */
     fun plural(n: Int, one: String, few: String, many: String): String {

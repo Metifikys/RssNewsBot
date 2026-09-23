@@ -467,6 +467,15 @@ categories:
       #   # outlets and a lead >= minLeadMinutes over the second (closer is a tie). With hype on,
       #   # both share one line: 📢 9 видань · 1 першоджерело · 🥇 insider-gaming.com (+2 год)
       #   first: { enabled: true, minOutlets: 3, minLeadMinutes: 30 }
+      #   # ⚖️ Джерела розходяться: дата 14.10.2026 (ign.com, eurogamer.net) чи 21.10.2026 (pcgamer.com)
+      #   # — dates / prices / head counts read from each article's title + teaser (no LLM) that
+      #   # disagree between outlets: each value stated by minSupport+ outlets, dates apart by more
+      #   # than dateToleranceDays (Q4 2026 and 14.10.2026 agree), prices / counts by more than 1%;
+      #   # an article with several values in a slot (deluxe price, regional dates) is skipped.
+      #   # mode: log only writes [StoryConflict] lines (and [StoryConflict][late] for a Layer 2
+      #   # reprint that contradicts its cluster) — check them for a week before `post`, which adds
+      #   # the footer line; use minSupport: 2 with post.
+      #   conflicts: { enabled: true, mode: log, minSupport: 1, dateToleranceDays: 1 }
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),

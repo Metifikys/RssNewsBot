@@ -11,6 +11,8 @@ import metifikys.db.NewsDatabase
 import metifikys.feedback.AffinityMath
 import metifikys.model.Article
 import metifikys.model.ArticleStatus
+import metifikys.story.ConflictDetector
+import metifikys.story.StoryClusterLoader
 
 private val logger = KotlinLogging.logger {}
 
@@ -200,7 +202,7 @@ class SemanticDedupDetector(
                 logger.debug { "[SemanticDedup] cat=$categoryName new=$link other_candidates: $rest" }
             }
         }
-        if (config.storyIntel.enabled) recordLateReprints(categoryName, rejects)
+        if (config.storyIntel.enabled) recordLateReprints(categoryName, rejects, articles)
     }
 
     /** A hard-rejected article, the PROCESSED article it was rejected against, and their cosine. */
@@ -211,7 +213,7 @@ class SemanticDedupDetector(
      * cosine). An anchor without an `event_articles` row — older than the feature, or a legacy
      * category — leaves the reprint unattached. A failure only logs.
      */
-    private fun recordLateReprints(categoryName: String, rejects: List<LateReprint>) {
+    private fun recordLateReprints(categoryName: String, rejects: List<LateReprint>, articles: List<Article>) {
         if (rejects.isEmpty()) return
         try {
             val keys = db.fetchEventKeysByArticleIds(categoryName, rejects.map { it.anchorId })
@@ -239,8 +241,31 @@ class SemanticDedupDetector(
             }
             db.upsertEventArticles(rows)
             if (rows.isNotEmpty()) logger.debug { "[SemanticDedup][StoryIntel] cat=$categoryName attached ${rows.size} late reprint(s) to their events" }
+            logLateConflicts(categoryName, rows, articles)
         } catch (e: Exception) {
             logger.warn(e) { "[SemanticDedup][StoryIntel] cat=$categoryName recording late reprints failed" }
+        }
+    }
+
+    private val storyClusters = StoryClusterLoader(config, db)
+
+    /**
+     * `post.storyLines.conflicts` audit: a late reprint that states a date / price / count clashing
+     * with everything its event's cluster says is logged as `[StoryConflict][late]` — a candidate
+     * for a `meaningful_update` the hard filter swallowed. Log only; [rows] are already attached.
+     */
+    private fun logLateConflicts(categoryName: String, rows: List<EventArticleRow>, articles: List<Article>) {
+        val cfg = config.categories[categoryName]?.post?.storyLines?.conflicts?.takeIf { it.enabled } ?: return
+        if (rows.isEmpty()) return
+        val loaded = storyClusters.load(categoryName, rows.map { it.eventKey }.distinct().associateWith { listOf(it) }, articles, withVectors = false)
+        for (row in rows) {
+            val l = loaded[row.eventKey] ?: continue
+            for ((late, known) in ConflictDetector.late(l.cluster, l.texts, row.articleId, cfg.dateToleranceDays)) {
+                logger.info {
+                    "[StoryConflict][late] cat=$categoryName ${row.eventKey} ${row.link} " +
+                        ConflictDetector.describe(late.fact.slot, late.fact.unit, listOf(late) + known)
+                }
+            }
         }
     }
 

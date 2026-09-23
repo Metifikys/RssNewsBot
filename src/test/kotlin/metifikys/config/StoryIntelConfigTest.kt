@@ -106,4 +106,20 @@ class StoryIntelConfigTest {
         }
         assertTrue("retentionDays" in tooLong.message!!, tooLong.message)
     }
+
+    @Test
+    fun `conflicts line defaults to log mode and checks its mode`() {
+        val c = load(yaml(top = "storyIntel:\n  enabled: true", post = "storyLines:\n  conflicts: { minSupport: 2 }"))
+        val conflicts = c.categories.getValue("gaming").post?.storyLines?.conflicts
+        assertEquals(ConflictLineConfig.MODE_LOG, conflicts?.mode)
+        assertEquals(2, conflicts?.minSupport)
+        assertEquals(1, conflicts?.dateToleranceDays)
+
+        val badMode = assertThrows<IllegalArgumentException> {
+            load(yaml(top = "storyIntel:\n  enabled: true", post = "storyLines:\n  conflicts: { mode: shout }"))
+        }
+        assertTrue("conflicts.mode" in badMode.message!!, badMode.message)
+        val noStory = assertThrows<IllegalArgumentException> { load(yaml(post = "storyLines:\n  conflicts: { mode: post }")) }
+        assertTrue("storyIntel.enabled" in noStory.message!!, noStory.message)
+    }
 }
