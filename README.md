@@ -167,6 +167,12 @@ via a `/status` admin snapshot.
   mutes go to the `admin_mutes` table and are merged over the YAML lists by
   [`MuteRegistry`](src/main/kotlin/metifikys/digest/MuteRegistry.kt), so a hand-synced prod config
   cannot wipe them; `/mutes yaml` prints them as a config fragment to move into the repo.
+- **Mute proposals** (opt-in, `admin.muteSuggestions`) —
+  [`MuteSuggester`](src/main/kotlin/metifikys/feedback/MuteSuggester.kt) runs on the maintenance
+  tick every `everyDays`: disliked franchises (negative affinity with enough reacted posts) and
+  franchises Step 1 keeps rejecting without ever covering become keywords, checked against 30
+  days of titles, and up to `maxPerRun` go to the admin chat as silent messages with
+  in-category / global / no buttons. Decisions are kept in `mute_suggestions`.
 - **Per-LLM-call cost ledger** — `llm_calls` table records `(provider, model, category,
   useCase, promptTokens, completionTokens, estCostUsd, ts)` for every call, including the
   Batch API auto-halving.
@@ -905,6 +911,7 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 | `entity_intros`      | First-mention memory for the Wikipedia intro: one row per `(category, entity key)`, hits and misses |
 | `tracker_entries`    | Living-tracker state per `(category, tracker, entity)`: event date, previous date, status, latest post |
 | `admin_mutes`        | Keyword mutes added from Telegram (`/mute`, suggestions, moderation), merged over the YAML mute lists; `category` null = global |
+| `mute_suggestions`   | Mute proposals sent to the admin chat with their evidence, 30-day hit counts, message id and decision (`pending`/`approved`/`rejected`) |
 
 Pruning runs on the maintenance tick (or at the start of a legacy cycle), skipped while any
 batch is pending:

@@ -59,6 +59,21 @@ class AdminConfigTest {
     }
 
     @Test
+    fun `mute suggestions need the commands and an admin chat`() {
+        val e = assertThrows<IllegalArgumentException> {
+            load(admin = "admin:\n  statusChatId: \"1\"\n  muteSuggestions:\n    enabled: true\n")
+        }
+        assertTrue("admin.commands.enabled" in e.message.orEmpty(), e.message)
+        val c = load(
+            telegramExtra = "  updatesPolling: true\n",
+            admin = "admin:\n  statusChatId: \"1\"\n  userIds: [1]\n  commands:\n    enabled: true\n" +
+                "  muteSuggestions:\n    enabled: true\n    everyDays: 3\n"
+        )
+        assertEquals(3L, c.admin.muteSuggestions.everyDays)
+        assertEquals(5, c.admin.muteSuggestions.maxPerRun)
+    }
+
+    @Test
     fun `commands without userIds are rejected`() {
         val e = assertThrows<IllegalArgumentException> {
             load(telegramExtra = "  updatesPolling: true\n", admin = "admin:\n  commands:\n    enabled: true\n")

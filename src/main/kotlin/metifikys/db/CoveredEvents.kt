@@ -72,6 +72,12 @@ interface CoveredEventStore {
      */
     fun fetchCoveredEventsByKeys(category: String, eventKeys: Collection<String>, since: LocalDateTime): List<CoveredEventRow>
 
+    /**
+     * Covered events per (category, franchise) since [since]; the franchise trimmed and
+     * lowercased, blank ones skipped. Backs the "never gets through" mute proposals.
+     */
+    fun countCoveredFranchisesSince(since: LocalDateTime): Map<Pair<String, String>, Int>
+
     /** Deletes covered events older than [retentionDays]. */
     fun pruneOldCoveredEvents(retentionDays: Long)
 }
@@ -170,6 +176,18 @@ internal class CoveredEventRepository : CoveredEventStore {
                     )
                 }
         }
+    }
+
+    override fun countCoveredFranchisesSince(since: LocalDateTime): Map<Pair<String, String>, Int> = transaction {
+        CoveredEventsTable
+            .select(CoveredEventsTable.category, CoveredEventsTable.franchise)
+            .where { CoveredEventsTable.coveredAt greaterEq since }
+            .mapNotNull { row ->
+                val f = row[CoveredEventsTable.franchise].trim().lowercase()
+                if (f.isEmpty()) null else row[CoveredEventsTable.category] to f
+            }
+            .groupingBy { it }
+            .eachCount()
     }
 
     override fun pruneOldCoveredEvents(retentionDays: Long) {

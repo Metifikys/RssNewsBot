@@ -62,6 +62,16 @@ interface RejectedEventStore {
         statuses: Set<String> = setOf("duplicate")
     ): List<RejectedEventRow>
 
+    /**
+     * Step-1 extractions with a status in [statuses] per (category, franchise) since [since]; the
+     * franchise trimmed and lowercased, blank ones skipped. Backs the "never gets through" mute
+     * proposals.
+     */
+    fun countRejectedFranchisesSince(
+        since: LocalDateTime,
+        statuses: Set<String> = setOf("rejected")
+    ): Map<Pair<String, String>, Int>
+
     /** Deletes rejected-event log entries older than [days] days. */
     fun deleteOldRejectedEvents(days: Long = 30)
 }
@@ -129,6 +139,21 @@ internal class RejectedEventRepository : RejectedEventStore {
                     )
                 }
         }
+    }
+
+    override fun countRejectedFranchisesSince(
+        since: LocalDateTime,
+        statuses: Set<String>
+    ): Map<Pair<String, String>, Int> = transaction {
+        RejectedEventsTable
+            .select(RejectedEventsTable.category, RejectedEventsTable.franchise)
+            .where { (RejectedEventsTable.extractedAt greaterEq since) and (RejectedEventsTable.status inList statuses) }
+            .mapNotNull { row ->
+                val f = row[RejectedEventsTable.franchise].trim().lowercase()
+                if (f.isEmpty()) null else row[RejectedEventsTable.category] to f
+            }
+            .groupingBy { it }
+            .eachCount()
     }
 
     override fun deleteOldRejectedEvents(days: Long) {

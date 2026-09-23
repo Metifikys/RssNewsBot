@@ -77,7 +77,9 @@ class DigestCycle(
      * Digest pauses set by `/pause` (`bot_state`). Null = nothing is ever paused. Only the digest
      * half checks it; ingestion keeps running, and a forced run (`/run`) ignores it.
      */
-    private val pauseStore: PauseStore? = null
+    private val pauseStore: PauseStore? = null,
+    /** Weekly mute proposals to the admin chat (`admin.muteSuggestions`); null = off. */
+    private val muteSuggester: metifikys.feedback.MuteSuggester? = null
 ) {
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -154,6 +156,7 @@ class DigestCycle(
             logger.error(e) { "[Maintenance] retention cleanup failed" }
         }
         affinityAggregator?.recomputeIfStale()
+        muteSuggester?.runIfDue()
         statusPoster?.post()
         val seconds = (System.nanoTime() - startedNanos) / 1_000_000_000
         logger.info {
@@ -174,6 +177,8 @@ class DigestCycle(
             // Reaction-feedback aggregation (phase 1: nothing reads the scores yet except
             // /status). Internally throttled and exception-safe — cannot break the cycle.
             affinityAggregator?.recomputeIfStale()
+
+            muteSuggester?.runIfDue()
 
             // One shared wall-clock deadline for the whole cycle's fetch stage — every
             // category's feeds go through the fetcher's bounded pool, so the budget is

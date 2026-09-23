@@ -151,7 +151,26 @@ data class AdminConfig(
      */
     val userIds: List<Long> = emptyList(),
     /** Admin commands over the `getUpdates` poller; off by default. */
-    val commands: AdminCommandsConfig = AdminCommandsConfig()
+    val commands: AdminCommandsConfig = AdminCommandsConfig(),
+    /** Periodic mute proposals with approve/reject buttons in the admin chat; off by default. */
+    val muteSuggestions: MuteSuggestionsConfig = MuteSuggestionsConfig()
+)
+
+/**
+ * Mute proposals: every [everyDays] the maintenance tick looks for franchises the audience
+ * dislikes (affinity `score <= maxScore` backed by `n_tone >= minTone` reacted posts) or that
+ * never get through (>= [minRejected] Step-1 rejections and no coverage in 30 days), turns each
+ * into a keyword that actually occurs in recent titles, and posts up to [maxPerRun] of them to
+ * the admin chat, silently, with [🔇 in category] [🌐 global] [✖ no] buttons. Approving writes
+ * the same DB mute as `/mute`. Needs `admin.commands.enabled` (the buttons) and `statusChatId`.
+ */
+data class MuteSuggestionsConfig(
+    val enabled: Boolean = false,
+    val everyDays: Long = 7,
+    val maxScore: Double = -0.15,
+    val minTone: Double = 2.0,
+    val minRejected: Int = 20,
+    val maxPerRun: Int = 5
 )
 
 /**
@@ -1507,6 +1526,16 @@ object ConfigLoader {
             require(admin.userIds.isNotEmpty()) {
                 "admin.commands.enabled needs a non-empty admin.userIds — the Telegram user ids allowed to run commands"
             }
+        }
+        admin.muteSuggestions.takeIf { it.enabled }?.let { s ->
+            require(admin.commands.enabled && admin.statusChatId != null) {
+                "admin.muteSuggestions.enabled needs admin.commands.enabled (for the buttons) and admin.statusChatId (where they go)"
+            }
+            require(s.everyDays >= 1) { "admin.muteSuggestions.everyDays must be >= 1 (got ${s.everyDays})" }
+            require(s.maxScore in -1.0..0.0) { "admin.muteSuggestions.maxScore must be within -1..0 (got ${s.maxScore})" }
+            require(s.minTone >= 0.0) { "admin.muteSuggestions.minTone must be >= 0 (got ${s.minTone})" }
+            require(s.minRejected >= 1) { "admin.muteSuggestions.minRejected must be >= 1 (got ${s.minRejected})" }
+            require(s.maxPerRun in 1..20) { "admin.muteSuggestions.maxPerRun must be within 1..20 (got ${s.maxPerRun})" }
         }
     }
 

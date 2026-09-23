@@ -31,6 +31,7 @@ import metifikys.enrich.BadgeResolver
 import metifikys.enrich.DbIntroStore
 import metifikys.enrich.WikipediaIntroProvider
 import metifikys.feedback.AffinityAggregator
+import metifikys.feedback.MuteSuggester
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.HostThrottle
@@ -199,6 +200,10 @@ class NewsBot(
             TelegramUpdatesPoller(config.telegram.botToken, db, commandRouter, callbackRouter)
         } else null
 
+    /** Weekly mute proposals (`admin.muteSuggestions`); its buttons come back through [callbackRouter]. */
+    private val muteSuggester: MuteSuggester? =
+        if (config.admin.muteSuggestions.enabled) MuteSuggester(config, db, muteRegistry, sender) else null
+
     internal val deliverer = DigestDeliverer(config, db, sender, badgeResolver, introProvider, trackerUpdater)
 
     private val categoryProcessor = CategoryProcessor(
@@ -229,7 +234,8 @@ class NewsBot(
         semanticDedupDetector = semanticDedupDetector,
         affinityAggregator = affinityAggregator,
         retentionArchiver = config.archive?.takeIf { it.enabled }?.let { RetentionArchiver.create(it, db) },
-        pauseStore = pauseStore
+        pauseStore = pauseStore,
+        muteSuggester = muteSuggester
     )
 
     /**
@@ -262,6 +268,7 @@ class NewsBot(
                 runner = { name, withFetch, listener -> enqueueManualRun(name, withFetch, listener) }
             ).registerAll(router)
         }
+        muteSuggester?.let { s -> callbackRouter?.register("ms") { cb, parts -> s.handleCallback(cb, parts) } }
     }
 
     fun start() {

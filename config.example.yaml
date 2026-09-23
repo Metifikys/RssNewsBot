@@ -276,6 +276,20 @@ feedback:
 #   # config sync can't wipe them); they and /pause are only honoured while commands are enabled.
 #   commands:
 #     enabled: false
+#   # Weekly mute proposals (needs commands.enabled + statusChatId): franchises the audience dislikes
+#   # (affinity score <= maxScore with >= minTone reacted posts; needs feedback.enabled) or that never
+#   # get through Step 1 (>= minRejected rejections and no coverage in 30 days) become keywords
+#   # (first " / " segment of the franchise; generic keys like "cod"/"ai" are skipped, and so is a
+#   # keyword no title matched in 30 days). Up to maxPerRun silent messages to the admin chat with
+#   # [🔇 in <cat>] [🌐 global] [✖ no]; approving writes the same DB mute as /mute. A rejected
+#   # keyword is not proposed again for 90 days.
+#   muteSuggestions:
+#     enabled: false
+#     everyDays: 7
+#     maxScore: -0.15
+#     minTone: 2.0
+#     minRejected: 20
+#     maxPerRun: 5
 
 categories:
   tech:
