@@ -58,3 +58,22 @@ the first arg.
 These audits produced the 2026-08 fixes: HTML strip at ingestion (`HtmlText`), site-chrome
 scrubbing + meta-description fallback in `ArticleFetcher`, politics mute keys, and the
 `openrouter.models` failover ladder.
+
+## Jev (TypeSafe) pre-filter benchmark (`jev-*.mjs`)
+
+Question: can a cheap "decision model" (`typesafe/jev-1.13` via OpenRouter's
+`/api/alpha/decisions`, $0.042/M input, no output cost) drop junk *before* Step 1 so the
+LLM sees smaller batches? Ground truth = Step 1's own verdicts in a prod snapshot
+(`rejected_events.status='rejected'` vs `covered_events`); duplicates excluded (Jev can't dedup).
+
+```bash
+node bench/jev-prep.mjs    bench/results/<date>-jev/input.json logs/news.db 250   # 250 rej + 250 cov per category
+node bench/jev-bench.mjs   bench/results/<date>-jev/input.json bench/results/<date>-jev/results.jsonl config.yaml [limit] [conc]
+node bench/jev-analyze.mjs bench/results/<date>-jev/results.jsonl bench/results/<date>-jev/input.json bench/results/<date>-jev/report.md
+```
+
+Per article Jev answers three questions: `keep` (noul), `kind` (17-way choice), `fit`
+(0–3 score). First run 2026-09-18 (`results/2026-09-18-jev/report.md`): 1500 items,
+$0.09 total, p50 370 ms. Gate `keep < 0.1` removes 50 % of tech junk / 61 % of gaming junk
+at ≤ 4 % loss of shortlisted items; science needs `keep < 0.2` (37 % of junk, zero loss).
+Most "lost" items were reviews/previews/opinion that Step 1 let through against its own policy.
