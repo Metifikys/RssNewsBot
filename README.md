@@ -187,6 +187,13 @@ via a `/status` admin snapshot.
     [`Vaporware`](src/main/kotlin/metifikys/story/Vaporware.kt)), from the `minAnnouncements`-th; a
     day / month date anywhere in its history means no line (a year / quarter only with
     `softDatesStop`).
+  - **also** — `📰 Також: [IGN](…) · [PC Gamer](…)`: the other outlets of the batch that Step 1
+    folded into the event (`ShortlistItem.sourceLinks` — its `articleIndices` plus the in-batch
+    duplicates, which are never posted on their own), without the post's own host, one per host,
+    at most `max`; names from `names` (a parent domain matches), else the feed `label`, else the
+    domain ([`AlsoLine`](src/main/kotlin/metifikys/format/AlsoLine.kt)). `[Also]` logs the count
+    for every event; `logOnly` keeps the line out. Late Layer-2 reprints are not added (that
+    would need editing the sent post).
 - **Industry barometer** (opt-in, `weekly.barometer`, needs `storyIntel`) — after the weekly
   roundup, a 1200×675 PNG of distinct subjects per ISO week over the last 12 weeks from
   `event_history`, one panel per series with its own scale: layoffs / closures (by type, or a

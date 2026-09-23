@@ -120,4 +120,17 @@ class PostConfigTest {
         assertThrows<IllegalArgumentException> { load(yaml("post:\n  threads:\n    maxAgeDays: 0")) }
         assertThrows<IllegalArgumentException> { load(yaml("post:\n  hashtags:\n    max: -1")) }
     }
+
+    @Test
+    fun `also block is parsed with host names and validated`() {
+        val config = load(yaml("post:\n  also:\n    max: 2\n    names: { ign.com: IGN, pcgamer.com: PC Gamer }"))
+        val also = config.categories.getValue("gaming").post!!.also!!
+        assertTrue(also.enabled)
+        assertEquals(false, also.logOnly)
+        assertEquals(2, also.max)
+        assertEquals(mapOf("ign.com" to "IGN", "pcgamer.com" to "PC Gamer"), also.names)
+
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  also:\n    max: 0")) }
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  also:\n    names: { ign.com: \"\" }")) }
+    }
 }

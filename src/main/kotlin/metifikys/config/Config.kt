@@ -1011,7 +1011,30 @@ data class PostConfig(
     /** Longer posts for the top-ranked events of a digest; see [LongFormConfig]. */
     val longForm: LongFormConfig? = null,
     /** Footer lines read from the story clusters (needs `storyIntel.enabled`); see [StoryLinesConfig]. */
-    val storyLines: StoryLinesConfig? = null
+    val storyLines: StoryLinesConfig? = null,
+    /** `📰 Також: IGN · PC Gamer` — the other outlets the dedup folded into the event; see [AlsoConfig]. */
+    val also: AlsoConfig? = null
+)
+
+/**
+ * `📰 Також: [IGN](…) · [PC Gamer](…)`: the other outlets of the digest batch whose articles Step 1
+ * folded into the event (its `articleIndices` plus the in-batch `duplicate`s,
+ * [metifikys.model.ShortlistItem.sourceLinks]). Those copies are never posted on their own; the
+ * line only names them. The post's own host is left out, one link per host, at most [max].
+ *
+ * A source's name is [names] for its host (a key matches the host or a parent domain:
+ * `ign.com` covers `uk.ign.com`), else the `label` of the feed it came from when the feed lives
+ * on the same host, else the domain without its TLD, capitalised (`eurogamer.net` → `Eurogamer`).
+ *
+ * Every event logs `[Also] <eventKey>: N sources`; [logOnly] keeps the line out of the post, to
+ * see first how often a batch cluster has more than one outlet. Late reprints (Layer 2, after the
+ * post) are not added — that would need the post edited in place.
+ */
+data class AlsoConfig(
+    val enabled: Boolean = true,
+    val logOnly: Boolean = false,
+    val max: Int = 3,
+    val names: Map<String, String> = emptyMap()
 )
 
 /**
@@ -1832,6 +1855,15 @@ object ConfigLoader {
                         require(metifikys.format.Hashtags.isWellFormed(tag)) {
                             "Category '$name' post.hashtags.category: '$tag' is not a valid hashtag — use '#' followed by letters, digits or '_' (at least one letter)"
                         }
+                    }
+                }
+                post.also?.let { a ->
+                    require(a.max >= 1) { "Category '$name' post.also.max must be >= 1 (got ${a.max})" }
+                    for ((host, label) in a.names) {
+                        require(host.isNotBlank() && host.none { it.isWhitespace() || it == '/' }) {
+                            "Category '$name' post.also.names: '$host' is not a host name (e.g. ign.com)"
+                        }
+                        require(label.isNotBlank()) { "Category '$name' post.also.names.$host must not be blank" }
                     }
                 }
             }

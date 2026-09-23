@@ -726,4 +726,53 @@ class DigestDelivererTest {
         )
         verify(exactly = 0) { db.fetchEventClusters(any(), any()) }
     }
+
+    // ── post.also (📰) ───────────────────────────────────────────────────────
+
+    private fun alsoDelivery(also: metifikys.config.AlsoConfig, sourceLinks: List<String>): Pair<NewsDatabase, String> {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+        val articles = listOf(
+            article(1).copy(link = "https://www.ign.com/a"),
+            article(2).copy(link = "https://www.pcgamer.com/b", feedUrl = "https://www.pcgamer.com/rss"),
+            article(3).copy(link = "https://www.eurogamer.net/c")
+        )
+        val cfg = configWithPost(PostConfig(hashtags = HashtagsConfig(category = "#tech"), also = also))
+        val withLabel = cfg.copy(categories = cfg.categories.mapValues { (_, c) ->
+            c.copy(feeds = c.feeds + FeedConfig("https://www.pcgamer.com/rss", label = "PC Gamer"))
+        })
+        val item = shortlistItem("evt-1", "https://www.ign.com/a").copy(sourceLinks = sourceLinks)
+        DigestDeliverer(withLabel, db, sender)
+            .deliver("tech", "• **Story.**\n\n[IGN](https://www.ign.com/a)", articles, listOf(item))
+        return db to sent.captured
+    }
+
+    @Test
+    fun `also line names the other outlets before the hashtags and never reaches the stored summary`() {
+        val (db, sent) = alsoDelivery(
+            metifikys.config.AlsoConfig(max = 3),
+            listOf("https://www.ign.com/a", "https://www.pcgamer.com/b", "https://www.eurogamer.net/c")
+        )
+        assertEquals(
+            "**Story.**\n\n[IGN](https://www.ign.com/a)\n\n" +
+                "📰 Також: [PC Gamer](https://www.pcgamer.com/b) · [Eurogamer](https://www.eurogamer.net/c)\n#tech",
+            sent
+        )
+        verify { db.saveSummary("tech", match { "Також" !in it && "pcgamer" !in it }, 1) }
+        verify { db.insertDigestMessages(match { rows -> rows.single().articleLinks == "https://www.ign.com/a" }) }
+    }
+
+    @Test
+    fun `also line is absent for a single-article event and in logOnly mode`() {
+        val (_, single) = alsoDelivery(metifikys.config.AlsoConfig(), listOf("https://www.ign.com/a"))
+        assertEquals("**Story.**\n\n[IGN](https://www.ign.com/a)\n\n#tech", single)
+        val (_, logOnly) = alsoDelivery(
+            metifikys.config.AlsoConfig(logOnly = true),
+            listOf("https://www.ign.com/a", "https://www.pcgamer.com/b")
+        )
+        assertEquals("**Story.**\n\n[IGN](https://www.ign.com/a)\n\n#tech", logOnly)
+    }
 }

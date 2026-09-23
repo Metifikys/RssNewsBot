@@ -1,6 +1,7 @@
 package metifikys.digest
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import metifikys.config.AlsoConfig
 import metifikys.config.AppConfig
 import metifikys.config.ConflictLineConfig
 import metifikys.config.PostConfig
@@ -12,6 +13,7 @@ import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
 import metifikys.enrich.BadgeResolver
 import metifikys.enrich.WikipediaIntroProvider
+import metifikys.format.AlsoLine
 import metifikys.format.FooterLines
 import metifikys.format.FooterLines.Slot
 import metifikys.format.Hashtags
@@ -169,6 +171,8 @@ class DigestDeliverer(
         val introBudget = IntroBudget(postCfg?.intro?.maxPerDigest ?: 0)
         // Story lines (📢 / 🥇 / ⚖️): one cluster lookup per digest, before the send loop; eventKey → lines.
         val storyLinesByKey = resolveStoryLines(categoryName, shortlist, resolvedArticles, postCfg?.storyLines)
+        // Feed url → its `label`, for the names in the 📰 also line.
+        val feedLabels = categoryConfig.feeds.mapNotNull { f -> f.label?.let { f.url to it } }.toMap()
 
         val sentTopics = mutableListOf<String>()
         val failedTopicIdx = mutableListOf<Int>()
@@ -203,7 +207,7 @@ class DigestDeliverer(
             val replyTo = eventKey?.let { replyTargets[it] }
             val topicArticles = topicUrls[idx].mapNotNull { articleByLink[it] }
             val storyLines = eventKey?.let { storyLinesByKey[it] }.orEmpty()
-            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLines)
+            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLines, articleByLink, feedLabels)
             // Long-form (post.longForm): a text message with the image as a large link preview
             // above it, so neither the body nor the footer is squeezed into the 1024-char caption.
             // A long post that fits a caption anyway still goes out as a normal photo post.
@@ -437,7 +441,9 @@ class DigestDeliverer(
         post: PostConfig?,
         badgeDeadline: Long,
         introBudget: IntroBudget,
-        storyLines: List<String> = emptyList()
+        storyLines: List<String> = emptyList(),
+        articleByLink: Map<String, Article> = emptyMap(),
+        feedLabels: Map<String, String> = emptyMap()
     ): List<String> {
         if (post == null) return emptyList()
         val footer = FooterLines()
@@ -459,11 +465,36 @@ class DigestDeliverer(
             }
         }
         footer.addAll(Slot.STORY, storyLines)
+        val alsoCfg = post.also
+        if (alsoCfg != null && alsoCfg.enabled && item != null) {
+            footer.add(Slot.ALSO, alsoLine(categoryName, item, alsoCfg, articleByLink, feedLabels))
+        }
         val tags = Hashtags.forItem(item, post.hashtags)
         if (tags.isNotEmpty()) footer.add(Slot.HASHTAGS, tags.joinToString(" "))
         val lines = footer.build()
         if (lines.isNotEmpty()) logger.debug { "[Category:$categoryName][Post] footer: $lines" }
         return lines
+    }
+
+    /**
+     * `post.also`: logs every event's other outlets as `[Also]` (the batch cluster's size is what
+     * decides whether the line is worth having) and returns the line unless `logOnly`.
+     */
+    private fun alsoLine(
+        categoryName: String,
+        item: ShortlistItem,
+        cfg: AlsoConfig,
+        articleByLink: Map<String, Article>,
+        feedLabels: Map<String, String>
+    ): String? {
+        val all = AlsoLine.sources(item, cfg.copy(max = Int.MAX_VALUE)) { link ->
+            articleByLink[link]?.feedUrl?.let { feed -> feedLabels[feed]?.let { feed to it } }
+        }
+        logger.info {
+            "[Category:$categoryName][Also] ${item.eventKey}: ${all.size} other source(s) of ${item.sourceLinks.size} article(s)" +
+                (if (all.isEmpty()) "" else " — ${all.joinToString(", ") { it.host }}") + (if (cfg.logOnly) " (logOnly)" else "")
+        }
+        return if (cfg.logOnly) null else AlsoLine.line(all.take(cfg.max))
     }
 
     /**

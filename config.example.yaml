@@ -510,6 +510,18 @@ categories:
       #     minAnnouncements: 3
       #     minGapDays: 30
       #     softDatesStop: false
+      # 📰 Також: [IGN](…) · [PC Gamer](…) — the other outlets of this digest's batch that Step 1
+      # folded into the event (its articleIndices + the in-batch duplicates; those copies are never
+      # posted on their own). The post's own host is left out, one link per host, at most `max`.
+      # Name: `names` by host (ign.com also covers uk.ign.com), else the feed's `label` when the
+      # feed lives on that host, else the domain without its TLD (eurogamer.net → Eurogamer).
+      # Every event logs `[Also] <eventKey>: N other source(s)`; start with logOnly: true for a
+      # week to see how often a batch cluster has more than one outlet. Late reprints that arrive
+      # after the post are not added.
+      # also:
+      #   logOnly: true
+      #   max: 3
+      #   names: { ign.com: IGN, pcgamer.com: PC Gamer, eurogamer.net: Eurogamer }
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),
