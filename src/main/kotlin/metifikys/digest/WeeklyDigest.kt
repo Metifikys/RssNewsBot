@@ -11,6 +11,7 @@ import metifikys.ai.BillingException
 import metifikys.ai.Embedder
 import metifikys.ai.LlmClientsFactory
 import metifikys.config.AppConfig
+import metifikys.config.BarometerConfig
 import metifikys.config.HypeLineConfig
 import metifikys.config.WeeklyConfig
 import metifikys.db.CoveredEventRow
@@ -19,6 +20,8 @@ import metifikys.db.RejectedEventRow
 import metifikys.format.TopicFormatter
 import metifikys.log.RunContext
 import metifikys.model.Article
+import metifikys.story.Barometer
+import metifikys.story.BarometerChart
 import metifikys.story.Hype
 import metifikys.story.StoryClusterLoader
 import metifikys.story.StoryLines
@@ -437,6 +440,8 @@ class WeeklyDigest(
      *    with `weekly.showOutlets` the badge is the story's outlets instead (`📢 N видань · M
      *    першоджерел`, from `event_articles`), falling back to "🔁 N" for a story without two outlets;
      *  - `weekly.sourceLeaderboard` adds the "🥇 Хто пише першим" block after the bullets;
+     *  - `weekly.barometer` adds its sparkline block (`format: text`, or when the chart cannot be
+     *    drawn) or, once the roundup is out, posts its PNG chart as a separate photo;
      *  - `weekly.hashtag`, when set, is appended on its own line at the end.
      *
      * [TopicFormatter.toHtml] (invoked inside [TelegramSender.sendToChannel]) renders every
@@ -478,13 +483,70 @@ class WeeklyDigest(
             return
         }
         leaderboardBlock(name)?.let { out.append("\n\n").append(it) }
+        val barometer = barometerFor(name)
+        barometer?.text?.let { out.append("\n\n").append(it) }
         weekly.hashtag?.trim()?.takeIf { it.isNotEmpty() }?.let { out.append("\n\n").append(it) }
 
         val sent = sender.sendToChannel(channelId, out.toString(), disablePreview = true).isNotEmpty()
         if (sent) {
             logger.info { "[Weekly:$name] weekly roundup posted to $channelId ($bullets bullet(s))." }
+            barometer?.png?.let { png -> sendBarometer(name, channelId, png, barometer.caption) }
         } else {
             logger.warn { "[Weekly:$name] failed to post weekly roundup to $channelId." }
+        }
+    }
+
+    /** The barometer for one roundup: a PNG to post after it, or a text block to put in it. */
+    private class BarometerOut(val png: ByteArray?, val caption: String, val text: String?)
+
+    /**
+     * `weekly.barometer` for [name]: counts the category's `event_history` and, in `png` format,
+     * draws the chart right away (a drawing failure falls back to the text block, so the roundup
+     * still carries the numbers). Null when off, not for this category, the history is younger
+     * than `minWeeks`, or the lookup fails — the roundup never depends on it.
+     */
+    private fun barometerFor(name: String): BarometerOut? {
+        val cfg = weekly.barometer
+        if (!cfg.enabled || !config.storyIntel.enabled) return null
+        if (cfg.categories.isNotEmpty() && name !in cfg.categories) return null
+        val result = try {
+            val today = LocalDate.now()
+            val earliest = db.earliestEventHistory(name)
+            val coveredWeeks = earliest?.let { java.time.temporal.ChronoUnit.WEEKS.between(Barometer.weekStart(it.toLocalDate()), Barometer.weekStart(today)) + 1 } ?: 0
+            if (coveredWeeks < cfg.minWeeks) {
+                logger.info { "[Weekly:$name][Barometer] event_history spans $coveredWeeks week(s) < minWeeks=${cfg.minWeeks} — not yet" }
+                return null
+            }
+            // Releases counted by their own date may have been announced long before the window.
+            val since = Barometer.weekStart(today).minusWeeks(cfg.weeks.toLong()).minusDays(BAROMETER_RELEASE_LOOKBACK_DAYS)
+            Barometer.weekly(db.fetchEventHistorySince(name, since.atStartOfDay()), cfg.series, cfg.weeks, today)
+        } catch (e: Exception) {
+            logger.warn(e) { "[Weekly:$name][Barometer] counting failed — roundup goes out without it" }
+            return null
+        }
+        logger.info { "[Weekly:$name][Barometer] ${result.series.joinToString { "${it.id}=${it.counts}" }}" }
+        val caption = Barometer.caption(result)
+        if (cfg.format == BarometerConfig.FORMAT_TEXT) return BarometerOut(null, caption, Barometer.textBlock(result))
+        return try {
+            val title = "Барометр індустрії · $name"
+            val subtitle = "${result.weekStarts.size} тижнів до ${result.weekStarts.last().plusDays(6).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))} · за нашими джерелами"
+            BarometerOut(BarometerChart.render(result, title, subtitle), caption, null)
+        } catch (e: Throwable) {
+            // AWT on a server without its native libraries fails with an Error, not an Exception.
+            logger.warn(e) { "[Weekly:$name][Barometer] chart rendering failed — the sparkline goes into the roundup instead" }
+            BarometerOut(null, caption, Barometer.textBlock(result))
+        }
+    }
+
+    private fun sendBarometer(name: String, channelId: String, png: ByteArray, caption: String) {
+        try {
+            if (sender.sendPhotoBytes(channelId, png, caption, fileName = "barometer-$name.png") != null) {
+                logger.info { "[Weekly:$name][Barometer] chart posted to $channelId (${png.size} bytes)" }
+            } else {
+                logger.warn { "[Weekly:$name][Barometer] chart post failed — the roundup is already out" }
+            }
+        } catch (e: Exception) {
+            logger.warn(e) { "[Weekly:$name][Barometer] chart post failed — the roundup is already out" }
         }
     }
 
@@ -570,6 +632,9 @@ class WeeklyDigest(
 
     companion object {
         private const val MAX_EMBED_INPUT_CHARS = 6000
+
+        /** How far before the barometer window `event_history` is read for release dates inside it. */
+        private const val BAROMETER_RELEASE_LOOKBACK_DAYS = 365L
 
         /** Per-candidate `coreFact` cap in the LLM prompt JSON (article descriptions can be long). */
         private const val MAX_CANDIDATE_COREFACT_CHARS = 400

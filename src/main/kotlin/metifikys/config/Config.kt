@@ -256,6 +256,8 @@ data class WeeklyConfig(
     val showOutlets: Boolean = false,
     /** "🥇 Хто пише першим" block at the end of the roundup; see [SourceLeaderboardConfig]. */
     val sourceLeaderboard: SourceLeaderboardConfig = SourceLeaderboardConfig(),
+    /** Weekly industry barometer (chart of layoffs vs releases); see [BarometerConfig]. */
+    val barometer: BarometerConfig = BarometerConfig(),
     /**
      * Categories that participate. Empty = every category that has a `dedup:` block (only those
      * accumulate the `covered_events` / `rejected_events` the ranker needs). Names must exist.
@@ -281,6 +283,58 @@ data class SourceLeaderboardConfig(
     val minEvents: Int = 10,
     val top: Int = 3,
     val showCopiers: Boolean = false
+)
+
+/**
+ * The industry barometer: after the weekly roundup, a chart of how many distinct entities per ISO
+ * week (Monday–Sunday; the last bar is the current week) fell into each of [series] over the last
+ * [weeks] weeks, read from `event_history` (needs `storyIntel.enabled`). [format] `png` sends a
+ * 1200×675 bar chart as its own photo post right after the roundup (bundled DejaVu font, rendered
+ * headless); `text` — and `png` when the chart cannot be drawn — appends a sparkline block to the
+ * roundup instead. Nothing is shown until the history spans [minWeeks] weeks. At most two series:
+ * a phone shows the picture small.
+ */
+data class BarometerConfig(
+    val enabled: Boolean = false,
+    /** Categories that get it; empty = every category of the weekly roundup. */
+    val categories: List<String> = emptyList(),
+    val weeks: Int = 12,
+    val minWeeks: Int = 4,
+    val format: String = FORMAT_PNG,
+    val series: List<BarometerSeriesConfig> = DEFAULT_SERIES
+) {
+    companion object {
+        const val FORMAT_PNG = "png"
+        const val FORMAT_TEXT = "text"
+
+        val DEFAULT_SERIES = listOf(
+            BarometerSeriesConfig(
+                id = "layoffs", label = "Звільнення і закриття", eventTypes = listOf("layoffs", "studio_closure"),
+                keywords = listOf(
+                    "звільн", "скорочення штату", "скорочення співробітників", "закриття студії", "layoff", "laid off",
+                    "job cuts", "studio closure"
+                )
+            ),
+            BarometerSeriesConfig(id = "releases", label = "Релізи", eventTypes = listOf("release_date", "delay"), byEventDate = true)
+        )
+    }
+}
+
+/**
+ * One barometer series. An event counts when its type is one of [eventTypes], or — for layoffs,
+ * which Step 1 files as `industry_news` unless the prompt knows a `layoffs` type — when its type
+ * is one of [keywordEventTypes] and its subject contains one of [keywords] (case-insensitive
+ * substrings; the core fact is not searched — it mentions layoffs and closures in passing). Counted by the week the event reached the channel, or with
+ * [byEventDate] by the week of its own day-precise `eventDate` (the latest one known per entity, so
+ * a delay moves the release).
+ */
+data class BarometerSeriesConfig(
+    val id: String,
+    val label: String,
+    val eventTypes: List<String> = emptyList(),
+    val keywords: List<String> = emptyList(),
+    val keywordEventTypes: List<String> = listOf("industry_news"),
+    val byEventDate: Boolean = false
 )
 
 data class WeeklyPromptsInline(
@@ -2017,6 +2071,33 @@ object ConfigLoader {
         }
         for ((from, to) in s.domainAliases) {
             require(from.isNotBlank() && to.isNotBlank()) { "storyIntel.domainAliases: blank domain in '$from: $to'" }
+        }
+        config.weekly?.barometer?.let { b -> validateBarometer(config, b) }
+    }
+
+    /** `weekly.barometer` — sane window and series; it reads `event_history`, so storyIntel must be on. */
+    private fun validateBarometer(config: AppConfig, b: BarometerConfig) {
+        require(b.weeks in 2..52) { "weekly.barometer.weeks must be within 2..52 (got ${b.weeks})" }
+        require(b.minWeeks in 1..b.weeks) { "weekly.barometer.minWeeks must be within 1..weeks (got ${b.minWeeks})" }
+        require(b.format in setOf(BarometerConfig.FORMAT_PNG, BarometerConfig.FORMAT_TEXT)) {
+            "weekly.barometer.format must be png or text (got '${b.format}')"
+        }
+        require(b.series.size in 1..2) { "weekly.barometer.series must list one or two series (got ${b.series.size})" }
+        require(b.series.map { it.id }.distinct().size == b.series.size) { "weekly.barometer.series ids must be unique" }
+        for (s in b.series) {
+            require(s.id.isNotBlank() && s.label.isNotBlank()) { "weekly.barometer.series: id and label must not be blank" }
+            require(s.eventTypes.isNotEmpty() || s.keywords.isNotEmpty()) {
+                "weekly.barometer.series '${s.id}' needs eventTypes or keywords"
+            }
+        }
+        for (cat in b.categories) {
+            require(cat in config.categories) { "weekly.barometer.categories references unknown category '$cat'" }
+        }
+        if (b.enabled && config.weekly?.enabled == true) {
+            require(config.storyIntel.enabled) { "weekly.barometer needs storyIntel.enabled: true — it counts the events in event_history" }
+            require(b.weeks * 7L <= config.storyIntel.historyRetentionDays) {
+                "weekly.barometer.weeks (${b.weeks}) must fit storyIntel.historyRetentionDays (${config.storyIntel.historyRetentionDays})"
+            }
         }
     }
 

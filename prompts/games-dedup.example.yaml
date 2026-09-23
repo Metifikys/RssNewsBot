@@ -71,7 +71,7 @@ extract:
     5. eventType taxonomy — use these stable values when they apply, else a short snake_case
        descriptor. Items in the first group get priority in ranking:
          major_announcement, release_date, platform_policy, industry_news, major_dlc_expansion,
-         delay, cancellation, lawsuit, acquisition, studio_closure, patch, season_launch.
+         delay, cancellation, lawsuit, acquisition, studio_closure, layoffs, patch, season_launch.
 
     6. Put "new" and "meaningful_update" items into `shortlist`, one row per distinct `eventKey`
        (aggregate `articleIndices`). Every `url` in shortlist MUST come from CURRENT_BATCH —

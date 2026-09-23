@@ -14,7 +14,7 @@ EnvironmentFile=/opt/rssbot/rssbot.env
 
 # -Xmx512m fits a Raspberry Pi; +ExitOnOutOfMemoryError makes the JVM exit on OOM
 # instead of thrashing, and Restart=always brings it straight back up.
-ExecStart=/usr/bin/java -Xmx512m -XX:+ExitOnOutOfMemoryError -jar /opt/rssbot/RssNewsBot.jar /opt/rssbot/config.yaml
+ExecStart=/usr/bin/java -Xmx512m -XX:+ExitOnOutOfMemoryError -Djava.awt.headless=true -jar /opt/rssbot/RssNewsBot.jar /opt/rssbot/config.yaml
 Restart=always
 RestartSec=10
 

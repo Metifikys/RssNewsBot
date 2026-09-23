@@ -10,6 +10,8 @@ import kotlin.system.exitProcess
 private val logger = KotlinLogging.logger {}
 
 fun main(args: Array<String>) {
+    // No display on the server; the weekly barometer draws its chart with java.awt (headless).
+    System.setProperty("java.awt.headless", "true")
     if (args.firstOrNull() == "--check-config") {
         consoleLoggingOnly()
         exitProcess(ConfigCheck.main(args.toList()))

@@ -50,6 +50,12 @@ deploy/restart.sh                # builds the shadow jar and restarts the servic
 prod config (or a prompt file it points at) would not start with the new code, nothing is
 deployed and the old version keeps running. `RSSBOT_SKIP_CHECK=1` bypasses it.
 
+The unit runs the JVM with `-Djava.awt.headless=true` (the weekly barometer draws its chart with
+java.awt; `Main` sets it too). After updating `deploy/rssbot.service`, copy it to
+`/etc/systemd/system/` and `sudo systemctl daemon-reload`. A JRE without the AWT native bits
+(`libfreetype6` / `fontconfig` on a minimal image) makes the chart fail; the roundup then
+carries the text sparkline instead — check the `[Barometer]` log line after the first run.
+
 ## Checking the prod config by hand
 
 ```bash

@@ -182,6 +182,13 @@ via a `/status` admin snapshot.
     [`Vaporware`](src/main/kotlin/metifikys/story/Vaporware.kt)), from the `minAnnouncements`-th; a
     day / month date anywhere in its history means no line (a year / quarter only with
     `softDatesStop`).
+- **Industry barometer** (opt-in, `weekly.barometer`, needs `storyIntel`) — after the weekly
+  roundup, a 1200×675 PNG of distinct subjects per ISO week over the last 12 weeks from
+  `event_history`: layoffs / closures (by type, or a keyword in an `industry_news` subject)
+  against releases (by their own day date). Drawn with java.awt headless and a bundled DejaVu Sans
+  subset (`src/main/resources/fonts`, Bitstream Vera / public-domain licence, ~160 KB), posted as a
+  multipart photo through the same pacer / 429 handling. `format: text` — and a chart that cannot
+  be drawn — puts a `▁▂▅█` sparkline block into the roundup instead; nothing before `minWeeks`.
 - **Living trackers** (`trackers:` per category) — e.g. a pinned "📅 Найближчі релізи" message
   the bot edits after every digest from `release_date` / `delay` events and their `eventDate`
   (year cross-checked against the article), with `⏳ було <old date>` on a delay, a
@@ -890,7 +897,7 @@ first cycle.
 | `summaryHistory`  | no       | How many previous digests to inject as context, retention   |
 | `preferences`     | no       | Global `mute:` keyword blocklist                            |
 | `feedback`        | no       | Reaction-feedback aggregation (off by default)              |
-| `weekly`          | no       | Weekly top-story roundup (off by default)                   |
+| `weekly`          | no       | Weekly top-story roundup (off by default); `weekly.barometer` adds the industry chart |
 | `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`) |
 | `health`          | no       | `claude` / `codex` login + usage-limit alerts in the admin chat, idle probe, `setup-token` expiry (off by default) |
 | `feedHealth`      | no       | Per-feed fetch health + the `/status` 📡 Feeds anomalies: `enabled`, `windowDays` (14, max 30), `statusSection`, `thresholds`; `candidates` (candidate feeds + autodiscovery, own `enabled`) (off by default) |

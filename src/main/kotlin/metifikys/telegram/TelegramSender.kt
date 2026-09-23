@@ -228,6 +228,9 @@ class TelegramSender(
         /** Upper bound on the honored `retry_after`, so an extreme value can't stall the caller. */
         const val MAX_RETRY_AFTER_SEC = 60L
 
+        val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
+        val PNG_TYPE = "image/png".toMediaType()
+
         /** Matches the `<a href="url">label</a>` anchors emitted by [TopicFormatter.toHtml]. */
         val HTML_ANCHOR = Regex("""<a href="([^"]*)">(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
     }
@@ -287,6 +290,31 @@ class TelegramSender(
             // BUG-007: fall back to plain text only on a 400 markup error.
             is SendResult.BadRequest ->
                 (sendPhoto(channelId, photoUrl, htmlCaption?.htmlToPlainText(), parseMode = null, replyTo = replyToMessageId) as? SendResult.Ok)?.ref
+            is SendResult.Transient -> null
+        }
+    }
+
+    /**
+     * Uploads [png] as a photo post (multipart `sendPhoto`) — for images the bot draws itself, such
+     * as the weekly barometer chart. Caption handling as in [sendPhotoToChannel] (truncated, HTML,
+     * plain-text retry on a 400). Same pacer and 429 handling as every other call; the body is
+     * rebuilt from the bytes for the 429 retry. Returns the delivered message's [SentRef], or null.
+     */
+    fun sendPhotoBytes(channelId: String, png: ByteArray, caption: String? = null, fileName: String = "chart.png"): SentRef? {
+        val htmlCaption = caption?.let { TopicFormatter.toHtml(truncateForCaption(it)) }
+        fun body(text: String?, parseMode: String?): RequestBody = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("chat_id", channelId)
+            .apply {
+                if (text != null) addFormDataPart("caption", text)
+                if (parseMode != null) addFormDataPart("parse_mode", parseMode)
+            }
+            .addFormDataPart("photo", fileName, png.toRequestBody(PNG_TYPE))
+            .build()
+        return when (val res = post("sendPhoto", body(htmlCaption, "HTML"), channelId)) {
+            is SendResult.Ok -> res.ref
+            is SendResult.BadRequest ->
+                (post("sendPhoto", body(htmlCaption?.htmlToPlainText(), null), channelId) as? SendResult.Ok)?.ref
             is SendResult.Transient -> null
         }
     }
@@ -351,11 +379,11 @@ class TelegramSender(
      * cooldown; a second 429 is returned to the caller. Every 429 is logged as `[TG429]` and
      * counted for `/status`. Network errors, and an interrupt during a wait, propagate.
      */
-    private fun execute(endpoint: String, payload: String, chatId: String, retryOn429: Boolean = true, paced: Boolean = true): RawResponse {
+    private fun execute(endpoint: String, payload: RequestBody, chatId: String, retryOn429: Boolean = true, paced: Boolean = true): RawResponse {
         if (paced) pacer.acquire(chatId)
         val request = Request.Builder()
             .url("$apiBaseUrl/bot$botToken/$endpoint")
-            .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .post(payload)
             .build()
         val response = client.newCall(request).execute().use { RawResponse(it.code, it.body?.string().orEmpty()) }
         if (response.isSuccessful) return response
@@ -380,7 +408,9 @@ class TelegramSender(
      * (429-after-retry, 5xx, network) maps to [SendResult.Transient] (no plain-text fallback — the
      * markup was valid).
      */
-    private fun post(endpoint: String, payload: String, chatId: String): SendResult {
+    private fun post(endpoint: String, payload: String, chatId: String): SendResult = post(endpoint, payload.toJsonBody(), chatId)
+
+    private fun post(endpoint: String, payload: RequestBody, chatId: String): SendResult {
         return try {
             val response = execute(endpoint, payload, chatId)
             if (response.isSuccessful) {
@@ -477,7 +507,7 @@ class TelegramSender(
     /** For Bot API methods whose `result` is a bare `true`. Goes through [execute], so 429 is honored. */
     private fun postBoolean(endpoint: String, payload: String, chatId: String, paced: Boolean = true): Boolean {
         return try {
-            val response = execute(endpoint, payload, chatId, paced = paced)
+            val response = execute(endpoint, payload.toJsonBody(), chatId, paced = paced)
             val ok = response.isSuccessful && response.body.contains("\"ok\":true")
             if (!ok) logger.warn { "Telegram $endpoint failed for $chatId (HTTP ${response.httpCode})" }
             ok
@@ -634,6 +664,8 @@ class TelegramSender(
         if (text[end - 1].isHighSurrogate()) end--
         return text.substring(0, end) + "…"
     }
+
+    private fun String.toJsonBody(): RequestBody = toRequestBody(JSON_TYPE)
 
     /** Plain-text fallback for the status path (legacy Markdown). */
     private fun String.stripMarkdown(): String =

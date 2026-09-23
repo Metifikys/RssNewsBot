@@ -10,3 +10,4 @@ gradlew.bat text eol=crlf
 
 # Treat the wrapper jar as binary.
 *.jar binary
+*.ttf binary

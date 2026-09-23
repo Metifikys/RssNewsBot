@@ -242,6 +242,48 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `a PNG goes up as a multipart photo with an HTML caption`() = withFakeApi { s, bodies ->
+        val png = byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 1, 2, 3)
+        val ref = s.sendPhotoBytes("@ch", png, caption = "**Барометр** за тиждень", fileName = "barometer.png")
+        assertEquals(SentRef(-100123L, 42L), ref)
+        val body = bodies.single()
+        assertTrue("name=\"chat_id\"" in body && "@ch" in body, body)
+        assertTrue("name=\"caption\"" in body && "<b>Барометр</b> за тиждень" in body, body)
+        assertTrue("name=\"parse_mode\"" in body && "HTML" in body, body)
+        assertTrue("name=\"photo\"; filename=\"barometer.png\"" in body, body)
+        assertTrue("Content-Type: image/png" in body, body)
+    }
+
+    @Test
+    fun `a rate-limited PNG upload waits and resends the whole body once`() {
+        val bodies = mutableListOf<String>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { ex ->
+            bodies += ex.requestBody.readBytes().toString(Charsets.ISO_8859_1)
+            val (code, resp) = if (bodies.size == 1) {
+                429 to """{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":1}}"""
+            } else {
+                200 to """{"ok":true,"result":{"message_id":43,"chat":{"id":-100123}}}"""
+            }
+            val bytes = resp.toByteArray()
+            ex.sendResponseHeaders(code, bytes.size.toLong())
+            ex.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing())
+            val png = ByteArray(2048) { (it % 251).toByte() }
+            assertEquals(SentRef(-100123L, 43L), s.sendPhotoBytes("@ch", png, caption = "c"))
+            assertEquals(2, bodies.size)
+            assertEquals(bodies[0].length, bodies[1].length)
+            assertTrue(png.toString(Charsets.ISO_8859_1) in bodies[1])
+            assertEquals(1, s.rateLimitsLast24h())
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun `photo posts reply too`() = withFakeApi { s, bodies ->
         val ref = s.sendPhotoToChannel("@ch", "https://img.example/1.jpg", caption = "cap", replyToMessageId = 11L)
         assertEquals(SentRef(-100123L, 42L), ref)

@@ -55,6 +55,8 @@ kotlin {
 
 test {
     useJUnitPlatform()
+    // The barometer chart renders with java.awt; CI and the server have no display.
+    systemProperty 'java.awt.headless', 'true'
     finalizedBy jacocoTestReport
 }
 

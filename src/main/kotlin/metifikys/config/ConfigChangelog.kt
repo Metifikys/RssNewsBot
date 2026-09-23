@@ -44,6 +44,7 @@ object ConfigChangelog {
         Entry("storyIntel.historyRetentionDays", "2026-09-23", "event_history (delivered events, first appearance) retention; default 1095 days"),
         Entry("categories.*.post.storyLines", "2026-09-23", "story footer lines: 📢 outlets / original sources (needs storyIntel)"),
         Entry("weekly.showOutlets", "2026-09-23", "weekly badge 📢 N видань · M першоджерел instead of 🔁 N (needs storyIntel)"),
+        Entry("weekly.barometer", "2026-09-23", "weekly industry barometer: PNG chart (or text sparkline) of layoffs vs releases from event_history"),
         Entry("weekly.sourceLeaderboard", "2026-09-23", "weekly 🥇 who-writes-first block (needs storyIntel; /status shows it anyway)"),
         Entry("categories.*.post.storyLines.vaporware", "2026-09-23", "🌀 re-announced without a date, counted over event_history (needs storyIntel)"),
         Entry("categories.*.post.storyLines.conflicts", "2026-09-23", "⚖️ sources-disagree check: log-only by default ([StoryConflict]), mode: post adds the line"),

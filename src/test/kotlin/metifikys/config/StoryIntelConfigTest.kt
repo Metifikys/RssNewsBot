@@ -139,4 +139,29 @@ class StoryIntelConfigTest {
         val noStory = assertThrows<IllegalArgumentException> { load(yaml(post = "storyLines:\n  vaporware: { enabled: true }")) }
         assertTrue("storyIntel.enabled" in noStory.message!!, noStory.message)
     }
+
+    @Test
+    fun `barometer defaults, overrides and checks`() {
+        val c = load(yaml(top = "storyIntel:\n  enabled: true\nweekly:\n  enabled: true\n  barometer: { enabled: true, format: text, weeks: 8 }"))
+        val b = c.weekly!!.barometer
+        assertEquals(BarometerConfig.FORMAT_TEXT, b.format)
+        assertEquals(8, b.weeks)
+        assertEquals(listOf("layoffs", "releases"), b.series.map { it.id })
+        assertTrue(b.series[1].byEventDate)
+
+        val custom = load(yaml(top = "storyIntel:\n  enabled: true\nweekly:\n  enabled: true\n  barometer:\n    enabled: true\n    series:\n      - { id: closures, label: Закриття, eventTypes: [studio_closure] }"))
+        assertEquals(listOf("closures"), custom.weekly!!.barometer.series.map { it.id })
+
+        val noStory = assertThrows<IllegalArgumentException> { load(yaml(top = "weekly:\n  enabled: true\n  barometer: { enabled: true }")) }
+        assertTrue("weekly.barometer" in noStory.message!!, noStory.message)
+        val badFormat = assertThrows<IllegalArgumentException> {
+            load(yaml(top = "storyIntel:\n  enabled: true\nweekly:\n  enabled: true\n  barometer: { enabled: true, format: svg }"))
+        }
+        assertTrue("format" in badFormat.message!!, badFormat.message)
+        val threeSeries = assertThrows<IllegalArgumentException> {
+            load(yaml(top = "storyIntel:\n  enabled: true\nweekly:\n  enabled: true\n  barometer:\n    enabled: true\n    series:\n" +
+                "      - { id: a, label: A, eventTypes: [x] }\n      - { id: b, label: B, eventTypes: [y] }\n      - { id: c, label: C, eventTypes: [z] }"))
+        }
+        assertTrue("one or two" in threeSeries.message!!, threeSeries.message)
+    }
 }
