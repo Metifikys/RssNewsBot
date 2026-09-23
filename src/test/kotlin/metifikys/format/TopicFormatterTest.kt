@@ -139,6 +139,22 @@ class TopicFormatterTest {
     }
 
     @Test
+    fun `applyStrictTopicLayout keeps the strict layout for a paren URL or a flaired label`() {
+        // Found by TopicFormatterPropertyTest (idempotence): the strict shape only accepted a
+        // `[^\]]+` label and a `[^)]+` URL, so these fell back to the legacy layout — and a
+        // second pass (label brackets turned into parens) then produced a different result.
+        val wiki = "https://en.wikipedia.org/wiki/Doom_(2016_video_game)"
+        assertEquals(
+            "🎮 **Doom returns.**\n\nid Software teased it.\n\n[Doom]($wiki)",
+            TopicFormatter.applyStrictLayout("🎮 **Doom returns** id Software\nteased it. [Doom]($wiki)")
+        )
+        val flair = "[I built a parser [P]](https://reddit.com/r/p/1)"
+        val out = TopicFormatter.applyStrictLayout("**Parser.** Body. $flair")
+        assertEquals("**Parser.**\n\nBody.\n\n$flair", out)
+        assertEquals(out, TopicFormatter.applyStrictLayout(out))
+    }
+
+    @Test
     fun `applyStrictTopicLayout falls back when input has no bold headline`() {
         val topic = "Plain text without bold [Src](https://x/y)"
         val out = TopicFormatter.applyStrictLayout(topic)
