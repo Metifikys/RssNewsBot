@@ -817,4 +817,34 @@ class CategoryProcessorTest {
         }
         verify { deliverer.deliver("fast", "fast-summary", any(), any()) }
     }
+
+    // ── post.official ──────────────────────────────────────────────────────────
+
+    @Test
+    fun `an official article in the cluster becomes the rendered and delivered url`() {
+        val cat = cat(dedup = DedupConfig(promptFile = "x.yaml")).copy(
+            post = metifikys.config.PostConfig(official = metifikys.config.OfficialConfig(domains = listOf("blog.playstation.com")))
+        )
+        val extractor = mockk<EventExtractor>()
+        val (p, _, factory, promptLoader, deliverer) = deps(cfg(minArticles = 1, category = cat), eventExtractor = extractor)
+        every { promptLoader.resolve(any()) } returns resolvedDedup
+        val officialLink = "https://eu.blog.playstation.com/2026/09/23/news"
+        val articles = listOf(article(1), article(2), article(3).copy(link = officialLink))
+        every { extractor.extract(any(), any(), any()) } returns ExtractOutcome.Ready(ExtractionResult(
+            extractions = emptyList(),
+            shortlist = listOf(shortlistItem(1).copy(sourceLinks = listOf("https://example.com/1", officialLink)))
+        ))
+        val client = mockk<LlmClient>()
+        every { factory.forBatch(any()) } returns client
+        val input = slot<metifikys.model.CategoryInput>()
+        every { client.submitCategoryBatch(any(), capture(input)) } returns CompletableFuture.completedFuture("digest")
+        val delivered = slot<List<ShortlistItem>>()
+        every { deliverer.deliver(any(), any(), any(), capture(delivered)) } just Runs
+
+        p.process(mapOf("tech" to articles))
+
+        assertEquals(officialLink, input.captured.shortlist!!.single().url)
+        assertEquals(listOf(0, 2), input.captured.shortlist!!.single().articleIndices)
+        assertEquals(officialLink, delivered.captured.single().url)
+    }
 }

@@ -522,6 +522,15 @@ categories:
       #   logOnly: true
       #   max: 3
       #   names: { ign.com: IGN, pcgamer.com: PC Gamer, eurogamer.net: Eurogamer }
+      # Official sources first: when the event's batch cluster holds an article on one of
+      # `domains` (a listed domain or a subdomain of it), the post links there instead of the
+      # outlet Step 1 picked — the image, the long-form source text and covered_events follow;
+      # the outlet moves to the 📰 Також line. The first listed domain some article matches
+      # wins. matchEntityDomain also accepts a host named after the franchise / subject
+      # (hollowknight.com for "Hollow Knight"). Needs a dedup: block. Logs [Official].
+      # official:
+      #   domains: [blog.playstation.com, news.xbox.com, nintendo.com, steampowered.com, ea.com, ubisoft.com]
+      #   matchEntityDomain: false
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),

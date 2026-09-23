@@ -1013,7 +1013,25 @@ data class PostConfig(
     /** Footer lines read from the story clusters (needs `storyIntel.enabled`); see [StoryLinesConfig]. */
     val storyLines: StoryLinesConfig? = null,
     /** `📰 Також: IGN · PC Gamer` — the other outlets the dedup folded into the event; see [AlsoConfig]. */
-    val also: AlsoConfig? = null
+    val also: AlsoConfig? = null,
+    /** Link the post to the official source (press release, studio blog) when the cluster has it; see [OfficialConfig]. */
+    val official: OfficialConfig? = null
+)
+
+/**
+ * Official sources first: when the event's batch cluster ([metifikys.model.ShortlistItem.sourceLinks])
+ * holds an article on one of [domains] — a host equal to a listed domain or a subdomain of it, so
+ * `blog.playstation.com` covers `eu.blog.playstation.com` — the post's link (and with it the image,
+ * the long-form source and `covered_events.url`) points there instead of at the outlet Step 1
+ * picked, which then shows up in the `📰 Також` line. The first listed domain some article
+ * matches wins. [matchEntityDomain] also accepts a host with a label equal to the franchise /
+ * subject (`hollowknight.com` for "Hollow Knight", keys of 5+ characters), after the listed ones.
+ * Applied after the ranker; logs `[Official] <key>: ign.com → blog.playstation.com`.
+ */
+data class OfficialConfig(
+    val enabled: Boolean = true,
+    val domains: List<String> = emptyList(),
+    val matchEntityDomain: Boolean = false
 )
 
 /**
@@ -1864,6 +1882,19 @@ object ConfigLoader {
                             "Category '$name' post.also.names: '$host' is not a host name (e.g. ign.com)"
                         }
                         require(label.isNotBlank()) { "Category '$name' post.also.names.$host must not be blank" }
+                    }
+                }
+                post.official?.let { o ->
+                    require(!o.enabled || o.domains.isNotEmpty() || o.matchEntityDomain) {
+                        "Category '$name' post.official needs domains (or matchEntityDomain: true)"
+                    }
+                    for (d in o.domains) {
+                        require(Regex("""[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+""").matches(d.trim())) {
+                            "Category '$name' post.official.domains: '$d' is not a domain (e.g. blog.playstation.com)"
+                        }
+                    }
+                    require(!o.enabled || category.dedup != null) {
+                        "Category '$name' post.official needs a dedup: block — the candidates are Step 1's event clusters"
                     }
                 }
             }

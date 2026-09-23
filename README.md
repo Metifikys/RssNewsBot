@@ -194,6 +194,12 @@ via a `/status` admin snapshot.
     domain ([`AlsoLine`](src/main/kotlin/metifikys/format/AlsoLine.kt)). `[Also]` logs the count
     for every event; `logOnly` keeps the line out. Late Layer-2 reprints are not added (that
     would need editing the sent post).
+  - **official** — when the event's batch cluster holds an article on one of `domains` (subdomains
+    included; the first listed domain that matches wins; `matchEntityDomain` also takes a host
+    named after the franchise / subject), the post links to that press release / studio blog
+    instead of the outlet Step 1 picked — image, long-form source and `covered_events.url` follow,
+    the outlet goes to the also line. After the ranker; logs `[Official] <key>: ign.com →
+    blog.playstation.com` ([`OfficialSource`](src/main/kotlin/metifikys/digest/OfficialSource.kt)).
 - **Industry barometer** (opt-in, `weekly.barometer`, needs `storyIntel`) — after the weekly
   roundup, a 1200×675 PNG of distinct subjects per ISO week over the last 12 weeks from
   `event_history`, one panel per series with its own scale: layoffs / closures (by type, or a

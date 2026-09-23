@@ -133,4 +133,20 @@ class PostConfigTest {
         assertThrows<IllegalArgumentException> { load(yaml("post:\n  also:\n    max: 0")) }
         assertThrows<IllegalArgumentException> { load(yaml("post:\n  also:\n    names: { ign.com: \"\" }")) }
     }
+
+    @Test
+    fun `official block needs a dedup block and real domains`() {
+        val ok = load(yaml("dedup:\n  promptFile: prompts/games-dedup.example.yaml\npost:\n  official:\n    domains: [blog.playstation.com, nintendo.com]"))
+        val official = ok.categories.getValue("gaming").post!!.official!!
+        assertEquals(listOf("blog.playstation.com", "nintendo.com"), official.domains)
+        assertEquals(false, official.matchEntityDomain)
+
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  official:\n    domains: [nintendo.com]")) }
+        assertThrows<IllegalArgumentException> {
+            load(yaml("dedup:\n  promptFile: prompts/games-dedup.example.yaml\npost:\n  official:\n    domains: [\"https://nintendo.com\"]"))
+        }
+        assertThrows<IllegalArgumentException> {
+            load(yaml("dedup:\n  promptFile: prompts/games-dedup.example.yaml\npost:\n  official:\n    domains: []"))
+        }
+    }
 }

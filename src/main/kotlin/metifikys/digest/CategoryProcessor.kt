@@ -489,8 +489,12 @@ open class CategoryProcessor(
         val longForm = categoryConfig.post?.longForm
         // Long-form: mark the top events on the final render set (after Layer 3.5 drops), so the
         // cap counts only events that can actually be posted.
+        // Official sources (post.official): an event whose batch cluster holds the press release /
+        // studio blog links there — after the ranker, so affinity scored the outlet Step 1 picked.
+        val official = categoryConfig.post?.official
         val renderShortlist: List<ShortlistItem>? = analyzedShortlist?.let { list ->
-            if (longForm == null) list else LongForm.mark(list, longForm, categoryConfig.dedup?.digest)
+            val linked = if (official == null) list else OfficialSource.apply(name, list, articles, official)
+            if (longForm == null) linked else LongForm.mark(linked, longForm, categoryConfig.dedup?.digest)
         }
         if (longForm != null && renderShortlist != null) {
             val longKeys = renderShortlist.filter { it.isLongForm }.map { it.eventKey }
