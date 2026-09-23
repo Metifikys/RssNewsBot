@@ -62,7 +62,9 @@ object Hashtags {
             val boundary = cut.lastIndexOf('_')
             key = (if (boundary > 0) cut.substring(0, boundary) else cut).trim('_')
         }
-        if (key.isEmpty() || key.none { it.isLetter() }) return null
+        // The stop list is checked again on the final key: "None." or a long name cut back to its
+        // first word ("None…" → "none") must not become a tag the raw check let through.
+        if (key.isEmpty() || key.none { it.isLetter() } || key in STOPLIST) return null
         return key
     }
 

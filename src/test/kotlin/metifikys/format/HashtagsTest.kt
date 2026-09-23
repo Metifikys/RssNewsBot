@@ -110,6 +110,17 @@ class HashtagsTest {
     }
 
     @Test
+    fun `a value that only collapses to a stop word is no tag either`() {
+        // Found by HashtagsPropertyTest (idempotence): the stop list was checked on the raw value
+        // only, so "None." or a long name cut back to "none" became #none — which itself
+        // normalizes to null.
+        assertNull(Hashtags.normalize("None."))
+        assertNull(Hashtags.normalize("— Unknown —"))
+        assertNull(Hashtags.normalize("none " + "x".repeat(40)))
+        assertEquals("#none_of_us", Hashtags.normalize("None of Us"))
+    }
+
+    @Test
     fun `splitStatic tolerates extra whitespace and blanks`() {
         assertEquals(listOf("#a", "#b"), Hashtags.splitStatic("  #a   #b "))
         assertEquals(emptyList(), Hashtags.splitStatic(null))
