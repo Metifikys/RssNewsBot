@@ -30,6 +30,9 @@ object BadgeProviders {
             }
             if (CriticBadgeProvider.ID in needed) add(CriticBadgeProvider(steamApps, http, cache, settings.openCriticKey))
             if (DeckBadgeProvider.ID in needed) add(DeckBadgeProvider(http, cache, steamApps))
+            if (SteamTrendBadgeProvider.ID in needed) {
+                add(SteamTrendBadgeProvider(http, cache, steamApps, settings.steamTrendTopN, settings.steamCountry))
+            }
             if (HackerNewsBadgeProvider.ID in needed) add(HackerNewsBadgeProvider(http, cache))
             if (GitHubBadgeProvider.ID in needed) add(GitHubBadgeProvider(http, cache, token = settings.githubToken))
             if (TrailerBadgeProvider.ID in needed) {

@@ -316,6 +316,8 @@ weekly:
 #   # 🛡 CVE badge (post.badges.cve): NVD allows 5 requests / 30 s without a key, 50 with a free one
 #   # (https://nvd.nist.gov/developers/request-an-api-key). Env NVD_API_KEY wins.
 #   nvdApiKey: ""
+#   # 📈 trend badge (post.badges.steamTrend): a chart rank counts up to this place (1..100).
+#   steamTrendTopN: 25
 
 # telegra.ph account for the long-form Instant View pages (post.longForm.telegraph inside a
 # category). Token: env TELEGRAPH_TOKEN, else accessToken, else the one stored in bot_state
@@ -490,6 +492,9 @@ categories:
       #            events as steam; no line when the game has no Ukrainian, see badges.ukLocalizationShowMissing)
       #   deck   — 🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти) (Valve's Deck report +
       #            ProtonDB summary, both undocumented; game events as steam plus patch)
+      #   steamTrend — 📈 Steam: №4 у хітах продажу · №12 серед найочікуваніших (top badges.steamTrendTopN of
+      #            the store's top sellers / most wishlisted / popular upcoming — undocumented store JSON — and
+      #            the Web API most-played chart; charts cached 3 h; game events as steam)
       #   critic — 🏆 Metacritic: 90 (the PC Metascore in Steam's appdetails; release / review events of a
       #            game that is out — Steam fills it some days after release; + OpenCritic with badges.openCriticKey)
       #   cve    — 🛡 CVE-2021-44228: CVSS 10.0, критична · експлуатується (CISA KEV) when the bullet or its
@@ -500,6 +505,7 @@ categories:
         ukLocalization: false
         deck: false
         critic: false
+        steamTrend: false
         hn: false
         github: false
         trailer: false

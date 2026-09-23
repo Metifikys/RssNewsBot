@@ -1333,7 +1333,9 @@ data class IntroConfig(
  * - [critic]: `🏆 Metacritic: 90` on release / review events of a released Steam game (the Metascore in
  *   Steam's appdetails), plus OpenCritic with `badges.openCriticKey`;
  * - [cve]: `🛡 CVE-2021-44228: CVSS 10.0, критична · експлуатується (CISA KEV)` when the bullet names a CVE ID
- *   (NVD API 2.0; any category, meant for tech).
+ *   (NVD API 2.0; any category, meant for tech);
+ * - [steamTrend] (id `steam_trend`): `📈 Steam: №4 у хітах продажу · №12 серед найочікуваніших` when a Steam
+ *   game is in the top `badges.steamTrendTopN` of a store chart.
  */
 data class BadgesConfig(
     val steam: Boolean = false,
@@ -1343,7 +1345,8 @@ data class BadgesConfig(
     val ukLocalization: Boolean = false,
     val deck: Boolean = false,
     val critic: Boolean = false,
-    val cve: Boolean = false
+    val cve: Boolean = false,
+    val steamTrend: Boolean = false
 ) {
     /** Provider ids to run for this category, matching [metifikys.enrich.BadgeProvider.id]. */
     val enabledIds: Set<String>
@@ -1351,6 +1354,7 @@ data class BadgesConfig(
             if (steam) add("steam")
             if (ukLocalization) add("uk_lang")
             if (deck) add("deck")
+            if (steamTrend) add("steam_trend")
             if (critic) add("critic")
             if (hn) add("hn")
             if (github) add("github")
@@ -1389,7 +1393,9 @@ data class BadgeSettings(
      */
     val openCriticKey: String? = null,
     /** Optional NVD API key (env `NVD_API_KEY` wins) for `post.badges.cve`: 50 requests / 30 s instead of 5. */
-    val nvdApiKey: String? = null
+    val nvdApiKey: String? = null,
+    /** `post.badges.steamTrend`: a chart rank counts up to this place (1..100). */
+    val steamTrendTopN: Int = 25
 )
 
 data class ThreadsConfig(
@@ -1959,6 +1965,7 @@ object ConfigLoader {
         require(badges.steamCountry.isNotBlank()) { "badges.steamCountry must not be blank" }
         require(badges.steamLanguage.isNotBlank()) { "badges.steamLanguage must not be blank" }
         require(badges.trailerEventTypes.none { it.isBlank() }) { "badges.trailerEventTypes must not contain blank entries" }
+        require(badges.steamTrendTopN in 1..100) { "badges.steamTrendTopN must be in 1..100 (got ${badges.steamTrendTopN})" }
 
         // Validate database path — no traversal, must not be blank
         val dbPath = config.database.path

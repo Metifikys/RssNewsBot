@@ -165,7 +165,11 @@ via a `/status` admin snapshot.
     `critic` — `🏆 [Metacritic](…): 90` on release / review events of a game that is out: the PC
     Metascore Steam's `appdetails` already carries (Metacritic has no API; Steam fills the field
     some days after release), plus `OpenCritic: 91, рекомендують 97%` when `badges.openCriticKey` (env
-    `OPENCRITIC_RAPIDAPI_KEY`, a RapidAPI key) is set — without it no request goes to OpenCritic.
+    `OPENCRITIC_RAPIDAPI_KEY`, a RapidAPI key) is set — without it no request goes to OpenCritic;
+    `steamTrend` — `📈 Steam: №4 у хітах продажу · №12 серед найочікуваніших` when the game is in the top
+    `badges.steamTrendTopN` (25) of a chart: top sellers, most wishlisted, popular upcoming (the store
+    search page's undocumented JSON, region `steamCountry`) or most played (Web API
+    `ISteamChartsService/GetMostPlayedGames`); at most two charts, each cached whole for 3 h.
     `cve` (for tech) — `🛡 [CVE-2021-44228](…): CVSS 10.0, критична · експлуатується (CISA KEV)` for up
     to 2 CVE IDs the bullet or its articles name, from the NVD API 2.0 (CVSS v4 → v3.1 → v3.0 → v2,
     NVD's score before the CNA's; the provider keeps NVD's 5 requests / 30 s window, 50 with
