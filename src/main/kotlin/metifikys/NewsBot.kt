@@ -33,10 +33,14 @@ import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.HostThrottle
 import metifikys.fetch.RssFetcher
 import metifikys.fetch.TextScrubRules
+import metifikys.telegram.AdminAuth
+import metifikys.telegram.AdminCallbackRouter
+import metifikys.telegram.AdminCommandRouter
 import metifikys.telegram.StatusCommand
 import metifikys.telegram.StatusPoster
 import metifikys.telegram.TelegramSender
 import metifikys.telegram.TelegramUpdatesPoller
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -146,11 +150,32 @@ class NewsBot(
     }
 
     /**
-     * Optional Telegram reaction poller. Constructed only when `telegram.updatesPolling=true`,
-     * so no `getUpdates` loop runs (and no 409 risk) when the feature is off.
+     * Admin commands and button presses run here, one at a time, off the poller thread
+     * (`admin.commands.enabled`; null — and no routers — otherwise).
+     */
+    private val adminExecutor: ExecutorService? =
+        if (config.admin.commands.enabled) {
+            Executors.newSingleThreadExecutor { r -> Thread(r, "admin-commands").also { it.isDaemon = true } }
+        } else null
+
+    private val adminAuth = AdminAuth(config.admin)
+
+    private val commandRouter: AdminCommandRouter? = adminExecutor?.let { AdminCommandRouter(adminAuth, sender, it) }
+
+    private val callbackRouter: AdminCallbackRouter? = adminExecutor?.let { AdminCallbackRouter(adminAuth, sender, it) }
+
+    /** Kept for the "/" menu published at [start]. */
+    private val telegramSender: TelegramSender = sender
+
+    /**
+     * Optional Telegram updates poller (reactions, plus admin commands when enabled). Constructed
+     * only when `telegram.updatesPolling=true`, so no `getUpdates` loop runs (and no 409 risk)
+     * when the feature is off.
      */
     private val updatesPoller: TelegramUpdatesPoller? =
-        if (config.telegram.updatesPolling) TelegramUpdatesPoller(config.telegram.botToken, db) else null
+        if (config.telegram.updatesPolling) {
+            TelegramUpdatesPoller(config.telegram.botToken, db, commandRouter, callbackRouter)
+        } else null
 
     internal val deliverer = DigestDeliverer(config, db, sender, badgeResolver, introProvider, trackerUpdater)
 
@@ -297,6 +322,7 @@ class NewsBot(
             executors.forEach { it.shutdown() }
             weeklyScheduler?.shutdown()
             updatesPoller?.stop()
+            adminExecutor?.shutdownNow()
             val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             try {
                 for (executor in executors) {
@@ -317,6 +343,7 @@ class NewsBot(
         // Start the reaction poller before the first cycle so it isn't blocked behind a slow
         // (or failing) digest run — reaction collection is independent of the digest pipeline.
         updatesPoller?.start()
+        publishCommandMenu()
 
         digestCycle.reclaimOrphanedProcessing()
         digestCycle.resumePendingBatches()
@@ -328,6 +355,25 @@ class NewsBot(
             logger.info {
                 "[Weekly] Weekly top-story roundup enabled: ${w.dayOfWeek} ${w.time}, topN=${w.topN}, " +
                     "lookback=${w.lookbackDays}d, minMentions=${w.minMentions}."
+            }
+        }
+    }
+
+    /**
+     * Admin commands on: publishes the "/" menu to the admin chat and to each admin's private
+     * chat only (`BotCommandScopeChat`), on the admin executor so a slow Bot API never delays
+     * the start. Best-effort — the commands work without the menu.
+     */
+    private fun publishCommandMenu() {
+        val router = commandRouter ?: return
+        val executor = adminExecutor ?: return
+        val chats = (listOfNotNull(config.admin.statusChatId?.trim()) + config.admin.userIds.map { it.toString() }).distinct()
+        executor.execute {
+            val menu = router.menu()
+            val failed = chats.filterNot { telegramSender.setMyCommands(menu, it) }
+            logger.info {
+                "[Admin] commands enabled for users ${config.admin.userIds}; menu (${menu.size} commands) set in " +
+                    "${chats.size - failed.size}/${chats.size} chat(s)" + if (failed.isEmpty()) "" else ", failed: $failed"
             }
         }
     }

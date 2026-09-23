@@ -138,8 +138,30 @@ data class AdminConfig(
      * Chat where the rolling status snapshot is posted at the end of each digest cycle.
      * On every post the previous status message is deleted, so this chat shows only one
      * message at a time. Null disables status posting.
+     *
+     * With [commands] enabled this is also the admin chat: commands are accepted here and
+     * notices go here. Prefer the private chat with the bot (its id is your user id) — in a
+     * channel a command arrives as a `channel_post` without a sender and is never routed.
      */
-    val statusChatId: String? = null
+    val statusChatId: String? = null,
+    /**
+     * Telegram user ids allowed to run admin commands and press admin buttons. A command is
+     * accepted from one of these users in [statusChatId] or in a private chat with the bot;
+     * everything else is ignored silently (the bot never answers strangers).
+     */
+    val userIds: List<Long> = emptyList(),
+    /** Admin commands over the `getUpdates` poller; off by default. */
+    val commands: AdminCommandsConfig = AdminCommandsConfig()
+)
+
+/**
+ * Admin commands (`/help`, …) routed through the same `getUpdates` long-poll that collects
+ * reactions — Telegram allows one consumer per token, so there is no second poller. Needs
+ * `telegram.updatesPolling: true` and a non-empty `admin.userIds`.
+ */
+data class AdminCommandsConfig(
+    /** Subscribes the poller to `message` + `callback_query` updates and routes them. */
+    val enabled: Boolean = false
 )
 
 /**
@@ -1211,6 +1233,8 @@ object ConfigLoader {
             require(kw.isNotBlank()) { "preferences.mute[$i] must not be blank" }
         }
 
+        validateAdmin(config)
+
         val badges = config.badges.copy(
             githubToken = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() } ?: config.badges.githubToken
         )
@@ -1469,6 +1493,21 @@ object ConfigLoader {
             anthropic = anthropic,
             badges = badges
         )
+    }
+
+    /** `admin:` block — the admin-command features need the poller and at least one admin. */
+    private fun validateAdmin(config: AppConfig) {
+        val admin = config.admin
+        require(admin.userIds.none { it == 0L }) { "admin.userIds must not contain 0" }
+        if (admin.commands.enabled) {
+            require(config.telegram.updatesPolling) {
+                "admin.commands.enabled needs telegram.updatesPolling: true — commands arrive through the same " +
+                    "getUpdates poller as reactions (one consumer per bot token)"
+            }
+            require(admin.userIds.isNotEmpty()) {
+                "admin.commands.enabled needs a non-empty admin.userIds — the Telegram user ids allowed to run commands"
+            }
+        }
     }
 
     private fun validateOverride(

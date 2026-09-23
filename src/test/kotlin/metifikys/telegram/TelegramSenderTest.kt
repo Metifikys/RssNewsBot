@@ -84,6 +84,31 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `admin messages carry an inline keyboard, silence, and the admin-chat helper calls`() = withFakeApi { s, bodies ->
+        val kb = listOf(listOf(InlineButton("🔇 У gaming", "ms:cat:17"), InlineButton("✖ Ні", "ms:no:17")))
+        assertEquals(42L, s.sendMessageWithKeyboard("555", "hi", kb, silent = true))
+        val keyboardJson = """"reply_markup":{"inline_keyboard":[[{"text":"🔇 У gaming","callback_data":"ms:cat:17"},""" +
+            """{"text":"✖ Ні","callback_data":"ms:no:17"}]]}"""
+        assertTrue(keyboardJson in bodies[0], bodies[0])
+        assertTrue(""""disable_notification":true""" in bodies[0] && "parse_mode" !in bodies[0], bodies[0])
+
+        assertEquals(TelegramSender.EditResult.OK, s.editMessageWithKeyboard("555", 42L, "done", keyboard = null))
+        assertFalse("reply_markup" in bodies[1], "a null keyboard removes it: ${bodies[1]}")
+
+        assertTrue(s.editMessageReplyMarkup("555", 42L, kb))
+        assertTrue(s.answerCallbackQuery("cbq-1"))
+        assertTrue(""""callback_query_id":"cbq-1"""" in bodies[3], bodies[3])
+        assertTrue(s.setMyCommands(listOf("help" to "список"), "555"))
+        assertTrue(""""scope":{"type":"chat","chat_id":"555"}""" in bodies[4], bodies[4])
+    }
+
+    @Test
+    fun `callback data over 64 bytes is rejected up front`() {
+        val ex = runCatching { InlineButton("x", "mod:del:" + "9".repeat(60)) }.exceptionOrNull()
+        assertTrue(ex is IllegalArgumentException)
+    }
+
+    @Test
     fun `editMessageText maps a 400 to NOT_FOUND unless the text was merely unchanged`() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         var description = "Bad Request: message to edit not found"

@@ -153,6 +153,13 @@ via a `/status` admin snapshot.
 - **`/status` admin snapshot** — per-category last digest + ready count + pending batches +
   24h/7d LLM cost (per provider × category), posted one-message-at-a-time so the admin chat
   always shows the latest state.
+- **Admin commands** (opt-in, `admin.commands.enabled`) — the same `getUpdates` poller also
+  subscribes to `message` + `callback_query` and routes them to
+  [`AdminCommandRouter`](src/main/kotlin/metifikys/telegram/AdminCommandRouter.kt) /
+  [`AdminCallbackRouter`](src/main/kotlin/metifikys/telegram/AdminCallbackRouter.kt). Only users in
+  `admin.userIds`, only in the admin chat or a private chat with the bot; strangers get no answer.
+  Commands run one at a time on an `admin-commands` thread, their update offset is saved before
+  they run (a crash never replays a command), and one older than 10 minutes is refused as stale.
 - **Per-LLM-call cost ledger** — `llm_calls` table records `(provider, model, category,
   useCase, promptTokens, completionTokens, estCostUsd, ts)` for every call, including the
   Batch API auto-halving.
@@ -747,7 +754,7 @@ first cycle.
 | `preferences`     | no       | Global `mute:` keyword blocklist                            |
 | `feedback`        | no       | Reaction-feedback aggregation (off by default)              |
 | `weekly`          | no       | Weekly top-story roundup (off by default)                   |
-| `admin`           | no       | `statusChatId` enables the `/status` poster                 |
+| `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`) |
 | `pricing`         | no       | USD/1M tokens per (provider, model)                          |
 | `categories`      | yes      | Map of category name → `CategoryConfig`                     |
 

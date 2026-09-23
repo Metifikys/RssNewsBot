@@ -17,27 +17,44 @@ import java.util.concurrent.TimeUnit
 private val logger = KotlinLogging.logger {}
 
 /**
- * Long-polls Telegram `getUpdates` on its own daemon thread and persists channel-post reaction
- * counts. We only subscribe to `message_reaction_count` — the anonymous, aggregated reaction
- * update Telegram emits for channels (per-user `message_reaction` exists only in groups). Each
- * update carries a message's complete reaction set, so it maps to a replace-all write via
+ * Long-polls Telegram `getUpdates` on its own daemon thread. Always subscribed to
+ * `message_reaction_count` — the anonymous, aggregated reaction update Telegram emits for
+ * channels (per-user `message_reaction` exists only in groups). Each such update carries a
+ * message's complete reaction set, so it maps to a replace-all write via
  * [NewsDatabase.replaceReactionCounts].
  *
- * The `getUpdates` offset is persisted in `bot_state` after every non-empty batch, so a restart
- * resumes without reprocessing or dropping updates. Telegram allows only ONE `getUpdates`
- * consumer per bot token; a second one gets HTTP 409 (logged loudly) — never run two pollers on
- * the same token (e.g. a dev box and the server). Gated behind `telegram.updatesPolling`, off by
- * default, precisely so a shared-token dev instance stays silent.
+ * With admin commands on (a [commandRouter] / [callbackRouter] is passed) it also subscribes to
+ * `message` and `callback_query` and hands them to the routers, which authorize and execute them
+ * off this thread. `channel_post` is never subscribed, so the bot does not receive its own posts.
+ *
+ * The `getUpdates` offset is persisted in `bot_state`. Reactions: after every non-empty batch,
+ * so a restart resumes without reprocessing or dropping them. Commands and button presses:
+ * BEFORE they are routed (at-most-once) — after a crash-restart, a lost command is better than
+ * a second `/run` or a second "delete". Telegram allows only ONE `getUpdates` consumer per bot
+ * token; a second one gets HTTP 409 (logged loudly) — never run two pollers on the same token
+ * (e.g. a dev box and the server). Gated behind `telegram.updatesPolling`, off by default,
+ * precisely so a shared-token dev instance stays silent.
  */
 class TelegramUpdatesPoller(
     private val botToken: String,
-    private val db: NewsDatabase
+    private val db: NewsDatabase,
+    private val commandRouter: AdminCommandRouter? = null,
+    private val callbackRouter: AdminCallbackRouter? = null,
+    /** Bot API origin; overridable so tests can point the poller at a local HTTP server. */
+    private val apiBaseUrl: String = "https://api.telegram.org",
+    private val longPollSeconds: Int = LONG_POLL_SECONDS
 ) {
     private companion object {
         const val OFFSET_KEY = "updates_offset"
         const val LONG_POLL_SECONDS = 50
-        val ALLOWED_UPDATES = listOf("message_reaction_count")
         const val MAX_BACKOFF_MS = 60_000L
+    }
+
+    /** What `getUpdates` subscribes to: reactions, plus messages and button presses when routed. */
+    internal val allowedUpdates: List<String> = buildList {
+        add("message_reaction_count")
+        if (commandRouter != null) add("message")
+        if (callbackRouter != null) add("callback_query")
     }
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -45,7 +62,7 @@ class TelegramUpdatesPoller(
     // Read timeout must exceed the long-poll timeout so a quiet poll isn't killed as a timeout.
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout((LONG_POLL_SECONDS + 20).toLong(), TimeUnit.SECONDS)
+        .readTimeout((longPollSeconds + 20).toLong(), TimeUnit.SECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
         .build()
@@ -63,7 +80,7 @@ class TelegramUpdatesPoller(
             isDaemon = true
             start()
         }
-        logger.info { "[Updates] Reaction poller started (offset=$offset, allowed=$ALLOWED_UPDATES)." }
+        logger.info { "[Updates] Poller started (offset=$offset, allowed=$allowedUpdates)." }
     }
 
     fun stop() {
@@ -78,6 +95,11 @@ class TelegramUpdatesPoller(
                 val updates = fetchUpdates(offset)
                 backoffMs = 1_000L
                 for (u in updates) {
+                    if (u.message != null || u.callbackQuery != null) {
+                        // At-most-once: the offset moves past a command before it is routed.
+                        offset = u.updateId + 1
+                        db.setState(OFFSET_KEY, offset.toString())
+                    }
                     handleUpdate(u)
                     offset = u.updateId + 1
                 }
@@ -95,11 +117,45 @@ class TelegramUpdatesPoller(
                 backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
             }
         }
-        logger.info { "[Updates] Reaction poller stopped." }
+        logger.info { "[Updates] Poller stopped." }
     }
 
     private fun handleUpdate(u: UpdateDto) {
-        val mrc = u.messageReactionCount ?: return
+        u.messageReactionCount?.let { handleReactions(it) }
+        u.message?.let { m ->
+            val router = commandRouter ?: return@let
+            routeSafely("message") {
+                router.onMessage(
+                    IncomingMessage(
+                        updateId = u.updateId, chatId = m.chat.id, chatType = m.chat.type, fromId = m.from?.id,
+                        messageId = m.messageId, date = m.date, text = m.text
+                    )
+                )
+            }
+        }
+        u.callbackQuery?.let { c ->
+            val router = callbackRouter ?: return@let
+            routeSafely("callback_query") {
+                router.onCallback(
+                    IncomingCallback(
+                        updateId = u.updateId, id = c.id, fromId = c.from.id, data = c.data.orEmpty(),
+                        chatId = c.message?.chat?.id, messageId = c.message?.messageId
+                    )
+                )
+            }
+        }
+    }
+
+    /** A routing failure (e.g. the executor is shutting down) must never stall the poll loop. */
+    private inline fun routeSafely(kind: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (e: Exception) {
+            logger.warn(e) { "[Updates] routing a $kind update failed — dropped" }
+        }
+    }
+
+    private fun handleReactions(mrc: MessageReactionCountDto) {
         val counts = mrc.reactions.mapNotNull { r ->
             val key = emojiKey(r.type) ?: return@mapNotNull null
             ReactionCount(key, r.totalCount)
@@ -118,11 +174,11 @@ class TelegramUpdatesPoller(
 
     private fun fetchUpdates(offset: Long): List<UpdateDto> {
         val payload = json.encodeToString(
-            GetUpdatesRequest(offset = offset, timeout = LONG_POLL_SECONDS, allowedUpdates = ALLOWED_UPDATES)
+            GetUpdatesRequest(offset = offset, timeout = longPollSeconds, allowedUpdates = allowedUpdates)
         )
         val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
         val request = Request.Builder()
-            .url("https://api.telegram.org/bot$botToken/getUpdates")
+            .url("$apiBaseUrl/bot$botToken/getUpdates")
             .post(body)
             .build()
         client.newCall(request).execute().use { response ->
@@ -160,7 +216,9 @@ class TelegramUpdatesPoller(
     @Serializable
     private data class UpdateDto(
         @SerialName("update_id") val updateId: Long = 0,
-        @SerialName("message_reaction_count") val messageReactionCount: MessageReactionCountDto? = null
+        @SerialName("message_reaction_count") val messageReactionCount: MessageReactionCountDto? = null,
+        val message: MessageDto? = null,
+        @SerialName("callback_query") val callbackQuery: CallbackQueryDto? = null
     )
 
     @Serializable
@@ -171,7 +229,27 @@ class TelegramUpdatesPoller(
     )
 
     @Serializable
-    private data class ChatDto(val id: Long = 0)
+    private data class ChatDto(val id: Long = 0, val type: String = "")
+
+    @Serializable
+    private data class UserDto(val id: Long = 0)
+
+    @Serializable
+    private data class MessageDto(
+        @SerialName("message_id") val messageId: Long = 0,
+        val chat: ChatDto = ChatDto(),
+        val from: UserDto? = null,
+        val date: Long = 0,
+        val text: String? = null
+    )
+
+    @Serializable
+    private data class CallbackQueryDto(
+        val id: String = "",
+        val from: UserDto = UserDto(),
+        val data: String? = null,
+        val message: MessageDto? = null
+    )
 
     @Serializable
     private data class ReactionCountDto(

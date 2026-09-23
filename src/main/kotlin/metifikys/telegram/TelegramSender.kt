@@ -21,6 +21,16 @@ private val logger = KotlinLogging.logger {}
  */
 data class SentRef(val chatId: Long, val messageId: Long)
 
+/**
+ * One inline-keyboard button of an admin-chat message. Pressing it delivers a `callback_query`
+ * carrying [callbackData] to the updates poller; Telegram caps that at 64 bytes.
+ */
+data class InlineButton(val text: String, val callbackData: String) {
+    init {
+        require(callbackData.toByteArray(Charsets.UTF_8).size <= 64) { "callback_data over 64 bytes: $callbackData" }
+    }
+}
+
 class TelegramSender(
     private val botToken: String,
     /** Bot API origin; overridable so tests can point the sender at a local HTTP server. */
@@ -113,6 +123,56 @@ class TelegramSender(
         val disable_notification: Boolean? = null
     )
 
+    @Serializable
+    private data class InlineKeyboardButtonDto(val text: String, val callback_data: String)
+
+    @Serializable
+    private data class InlineKeyboardMarkup(val inline_keyboard: List<List<InlineKeyboardButtonDto>>)
+
+    /** `sendMessage` for the admin chat: optional inline keyboard, optionally silent. */
+    @Serializable
+    private data class KeyboardMessageRequest(
+        val chat_id: String,
+        val text: String,
+        val parse_mode: String? = null,
+        val disable_web_page_preview: Boolean? = null,
+        val disable_notification: Boolean? = null,
+        val reply_markup: InlineKeyboardMarkup? = null
+    )
+
+    /** `editMessageText` for the admin chat; a null [reply_markup] removes the keyboard. */
+    @Serializable
+    private data class EditKeyboardMessageRequest(
+        val chat_id: String,
+        val message_id: Long,
+        val text: String,
+        val parse_mode: String? = null,
+        val disable_web_page_preview: Boolean? = null,
+        val reply_markup: InlineKeyboardMarkup? = null
+    )
+
+    @Serializable
+    private data class EditReplyMarkupRequest(
+        val chat_id: String,
+        val message_id: Long,
+        val reply_markup: InlineKeyboardMarkup? = null
+    )
+
+    @Serializable
+    private data class AnswerCallbackRequest(val callback_query_id: String, val text: String? = null)
+
+    @Serializable
+    private data class BotCommandDto(val command: String, val description: String)
+
+    @Serializable
+    private data class BotCommandScopeDto(val type: String, val chat_id: String)
+
+    @Serializable
+    private data class SetMyCommandsRequest(val commands: List<BotCommandDto>, val scope: BotCommandScopeDto)
+
+    private fun List<List<InlineButton>>.toMarkup(): InlineKeyboardMarkup =
+        InlineKeyboardMarkup(map { row -> row.map { InlineKeyboardButtonDto(it.text, it.callbackData) } })
+
     /** Outcome of [editMessageText]. */
     enum class EditResult {
         /** Edited (or Telegram reported the text unchanged). */
@@ -158,6 +218,9 @@ class TelegramSender(
     private companion object {
         /** Telegram's hard limit for sendPhoto caption length. */
         const val MAX_CAPTION_LEN = 1024
+
+        /** Admin-chat messages are cut to this many chars (Telegram's limit is 4096). */
+        const val ADMIN_TEXT_MAX = 4000
 
         /** Fallback wait when Telegram returns 429 without a `parameters.retry_after`. */
         const val DEFAULT_RETRY_AFTER_SEC = 3L
@@ -288,8 +351,8 @@ class TelegramSender(
      * cooldown; a second 429 is returned to the caller. Every 429 is logged as `[TG429]` and
      * counted for `/status`. Network errors, and an interrupt during a wait, propagate.
      */
-    private fun execute(endpoint: String, payload: String, chatId: String, retryOn429: Boolean = true): RawResponse {
-        pacer.acquire(chatId)
+    private fun execute(endpoint: String, payload: String, chatId: String, retryOn429: Boolean = true, paced: Boolean = true): RawResponse {
+        if (paced) pacer.acquire(chatId)
         val request = Request.Builder()
             .url("$apiBaseUrl/bot$botToken/$endpoint")
             .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
@@ -304,7 +367,7 @@ class TelegramSender(
         // Greppable marker: the criterion for a full token bucket is any of these in prod logs.
         logger.warn { "[TG429] $endpoint $chatId retry_after=$retryAfter" + if (retryOn429) " — retrying once" else " — giving up" }
         if (!retryOn429) return response
-        return execute(endpoint, payload, chatId, retryOn429 = false)
+        return execute(endpoint, payload, chatId, retryOn429 = false, paced = paced)
     }
 
     /**
@@ -412,9 +475,9 @@ class TelegramSender(
         postBoolean("unpinChatMessage", json.encodeToString(PinMessageRequest(chatId, messageId)), chatId)
 
     /** For Bot API methods whose `result` is a bare `true`. Goes through [execute], so 429 is honored. */
-    private fun postBoolean(endpoint: String, payload: String, chatId: String): Boolean {
+    private fun postBoolean(endpoint: String, payload: String, chatId: String, paced: Boolean = true): Boolean {
         return try {
-            val response = execute(endpoint, payload, chatId)
+            val response = execute(endpoint, payload, chatId, paced = paced)
             val ok = response.isSuccessful && response.body.contains("\"ok\":true")
             if (!ok) logger.warn { "Telegram $endpoint failed for $chatId (HTTP ${response.httpCode})" }
             ok
@@ -431,6 +494,103 @@ class TelegramSender(
     /** Deletes a previously sent message. Returns true on success. */
     fun deleteMessage(chatId: String, messageId: Long): Boolean =
         postBoolean("deleteMessage", json.encodeToString(DeleteMessageRequest(chatId, messageId)), chatId)
+
+    // ── Admin chat (commands, suggestions, moderation) ───────────────────────
+
+    /**
+     * Sends one admin-chat message, optionally with an inline [keyboard] and [silent]
+     * (`disable_notification`). The text is plain unless [html] (then a 400 markup error is
+     * retried once as plain text, as on the channel path). Over-long text is cut to one message.
+     * Returns the message id, or null when nothing was sent. Goes through the per-chat pacer
+     * like every other call, so a burst of admin messages spaces itself out in the admin chat
+     * without touching the channels' slots.
+     */
+    fun sendMessageWithKeyboard(
+        chatId: String,
+        text: String,
+        keyboard: List<List<InlineButton>>? = null,
+        silent: Boolean = false,
+        html: Boolean = false
+    ): Long? {
+        val body = cutForAdmin(text)
+        fun attempt(t: String, parseMode: String?): SendResult = post(
+            "sendMessage",
+            json.encodeToString(
+                KeyboardMessageRequest(
+                    chatId, t, parseMode, disable_web_page_preview = true,
+                    disable_notification = if (silent) true else null,
+                    reply_markup = keyboard?.toMarkup()
+                )
+            ),
+            chatId
+        )
+        return when (val res = attempt(body, if (html) "HTML" else null)) {
+            is SendResult.Ok -> res.ref.messageId
+            is SendResult.BadRequest -> if (html) (attempt(body.htmlToPlainText(), null) as? SendResult.Ok)?.ref?.messageId else null
+            is SendResult.Transient -> null
+        }
+    }
+
+    /**
+     * Replaces an admin-chat message's text and keyboard in one call (a null [keyboard] removes
+     * it). "Message is not modified" counts as [EditResult.OK].
+     */
+    fun editMessageWithKeyboard(
+        chatId: String,
+        messageId: Long,
+        text: String,
+        keyboard: List<List<InlineButton>>? = null,
+        html: Boolean = false
+    ): EditResult {
+        val body = cutForAdmin(text)
+        fun attempt(t: String, parseMode: String?): SendResult = post(
+            "editMessageText",
+            json.encodeToString(EditKeyboardMessageRequest(chatId, messageId, t, parseMode, true, keyboard?.toMarkup())),
+            chatId
+        )
+        fun classify(res: SendResult): EditResult? = when (res) {
+            is SendResult.Ok -> EditResult.OK
+            is SendResult.Transient -> EditResult.FAILED
+            is SendResult.BadRequest -> if (res.description?.contains("not modified", ignoreCase = true) == true) EditResult.OK else null
+        }
+        classify(attempt(body, if (html) "HTML" else null))?.let { return it }
+        if (!html) return EditResult.NOT_FOUND
+        return classify(attempt(body.htmlToPlainText(), null)) ?: EditResult.NOT_FOUND
+    }
+
+    /** Swaps (or with a null [keyboard] removes) the inline keyboard of a message, text untouched. */
+    fun editMessageReplyMarkup(chatId: String, messageId: Long, keyboard: List<List<InlineButton>>?): Boolean =
+        postBoolean(
+            "editMessageReplyMarkup",
+            json.encodeToString(EditReplyMarkupRequest(chatId, messageId, keyboard?.toMarkup())),
+            chatId
+        )
+
+    /**
+     * Stops the client's spinner on a pressed button, optionally with a short toast. Not paced:
+     * it belongs to no chat, and Telegram expects it within seconds of the press.
+     */
+    fun answerCallbackQuery(callbackQueryId: String, text: String? = null): Boolean =
+        postBoolean(
+            "answerCallbackQuery",
+            json.encodeToString(AnswerCallbackRequest(callbackQueryId, text)),
+            "callback",
+            paced = false
+        )
+
+    /**
+     * Sets the "/" command menu for ONE chat (`BotCommandScopeChat`) — the admin chat or an
+     * admin's private chat — so no other chat sees the bot's commands. [commands] are
+     * `command` (without the slash) → description pairs.
+     */
+    fun setMyCommands(commands: List<Pair<String, String>>, chatId: String): Boolean =
+        postBoolean(
+            "setMyCommands",
+            json.encodeToString(
+                SetMyCommandsRequest(commands.map { BotCommandDto(it.first, it.second) }, BotCommandScopeDto("chat", chatId))
+            ),
+            chatId
+        )
 
     fun chunkMessage(text: String, maxLen: Int = 4096): List<String> {
         if (text.length <= maxLen) return listOf(text)
@@ -465,6 +625,14 @@ class TelegramSender(
         }
         if (current.isNotEmpty()) chunks.add(current.toString())
         return chunks
+    }
+
+    /** One admin message's worth of [text], never cutting an astral character's surrogate pair. */
+    private fun cutForAdmin(text: String): String {
+        if (text.length <= ADMIN_TEXT_MAX) return text
+        var end = ADMIN_TEXT_MAX - 1
+        if (text[end - 1].isHighSurrogate()) end--
+        return text.substring(0, end) + "…"
     }
 
     /** Plain-text fallback for the status path (legacy Markdown). */

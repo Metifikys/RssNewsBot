@@ -254,6 +254,19 @@ feedback:
 #     # Use multi-word keys, or scope the risky key to one channel via a category-level `mute:` list
 #     # (see the gaming category below) — the two lists are merged per category.
 
+# Optional: the admin chat. `statusChatId` alone enables the rolling /status snapshot (the previous
+# one is deleted on every maintenance tick). Prefer the PRIVATE chat with the bot (its id is your
+# Telegram user id): in a channel, commands arrive as channel posts without a sender and are ignored.
+# admin:
+#   statusChatId: "123456789"
+#   userIds: [123456789]       # Telegram user ids allowed to run commands and press admin buttons
+#   # Admin commands (/help, …) over the same getUpdates poller as reactions — needs
+#   # telegram.updatesPolling: true and a non-empty userIds. Accepted from an admin in statusChatId
+#   # or in a private chat with the bot; anyone else is ignored silently. The "/" menu is set for
+#   # those chats only. A command older than 10 minutes (sent while the bot was down) is refused.
+#   commands:
+#     enabled: false
+
 categories:
   tech:
     emoji: "💻"
