@@ -19,9 +19,11 @@ object BadgeProviders {
         val settings = config.badges
         val http = BadgeHttp(timeoutSeconds = settings.timeoutSeconds)
         val cache = DbBadgeCache(db)
+        // One store search + one appdetails per game for every Steam-based badge.
+        val steamApps = SteamAppResolver(http, cache, country = settings.steamCountry, language = settings.steamLanguage)
         val providers = buildList {
             if (SteamBadgeProvider.ID in needed) {
-                add(SteamBadgeProvider(http, cache, country = settings.steamCountry, language = settings.steamLanguage))
+                add(SteamBadgeProvider(http, cache, settings.steamCountry, settings.steamLanguage, resolver = steamApps))
             }
             if (HackerNewsBadgeProvider.ID in needed) add(HackerNewsBadgeProvider(http, cache))
             if (GitHubBadgeProvider.ID in needed) add(GitHubBadgeProvider(http, cache, token = settings.githubToken))
