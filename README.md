@@ -152,6 +152,14 @@ via a `/status` admin snapshot.
     source text, and come back as a two-paragraph post; one longer than a photo caption is sent
     as text with the image as a large link preview above it. Needs the render prompt's
     LONG-FORM ITEMS block.
+  - **storyLines** (needs `storyIntel.enabled`) — deterministic footer facts from the story
+    clusters, placed before the hashtags. **hype**: `📢 9 видань · 1 першоджерело` — outlets are
+    distinct domains; a member is a retelling when its title/teaser credits another outlet
+    ([`Attribution`](src/main/kotlin/metifikys/story/Attribution.kt): `via`, `according to`,
+    `як повідомляє`, `з посиланням на`, …; its own outlet does not count) or is a near-copy
+    (`reprintSimilarity`) of an earlier outlet's article; all crediting one outlet gives
+    `усі з посиланням на X`. Shown from `minOutlets` outlets. The weekly roundup can show the same
+    fact over the complete week's clusters instead of `🔁 N` (`weekly.showOutlets`).
 - **Living trackers** (`trackers:` per category) — e.g. a pinned "📅 Найближчі релізи" message
   the bot edits after every digest from `release_date` / `delay` events and their `eventDate`
   (year cross-checked against the article), with `⏳ було <old date>` on a delay, a

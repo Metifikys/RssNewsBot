@@ -65,4 +65,26 @@ class StoryIntelConfigTest {
         val c = load(yaml(top = "storyIntel:\n  enabled: true\n  domainAliases:\n    eurogamer.de: eurogamer.net"))
         assertEquals(mapOf("eurogamer.de" to "eurogamer.net"), c.storyIntel.domainAliases)
     }
+
+    @Test
+    fun `story lines need storyIntel`() {
+        val e = assertThrows<IllegalArgumentException> { load(yaml(post = "storyLines:\n  hype: { minOutlets: 4 }")) }
+        assertTrue("storyIntel.enabled" in e.message!!, e.message)
+        val c = load(yaml(top = "storyIntel:\n  enabled: true", post = "storyLines:\n  hype: { minOutlets: 3, reprintSimilarity: 0.9 }"))
+        assertEquals(3, c.categories.getValue("gaming").post?.storyLines?.hype?.minOutlets)
+    }
+
+    @Test
+    fun `hype minOutlets below two is refused`() {
+        val e = assertThrows<IllegalArgumentException> {
+            load(yaml(top = "storyIntel:\n  enabled: true", post = "storyLines:\n  hype: { minOutlets: 1 }"))
+        }
+        assertTrue("minOutlets" in e.message!!, e.message)
+    }
+
+    @Test
+    fun `weekly showOutlets needs storyIntel`() {
+        val e = assertThrows<IllegalArgumentException> { load(yaml(top = "weekly:\n  enabled: true\n  showOutlets: true")) }
+        assertTrue("weekly.showOutlets" in e.message!!, e.message)
+    }
 }

@@ -11,6 +11,7 @@ import metifikys.ai.BillingException
 import metifikys.ai.Embedder
 import metifikys.ai.LlmClientsFactory
 import metifikys.config.AppConfig
+import metifikys.config.HypeLineConfig
 import metifikys.config.WeeklyConfig
 import metifikys.db.CoveredEventRow
 import metifikys.db.NewsDatabase
@@ -18,6 +19,9 @@ import metifikys.db.RejectedEventRow
 import metifikys.format.TopicFormatter
 import metifikys.log.RunContext
 import metifikys.model.Article
+import metifikys.story.Hype
+import metifikys.story.StoryClusterLoader
+import metifikys.story.StoryLines
 import metifikys.telegram.TelegramSender
 import java.io.File
 import java.time.LocalDate
@@ -64,7 +68,9 @@ data class WeeklyStory(
     val mentionCount: Int,
     val coveredAt: LocalDateTime?,
     /** A few alternative phrasings/headlines for the same story, for the LLM's context. */
-    val alsoReportedAs: List<String>
+    val alsoReportedAs: List<String>,
+    /** Event keys of every member (representative first) — the story's `event_articles` clusters. */
+    val memberKeys: List<String> = emptyList()
 )
 
 /**
@@ -118,7 +124,8 @@ object WeeklyClusterer {
                 digestFit = c.rep.digestFit,
                 mentionCount = c.members.size,
                 coveredAt = c.rep.coveredAt,
-                alsoReportedAs = others
+                alsoReportedAs = others,
+                memberKeys = c.members.map { it.eventKey }.distinct()
             )
         }.sortedWith(
             compareByDescending<WeeklyStory> { it.mentionCount }
@@ -427,6 +434,8 @@ class WeeklyDigest(
      *    [DigestDeliverer] also applies);
      *  - each surviving bullet gets a "🔁 N" mention badge, matched to its story by URL (so the
      *    count is exact regardless of how the LLM phrased the bullet) when `weekly.showMentions`;
+     *    with `weekly.showOutlets` the badge is the story's outlets instead (`📢 N видань · M
+     *    першоджерел`, from `event_articles`), falling back to "🔁 N" for a story without two outlets;
      *  - `weekly.hashtag`, when set, is appended on its own line at the end.
      *
      * [TopicFormatter.toHtml] (invoked inside [TelegramSender.sendToChannel]) renders every
@@ -440,6 +449,7 @@ class WeeklyDigest(
             return
         }
 
+        val outletsByUrl = if (weekly.showOutlets && config.storyIntel.enabled) outletsOf(name, candidatesByUrl) else emptyMap()
         val out = StringBuilder()
         var bullets = 0
         for ((i, seg) in segments.withIndex()) {
@@ -455,7 +465,8 @@ class WeeklyDigest(
                 continue
             }
             val story = urls.firstNotNullOfOrNull { candidatesByUrl[it] }
-            val bullet = if (weekly.showMentions && story != null) "$seg 🔁 ${story.mentionCount}" else seg
+            val badge = story?.let { outletsByUrl[it.url] ?: if (weekly.showMentions) "🔁 ${it.mentionCount}" else null }
+            val bullet = if (badge != null) "$seg $badge" else seg
             if (out.isNotEmpty()) out.append("\n\n")
             out.append("• ").append(bullet)
             bullets++
@@ -473,6 +484,29 @@ class WeeklyDigest(
         } else {
             logger.warn { "[Weekly:$name] failed to post weekly roundup to $channelId." }
         }
+    }
+
+    private val storyClusters = StoryClusterLoader(config, db)
+
+    /**
+     * `weekly.showOutlets`: candidate url → `📢 N видань · M першоджерел` over the story's complete
+     * clusters (every member event key, late reprints included). Stories with fewer than two outlets
+     * are left out, so they keep the mention badge. One lookup per category run; fail-open.
+     */
+    private fun outletsOf(name: String, candidatesByUrl: Map<String, WeeklyStory>): Map<String, String> {
+        val stories = candidatesByUrl.mapValues { (_, s) -> s.memberKeys.ifEmpty { listOf(s.eventKey) } }
+        val similarity = config.categories[name]?.post?.storyLines?.hype?.reprintSimilarity ?: HypeLineConfig().reprintSimilarity
+        val out = LinkedHashMap<String, String>()
+        for ((url, l) in storyClusters.load(name, stories)) {
+            val r = try {
+                Hype.analyze(l.cluster, l.texts, l.vectors, similarity)
+            } catch (e: Exception) {
+                logger.warn(e) { "[Weekly:$name] outlets for $url failed — keeping the mention badge" }
+                continue
+            }
+            if (r.outlets >= 2) out[url] = StoryLines.outlets(r)
+        }
+        return out
     }
 
     private fun embedText(subject: String, coreFact: String, eventKey: String): String {

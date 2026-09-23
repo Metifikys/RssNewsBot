@@ -243,6 +243,9 @@ weekly:
   maxEvents: 1000          # cap on event rows scanned per category per run
   showMentions: true       # append a "🔁 N" badge per bullet (N = how many times the story was
                            # seen this week); matched to each bullet by URL, so it's always exact
+  showOutlets: false       # needs storyIntel: the badge becomes "📢 N видань · M першоджерел"
+                           # over the story's complete clusters (late reprints included);
+                           # a story with fewer than two outlets keeps "🔁 N"
   hashtag: "#головне"      # optional: appended on its own line at the end of the post (omit = none)
   # Which categories participate. Omit/empty = every category that has a `dedup:` block.
   # categories:
@@ -443,6 +446,16 @@ categories:
         maxPerDigest: 1
         minComposite: 8.0
         sourceChars: 5000
+      # Story lines: deterministic facts about the story behind a bullet, read from the story
+      # clusters (needs `storyIntel.enabled: true` at the top level). They sit after the badges
+      # and the intro, before the hashtags. Off unless listed.
+      # storyLines:
+      #   # 📢 9 видань · 1 першоджерело — outlets = distinct domains in the cluster; a retelling
+      #   # credits another outlet ("via X", "according to X", "як повідомляє X", …) or is a
+      #   # near-copy (cosine >= reprintSimilarity, semanticDedup vectors) of an earlier outlet's
+      #   # article. When every article credits the same outlet: "усі з посиланням на X".
+      #   # At post time the cluster is mostly this digest's batch, hence minOutlets.
+      #   hype: { enabled: true, minOutlets: 4, reprintSimilarity: 0.95 }
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),

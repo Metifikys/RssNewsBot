@@ -3,6 +3,7 @@ package metifikys.digest
 import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.AppConfig
 import metifikys.config.PostConfig
+import metifikys.config.StoryLinesConfig
 import metifikys.config.ThreadsConfig
 import metifikys.db.CoveredEventRow
 import metifikys.db.DigestMessageRow
@@ -14,6 +15,9 @@ import metifikys.format.TopicDecorator
 import metifikys.format.TopicFormatter
 import metifikys.model.Article
 import metifikys.model.ShortlistItem
+import metifikys.story.Hype
+import metifikys.story.StoryClusterLoader
+import metifikys.story.StoryLines
 import metifikys.telegram.ModeratedPost
 import metifikys.telegram.ModerationNotifier
 import metifikys.telegram.SentRef
@@ -155,6 +159,8 @@ class DigestDeliverer(
         // One badge time budget per delivered digest, shared by all its bullets; one intro cap too.
         val badgeDeadline = badgeResolver?.newDeadline() ?: 0L
         val introBudget = IntroBudget(postCfg?.intro?.maxPerDigest ?: 0)
+        // Story lines (📢): one cluster lookup per digest, before the send loop; eventKey → line.
+        val storyLineByKey = resolveStoryLines(categoryName, shortlist, resolvedArticles, postCfg?.storyLines)
 
         val sentTopics = mutableListOf<String>()
         val failedTopicIdx = mutableListOf<Int>()
@@ -188,7 +194,8 @@ class DigestDeliverer(
             val eventKey = item?.eventKey
             val replyTo = eventKey?.let { replyTargets[it] }
             val topicArticles = topicUrls[idx].mapNotNull { articleByLink[it] }
-            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget)
+            val storyLine = eventKey?.let { storyLineByKey[it] }
+            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLine)
             // Long-form (post.longForm): a text message with the image as a large link preview
             // above it, so neither the body nor the footer is squeezed into the 1024-char caption.
             // A long post that fits a caption anyway still goes out as a normal photo post.
@@ -319,10 +326,42 @@ class DigestDeliverer(
     /** Per-delivery counter for the intro cap (`post.intro.maxPerDigest`). */
     private class IntroBudget(var remaining: Int)
 
+    private val storyClusters = StoryClusterLoader(config, db)
+
+    /**
+     * `post.storyLines`: eventKey → the story footer line, from one `event_articles` lookup per
+     * digest (an update's `relatedPreviousEventKey` chain included). Needs `storyIntel.enabled`;
+     * any failure yields no lines, never a failed digest.
+     */
+    private fun resolveStoryLines(
+        category: String,
+        shortlist: List<ShortlistItem>?,
+        batch: List<Article>,
+        cfg: StoryLinesConfig?
+    ): Map<String, String> {
+        if (!config.storyIntel.enabled || cfg == null || shortlist.isNullOrEmpty()) return emptyMap()
+        val hype = cfg.hype?.takeIf { it.enabled } ?: return emptyMap()
+        val stories = shortlist.associate { it.eventKey to listOfNotNull(it.eventKey, it.relatedPreviousEventKey) }
+        val loaded = storyClusters.load(category, stories, batch, withVectors = hype.reprintSimilarity < 1.0)
+        val out = LinkedHashMap<String, String>()
+        for ((key, l) in loaded) {
+            val line = try {
+                StoryLines.hype(Hype.analyze(l.cluster, l.texts, l.vectors, hype.reprintSimilarity), hype)
+            } catch (e: Exception) {
+                logger.warn(e) { "[Category:$category][Story] $key: story line failed — sending without it" }
+                null
+            } ?: continue
+            out[key] = line
+            logger.info { "[Category:$category][Story] $key: $line (${l.cluster.members.size} article(s))" }
+        }
+        return out
+    }
+
     /**
      * Footer lines for one bullet, in display order (most valuable first — [TopicDecorator]
      * drops from the end when the message budget is tight): live-data badges, the first-mention
-     * intro, then the hashtag line. Lookups run under their time budgets and never throw.
+     * intro, the story line (📢, resolved per digest), then the hashtag line. Lookups run under
+     * their time budgets and never throw.
      */
     private fun buildFooter(
         categoryName: String,
@@ -330,7 +369,8 @@ class DigestDeliverer(
         topicArticles: List<Article>,
         post: PostConfig?,
         badgeDeadline: Long,
-        introBudget: IntroBudget
+        introBudget: IntroBudget,
+        storyLine: String? = null
     ): List<String> {
         if (post == null) return emptyList()
         val lines = mutableListOf<String>()
@@ -351,6 +391,7 @@ class DigestDeliverer(
                 introBudget.remaining--
             }
         }
+        if (storyLine != null) lines += storyLine
         val tags = Hashtags.forItem(item, post.hashtags)
         if (tags.isNotEmpty()) lines += tags.joinToString(" ")
         if (lines.isNotEmpty()) logger.debug { "[Category:$categoryName][Post] footer: $lines" }

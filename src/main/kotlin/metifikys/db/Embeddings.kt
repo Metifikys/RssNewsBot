@@ -113,6 +113,9 @@ interface EmbeddingStore {
     /** Deletes embedding rows older than [retentionDays] (by `created_at`). */
     fun pruneOldEmbeddings(retentionDays: Long)
 
+    /** Stored vectors of [articleIds] made with [model], keyed by article id (the story lines' reprint check). */
+    fun fetchEmbeddingsByArticleIds(articleIds: Collection<Int>, model: String): Map<Int, ByteArray>
+
     /**
      * Persists a single event embedding, upserted by `(category, event_key)`. Idempotent:
      * if a row already exists for the pair it is replaced with the new model/dim/vector and
@@ -193,6 +196,16 @@ internal class EmbeddingRepository : EmbeddingStore {
                         status = it[ArticlesTable.status]
                     )
                 }
+        }
+    }
+
+    override fun fetchEmbeddingsByArticleIds(articleIds: Collection<Int>, model: String): Map<Int, ByteArray> {
+        if (articleIds.isEmpty()) return emptyMap()
+        return transaction {
+            ArticleEmbeddingsTable
+                .select(ArticleEmbeddingsTable.articleId, ArticleEmbeddingsTable.vector)
+                .where { (ArticleEmbeddingsTable.articleId inList articleIds.distinct()) and (ArticleEmbeddingsTable.model eq model) }
+                .associate { it[ArticleEmbeddingsTable.articleId] to it[ArticleEmbeddingsTable.vector].bytes }
         }
     }
 

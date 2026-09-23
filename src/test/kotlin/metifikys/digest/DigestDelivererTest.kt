@@ -535,4 +535,78 @@ class DigestDelivererTest {
         verify(exactly = 0) { db.fetchLatestDigestMessagesByEventKeys(any(), any(), any()) }
         verify { sender.sendToChannel("@tech", any(), true, null) }
     }
+
+    // ── post.storyLines (📢 hype) ────────────────────────────────────────────
+
+    private fun member(id: Int, domain: String, minutes: Long, key: String = "evt-1") = metifikys.db.EventArticleRow(
+        category = "tech", articleId = id, eventKey = key, link = "https://$domain/story", domain = domain,
+        pubDate = LocalDateTime.of(2026, 9, 1, 10, 0).plusMinutes(minutes), seenAt = null,
+        role = metifikys.db.EventArticleRole.STEP1, step1Status = "new", recordedAt = LocalDateTime.now()
+    )
+
+    private fun storyDb(): NewsDatabase {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { db.fetchEventClusters("tech", any()) } returns mapOf(
+            "evt-1" to listOf(member(1, "alpha.com", 0), member(2, "beta.com", 10), member(3, "gamma.com", 20), member(4, "delta.com", 30))
+        )
+        every { db.fetchArticlesByLinks(any()) } answers {
+            firstArg<List<String>>().map { link ->
+                val credits = if (link.contains("alpha.com")) "" else " via alpha.com"
+                Article(category = "tech", title = "Story$credits", link = link, description = "d")
+            }
+        }
+        return db
+    }
+
+    private fun storyConfig(storyIntel: Boolean, hype: metifikys.config.HypeLineConfig?) =
+        configWithPost(PostConfig(hashtags = HashtagsConfig(category = "#tech"), storyLines = metifikys.config.StoryLinesConfig(hype = hype)))
+            .copy(storyIntel = metifikys.config.StoryIntelConfig(enabled = storyIntel))
+
+    @Test
+    fun `hype line sits before the hashtags and never reaches the stored summary`() {
+        val db = storyDb()
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+
+        DigestDeliverer(storyConfig(true, metifikys.config.HypeLineConfig(minOutlets = 4)), db, sender)
+            .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", listOf(article(1)), listOf(shortlistItem("evt-1", article(1).link)))
+
+        assertEquals("**Story.**\n\n[Title 1](https://example.com/1)\n\n📢 4 видання · 1 першоджерело\n#tech", sent.captured)
+        verify { db.saveSummary("tech", match { "📢" !in it }, 1) }
+    }
+
+    @Test
+    fun `below minOutlets, or with storyIntel off, the post is exactly as before`() {
+        val outputs = listOf(
+            storyConfig(true, metifikys.config.HypeLineConfig(minOutlets = 5)),
+            storyConfig(false, metifikys.config.HypeLineConfig(minOutlets = 2)),
+            storyConfig(true, null)
+        ).map { cfg ->
+            val db = storyDb()
+            val sender = mockk<TelegramSender>(relaxed = true)
+            val sent = slot<String>()
+            every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+            DigestDeliverer(cfg, db, sender)
+                .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", listOf(article(1)), listOf(shortlistItem("evt-1", article(1).link)))
+            if (!cfg.storyIntel.enabled) verify(exactly = 0) { db.fetchEventClusters(any(), any()) }
+            sent.captured
+        }
+        outputs.forEach { assertEquals("**Story.**\n\n[Title 1](https://example.com/1)\n\n#tech", it) }
+    }
+
+    @Test
+    fun `a failing cluster lookup sends the post without the line`() {
+        val db = storyDb()
+        every { db.fetchEventClusters(any(), any()) } throws RuntimeException("locked")
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+
+        DigestDeliverer(storyConfig(true, metifikys.config.HypeLineConfig(minOutlets = 2)), db, sender)
+            .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", listOf(article(1)), listOf(shortlistItem("evt-1", article(1).link)))
+
+        assertEquals("**Story.**\n\n[Title 1](https://example.com/1)\n\n#tech", sent.captured)
+    }
 }

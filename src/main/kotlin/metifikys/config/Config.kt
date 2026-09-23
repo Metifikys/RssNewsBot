@@ -249,6 +249,12 @@ data class WeeklyConfig(
      */
     val showMentions: Boolean = true,
     /**
+     * Replaces the "🔁 N" badge with the story's outlets from `event_articles`: `📢 N видань · M
+     * першоджерел` (see `post.storyLines.hype`). By the weekly run the cluster is complete, late
+     * reprints included. Needs `storyIntel.enabled`; a story with fewer than two outlets keeps "🔁 N".
+     */
+    val showOutlets: Boolean = false,
+    /**
      * Categories that participate. Empty = every category that has a `dedup:` block (only those
      * accumulate the `covered_events` / `rejected_events` the ranker needs). Names must exist.
      */
@@ -922,7 +928,36 @@ data class PostConfig(
     /** One Wikipedia line the first time a franchise / subject appears in the category; see [IntroConfig]. */
     val intro: IntroConfig? = null,
     /** Longer posts for the top-ranked events of a digest; see [LongFormConfig]. */
-    val longForm: LongFormConfig? = null
+    val longForm: LongFormConfig? = null,
+    /** Footer lines read from the story clusters (needs `storyIntel.enabled`); see [StoryLinesConfig]. */
+    val storyLines: StoryLinesConfig? = null
+)
+
+/**
+ * Deterministic footer facts about the story behind a bullet, read from `event_articles`
+ * (`storyIntel.enabled` must be on — the clusters are what they count). Each line is optional.
+ * They sit after the badges and the intro and before the hashtags, so a tight caption drops them
+ * right after the hashtags.
+ */
+data class StoryLinesConfig(
+    /** `📢 9 видань · 1 першоджерело`; see [HypeLineConfig]. */
+    val hype: HypeLineConfig? = null
+)
+
+/**
+ * The hype detector: how many outlets (distinct domains) carried the story and how many of them
+ * are original sources rather than retellings — a retelling credits another outlet in its title or
+ * teaser (`via`, `according to`, `як повідомляє`, …) or is a near-copy (cosine >=
+ * [reprintSimilarity], vectors from `semanticDedup`) of an earlier article of another outlet. When
+ * every article credits the same outlet, the line says `усі з посиланням на X`.
+ *
+ * At delivery the cluster is mostly the digest's own batch (late reprints arrive after the post),
+ * so the line shows only for stories that already filled the batch: [minOutlets].
+ */
+data class HypeLineConfig(
+    val enabled: Boolean = true,
+    val minOutlets: Int = 4,
+    val reprintSimilarity: Double = 0.95
 )
 
 /**
@@ -1598,6 +1633,21 @@ object ConfigLoader {
                 post.threads?.let { t ->
                     require(t.maxAgeDays >= 1) { "Category '$name' post.threads.maxAgeDays must be >= 1 (got ${t.maxAgeDays})" }
                 }
+                post.storyLines?.let { s ->
+                    val anyOn = s.hype?.enabled == true
+                    require(!anyOn || config.storyIntel.enabled) {
+                        "Category '$name' post.storyLines needs storyIntel.enabled: true — the lines read the story clusters it records"
+                    }
+                    require(!anyOn || category.dedup != null) {
+                        "Category '$name' post.storyLines needs a dedup: block — story clusters come from Step 1"
+                    }
+                    s.hype?.let { h ->
+                        require(h.minOutlets >= 2) { "Category '$name' post.storyLines.hype.minOutlets must be >= 2 (got ${h.minOutlets})" }
+                        require(h.reprintSimilarity in 0.0..1.0) {
+                            "Category '$name' post.storyLines.hype.reprintSimilarity must be in [0.0, 1.0] (got ${h.reprintSimilarity})"
+                        }
+                    }
+                }
                 post.longForm?.let { l ->
                     require(l.maxPerDigest >= 1) { "Category '$name' post.longForm.maxPerDigest must be >= 1 (got ${l.maxPerDigest})" }
                     require(l.minComposite in 0.0..10.0) { "Category '$name' post.longForm.minComposite must be within 0..10 (got ${l.minComposite})" }
@@ -1844,6 +1894,9 @@ object ConfigLoader {
             require(s.retentionDays >= w.lookbackDays) {
                 "storyIntel.retentionDays (${s.retentionDays}) must be >= weekly.lookbackDays (${w.lookbackDays})"
             }
+        }
+        config.weekly?.takeIf { it.enabled && it.showOutlets }?.let {
+            require(s.enabled) { "weekly.showOutlets needs storyIntel.enabled: true — the outlets come from its story clusters" }
         }
         for ((from, to) in s.domainAliases) {
             require(from.isNotBlank() && to.isNotBlank()) { "storyIntel.domainAliases: blank domain in '$from: $to'" }
