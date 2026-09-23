@@ -258,6 +258,8 @@ data class WeeklyConfig(
     val sourceLeaderboard: SourceLeaderboardConfig = SourceLeaderboardConfig(),
     /** Weekly industry barometer (chart of layoffs vs releases); see [BarometerConfig]. */
     val barometer: BarometerConfig = BarometerConfig(),
+    /** An album of the stories' pictures before the roundup text; see [WeeklyAlbumConfig]. */
+    val album: WeeklyAlbumConfig = WeeklyAlbumConfig(),
     /**
      * Categories that participate. Empty = every category that has a `dedup:` block (only those
      * accumulate the `covered_events` / `rejected_events` the ranker needs). Names must exist.
@@ -267,6 +269,23 @@ data class WeeklyConfig(
     val promptFile: String? = null,
     /** Inline prompt overrides; any non-null field beats the file and the built-in default. */
     val prompts: WeeklyPromptsInline? = null
+)
+
+/**
+ * The weekly album: before the roundup text, one `sendMediaGroup` of the pictures of the stories
+ * its bullets link (the stored `articles.image_url` of each story's URL, in bullet order, one per
+ * URL, judged by the category's `post.images` picker when it has one), with the roundup's header
+ * line as the caption of the first photo. Each picture is checked first with a HEAD request
+ * ([timeoutSeconds]; `image/…`, at most [maxBytes] when the size is given) — Telegram rejects the
+ * whole album over one bad photo. Fewer than [minPhotos] usable pictures, or any album failure →
+ * the text alone, as before. At most [maxPhotos] (Telegram allows 2–10).
+ */
+data class WeeklyAlbumConfig(
+    val enabled: Boolean = false,
+    val minPhotos: Int = 2,
+    val maxPhotos: Int = 5,
+    val timeoutSeconds: Long = 3,
+    val maxBytes: Long = 5L * 1024 * 1024
 )
 
 /**
@@ -2174,6 +2193,12 @@ object ConfigLoader {
                 }
                 require(w.embeddingModel.isNotBlank()) { "weekly.embeddingModel must not be blank" }
                 require(w.maxEvents > 0) { "weekly.maxEvents must be > 0 (got ${w.maxEvents})" }
+                w.album.takeIf { it.enabled }?.let { a ->
+                    require(a.minPhotos in 2..10) { "weekly.album.minPhotos must be in 2..10 (got ${a.minPhotos})" }
+                    require(a.maxPhotos in a.minPhotos..10) { "weekly.album.maxPhotos must be in minPhotos..10 (got ${a.maxPhotos})" }
+                    require(a.timeoutSeconds >= 1) { "weekly.album.timeoutSeconds must be >= 1 (got ${a.timeoutSeconds})" }
+                    require(a.maxBytes > 0) { "weekly.album.maxBytes must be > 0 (got ${a.maxBytes})" }
+                }
                 for (cat in w.categories) {
                     require(cat in config.categories) {
                         "weekly.categories references unknown category '$cat' — must match a key under categories:"

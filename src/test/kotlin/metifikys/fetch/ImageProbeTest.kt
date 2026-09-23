@@ -62,4 +62,30 @@ class ImageProbeTest {
     fun `the guard refuses a private address`() {
         assertNull(ImageProbe().dimensions("http://127.0.0.1:9/img.png"))
     }
+
+    @Test
+    fun `isPostable wants a 2xx image within the size cap`() {
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        fun serve(path: String, type: String, length: Long) = server.createContext(path) { ex ->
+            ex.responseHeaders.add("Content-Type", type)
+            ex.responseHeaders.add("Content-Length", length.toString())
+            ex.sendResponseHeaders(200, -1)
+            ex.close()
+        }
+        serve("/ok.jpg", "image/jpeg", 200_000)
+        serve("/big.jpg", "image/jpeg", 6_000_000)
+        serve("/page", "text/html; charset=utf-8", 1000)
+        server.start()
+        try {
+            val probe = ImageProbe(UrlGuard.OFF)
+            val base = "http://localhost:${server.address.port}"
+            kotlin.test.assertTrue(probe.isPostable("$base/ok.jpg", 5_000_000))
+            kotlin.test.assertFalse(probe.isPostable("$base/big.jpg", 5_000_000))
+            kotlin.test.assertFalse(probe.isPostable("$base/page", 5_000_000))
+            kotlin.test.assertFalse(probe.isPostable("$base/missing.jpg", 5_000_000))
+            kotlin.test.assertFalse(ImageProbe().isPostable("$base/ok.jpg", 5_000_000))
+        } finally {
+            server.stop(0)
+        }
+    }
 }

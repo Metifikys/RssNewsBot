@@ -31,6 +31,9 @@ data class InlineButton(val text: String, val callbackData: String) {
     }
 }
 
+/** One photo of a [TelegramSender.sendMediaGroup] album: a URL Telegram fetches, and an optional Markdown caption. */
+data class AlbumPhoto(val url: String, val caption: String? = null)
+
 class TelegramSender(
     private val botToken: String,
     /** Bot API origin; overridable so tests can point the sender at a local HTTP server. */
@@ -80,6 +83,21 @@ class TelegramSender(
         val prefer_large_media: Boolean,
         val show_above_text: Boolean
     )
+
+    /** Bot API `InputMediaPhoto`. [type] has no default on purpose: the encoder skips defaults. */
+    @Serializable
+    private data class InputMediaPhotoDto(
+        val type: String,
+        val media: String,
+        val caption: String? = null,
+        val parse_mode: String? = null
+    )
+
+    @Serializable
+    private data class SendMediaGroupRequest(val chat_id: String, val media: List<InputMediaPhotoDto>)
+
+    @Serializable
+    private data class SendMediaGroupResponse(val ok: Boolean = false, val result: List<SentMessage>? = null)
 
     @Serializable
     private data class SendPhotoRequest(
@@ -316,6 +334,40 @@ class TelegramSender(
             is SendResult.BadRequest ->
                 (post("sendPhoto", body(htmlCaption?.htmlToPlainText(), null), channelId) as? SendResult.Ok)?.ref
             is SendResult.Transient -> null
+        }
+    }
+
+    /**
+     * Sends [photos] (2–10) as one album (`sendMediaGroup`) — Telegram shows them as a grid and
+     * the first photo's caption under it. Captions are truncated and rendered as in
+     * [sendPhotoToChannel]. Same pacer and 429 handling as every other call. Returns one
+     * [SentRef] per photo message, or an empty list on any failure — a 400 (Telegram could not
+     * fetch one of the photos, a caption it cannot parse) fails the whole album; the caller
+     * falls back to text.
+     */
+    fun sendMediaGroup(channelId: String, photos: List<AlbumPhoto>): List<SentRef> {
+        require(photos.size in 2..10) { "An album takes 2..10 photos (got ${photos.size})" }
+        val media = photos.map { p ->
+            val caption = p.caption?.takeIf { it.isNotBlank() }?.let { TopicFormatter.toHtml(truncateForCaption(it)) }
+            InputMediaPhotoDto("photo", p.url, caption, if (caption != null) "HTML" else null)
+        }
+        return try {
+            val response = execute("sendMediaGroup", json.encodeToString(SendMediaGroupRequest(channelId, media)).toJsonBody(), channelId)
+            if (!response.isSuccessful) {
+                val err = response.error()
+                logger.warn { "Telegram sendMediaGroup HTTP ${err?.error_code ?: response.httpCode} for $channelId — ${err?.description ?: "failed"}" }
+                return emptyList()
+            }
+            val parsed = json.decodeFromString(SendMediaGroupResponse.serializer(), response.body)
+            if (!parsed.ok) return emptyList()
+            parsed.result.orEmpty().map { SentRef(it.chat?.id ?: channelId.toLongOrNull() ?: 0L, it.message_id) }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn { "Telegram sendMediaGroup for $channelId interrupted during a rate-limit wait — not sent" }
+            emptyList()
+        } catch (e: Exception) {
+            logger.error(e) { "Telegram sendMediaGroup failed for $channelId" }
+            emptyList()
         }
     }
 

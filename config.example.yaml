@@ -275,6 +275,12 @@ weekly:
   #     - { id: layoffs, label: "Звільнення і закриття", eventTypes: [layoffs, studio_closure],
   #         keywords: [звільн, скорочення штату, скорочення співробітників, закриття студії, layoff, laid off, job cuts, studio closure] }
   #     - { id: releases, label: "Новини про релізи", eventTypes: [release_date, delay] }
+  # Album before the roundup text (sendMediaGroup): the pictures of the stories the bullets link
+  # (their stored feed image, bullet order, one per picture URL, judged by the category's
+  # post.images picker when it has one), the header line as the first photo's caption. Each is
+  # checked first with a HEAD request (timeoutSeconds, image/…, at most maxBytes) — one bad photo
+  # fails the whole album. Fewer than minPhotos usable, or a failed album → the text alone.
+  # album: { enabled: false, minPhotos: 2, maxPhotos: 5, timeoutSeconds: 3, maxBytes: 5242880 }
   hashtag: "#головне"      # optional: appended on its own line at the end of the post (omit = none)
   # Which categories participate. Omit/empty = every category that has a `dedup:` block.
   # categories:

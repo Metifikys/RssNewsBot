@@ -178,4 +178,94 @@ class WeeklyDigestTest {
         )
         io.mockk.verify(exactly = 0) { db.fetchEventHistorySince(any(), any()) }
     }
+
+    // ── weekly.album ────────────────────────────────────────────────────────
+
+    private class AlbumRun(val text: String?, val photos: List<metifikys.telegram.AlbumPhoto>?, val calls: List<String>)
+
+    /**
+     * Three stories u1..u3 whose articles carry [images] (null = none); [checkOk] is the HEAD
+     * preflight, [albumOk] whether sendMediaGroup succeeds.
+     */
+    private fun albumRun(
+        images: List<String?>,
+        checkOk: (String) -> Boolean = { true },
+        albumOk: Boolean = true,
+        album: metifikys.config.WeeklyAlbumConfig = metifikys.config.WeeklyAlbumConfig(enabled = true)
+    ): AlbumRun {
+        val urls = listOf("https://a.com/1", "https://b.com/2", "https://c.com/3")
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchRecentEvents("games", any(), any()) } returns urls.mapIndexed { i, u ->
+            CoveredEventRow("games", "k$i", "Story $i", "", "release_date", "fact $i", 8 - i, 8, 8, u, LocalDateTime.now())
+        }
+        every { db.fetchRecentRejectedEvents(any(), any(), any(), any()) } returns emptyList()
+        every { db.fetchArticlesByLinks(any()) } answers {
+            firstArg<List<String>>().map { link ->
+                Article(category = "games", title = link, link = link, description = "d", imageUrl = images[urls.indexOf(link)])
+            }
+        }
+        val embedder = mockk<Embedder>()
+        every { embedder.embed(any(), any(), any()) } answers {
+            firstArg<List<String>>().mapIndexed { i, _ -> FloatArray(4).also { it[i % 4] = 1f } }
+        }
+        val llm = mockk<LlmClient>()
+        every { llm.complete(any(), any()) } returns "📅 Тиждень\n" + urls.mapIndexed { i, u -> "• Story $i [S$i]($u)" }.joinToString("\n")
+        val factory = mockk<LlmClientsFactory>()
+        every { factory.forRender(any()) } returns llm
+        val calls = mutableListOf<String>()
+        val sender = mockk<TelegramSender>()
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any(), any()) } answers { calls += "text"; listOf(SentRef(-1L, 1L)) }
+        val photos = slot<List<metifikys.telegram.AlbumPhoto>>()
+        every { sender.sendMediaGroup("@g", capture(photos)) } answers {
+            calls += "album"
+            if (albumOk) listOf(SentRef(-1L, 5L), SentRef(-1L, 6L)) else emptyList()
+        }
+        val weekly = WeeklyConfig(enabled = true, minMentions = 1, showMentions = false, album = album)
+        WeeklyDigest(config(weekly, storyIntel = false), db, factory, embedder, sender, weekly, File("."), checkOk).runForCategory("games")
+        return AlbumRun(if (sent.isCaptured) sent.captured else null, if (photos.isCaptured) photos.captured else null, calls)
+    }
+
+    @Test
+    fun `three pictures go out as an album with the header caption, then the text`() {
+        val run = albumRun(listOf("https://img/1.jpg", "https://img/2.jpg", "https://img/3.jpg"))
+        assertEquals(listOf("album", "text"), run.calls)
+        assertEquals(
+            listOf(
+                metifikys.telegram.AlbumPhoto("https://img/1.jpg", "📅 Тиждень"),
+                metifikys.telegram.AlbumPhoto("https://img/2.jpg"),
+                metifikys.telegram.AlbumPhoto("https://img/3.jpg")
+            ),
+            run.photos
+        )
+        assertTrue(run.text!!.startsWith("📅 Тиждень\n\n• Story 0"))
+    }
+
+    @Test
+    fun `a duplicate picture, a logo and a failed preflight are skipped, maxPhotos caps the album`() {
+        val deduped = albumRun(listOf("https://img/1.jpg", "https://img/1.jpg", "https://img/3.jpg"))
+        assertEquals(listOf("https://img/1.jpg", "https://img/3.jpg"), deduped.photos!!.map { it.url })
+        val capped = albumRun(
+            listOf("https://img/1.jpg", "https://img/2.jpg", "https://img/3.jpg"),
+            album = metifikys.config.WeeklyAlbumConfig(enabled = true, maxPhotos = 2)
+        )
+        assertEquals(listOf("https://img/1.jpg", "https://img/2.jpg"), capped.photos!!.map { it.url })
+        val filtered = albumRun(
+            listOf("https://img/site-logo.png", "https://img/2.jpg", "https://img/3.jpg"),
+            checkOk = { "3" !in it }
+        )
+        assertEquals(listOf("text"), filtered.calls)
+    }
+
+    @Test
+    fun `one picture, no album config or a failed album send leave the text alone`() {
+        assertEquals(listOf("text"), albumRun(listOf("https://img/1.jpg", null, null)).calls)
+        assertEquals(
+            listOf("text"),
+            albumRun(listOf("https://img/1.jpg", "https://img/2.jpg"), album = metifikys.config.WeeklyAlbumConfig()).calls
+        )
+        val failed = albumRun(listOf("https://img/1.jpg", "https://img/2.jpg", "https://img/3.jpg"), albumOk = false)
+        assertEquals(listOf("album", "text"), failed.calls)
+        assertTrue(failed.text!!.startsWith("📅 Тиждень\n\n• Story 0"))
+    }
 }

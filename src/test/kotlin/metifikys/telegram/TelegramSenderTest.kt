@@ -426,4 +426,51 @@ class TelegramSenderTest {
         val result = unreachableSender.sendToChannel("@test_channel", "test message")
         assertTrue(result.isEmpty(), "Expected no refs when network call fails")
     }
+
+    @Test
+    fun `an album is one sendMediaGroup with the caption on the first photo only`() {
+        val bodies = mutableListOf<String>()
+        val paths = mutableListOf<String>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { ex ->
+            paths += ex.requestURI.path.substringAfterLast('/')
+            bodies += ex.requestBody.readBytes().toString(Charsets.UTF_8)
+            val resp = """{"ok":true,"result":[{"message_id":50,"chat":{"id":-100123}},{"message_id":51,"chat":{"id":-100123}}]}""".toByteArray()
+            ex.sendResponseHeaders(200, resp.size.toLong())
+            ex.responseBody.use { it.write(resp) }
+        }
+        server.start()
+        try {
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing())
+            val refs = s.sendMediaGroup("@ch", listOf(AlbumPhoto("https://img/1.jpg", "**Тиждень** & more"), AlbumPhoto("https://img/2.jpg")))
+            assertEquals(listOf(SentRef(-100123L, 50L), SentRef(-100123L, 51L)), refs)
+            assertEquals(listOf("sendMediaGroup"), paths)
+            assertEquals(
+                """{"chat_id":"@ch","media":[""" +
+                    """{"type":"photo","media":"https://img/1.jpg","caption":"<b>Тиждень</b> &amp; more","parse_mode":"HTML"},""" +
+                    """{"type":"photo","media":"https://img/2.jpg"}]}""",
+                bodies.single()
+            )
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `a rejected album returns nothing`() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { ex ->
+            ex.requestBody.readBytes()
+            val resp = """{"ok":false,"error_code":400,"description":"Bad Request: failed to get HTTP URL content"}""".toByteArray()
+            ex.sendResponseHeaders(400, resp.size.toLong())
+            ex.responseBody.use { it.write(resp) }
+        }
+        server.start()
+        try {
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing())
+            assertTrue(s.sendMediaGroup("@ch", listOf(AlbumPhoto("https://img/1.jpg"), AlbumPhoto("https://img/2.jpg"))).isEmpty())
+        } finally {
+            server.stop(0)
+        }
+    }
 }

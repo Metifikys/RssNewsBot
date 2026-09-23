@@ -41,6 +41,26 @@ class ImageProbe(
         null
     }
 
+    /**
+     * A HEAD preflight for a picture Telegram is about to fetch (the weekly album, where one bad
+     * photo fails the whole group): 2xx, an `image/…` content type and — when the server gives a
+     * length — at most [maxBytes]. False on anything else, a guard refusal or a transport error.
+     */
+    fun isPostable(url: String, maxBytes: Long): Boolean = try {
+        guard.check(url)
+        val request = Request.Builder().url(url).head()
+            .header("User-Agent", "Mozilla/5.0 (compatible; RssNewsBot/1.0)")
+            .build()
+        client.newCall(request).execute().use { response ->
+            val type = response.header("Content-Type").orEmpty().lowercase()
+            val length = response.header("Content-Length")?.toLongOrNull()
+            response.isSuccessful && type.startsWith("image/") && (length == null || length <= maxBytes)
+        }
+    } catch (e: Exception) {
+        if (e is InterruptedException) Thread.currentThread().interrupt()
+        false
+    }
+
     companion object {
         /** Width × height from an image's leading bytes, or null. Pure. */
         fun dimensionsOf(head: ByteArray): Pair<Int, Int>? {

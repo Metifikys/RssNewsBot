@@ -164,4 +164,15 @@ class StoryIntelConfigTest {
         }
         assertTrue("one or two" in threeSeries.message!!, threeSeries.message)
     }
+
+    @Test
+    fun `weekly album defaults off and checks its bounds`() {
+        assertEquals(false, load(yaml(top = "weekly:\n  enabled: true")).weekly!!.album.enabled)
+        val a = load(yaml(top = "weekly:\n  enabled: true\n  album: { enabled: true, maxPhotos: 4 }")).weekly!!.album
+        assertEquals(2, a.minPhotos)
+        assertEquals(4, a.maxPhotos)
+        assertThrows<IllegalArgumentException> { load(yaml(top = "weekly:\n  enabled: true\n  album: { enabled: true, minPhotos: 1 }")) }
+        assertThrows<IllegalArgumentException> { load(yaml(top = "weekly:\n  enabled: true\n  album: { enabled: true, maxPhotos: 11 }")) }
+        assertThrows<IllegalArgumentException> { load(yaml(top = "weekly:\n  enabled: true\n  album: { enabled: true, minPhotos: 4, maxPhotos: 3 }")) }
+    }
 }

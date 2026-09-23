@@ -12,11 +12,16 @@ import metifikys.ai.Embedder
 import metifikys.ai.LlmClientsFactory
 import metifikys.config.AppConfig
 import metifikys.config.BarometerConfig
+import metifikys.config.CategoryConfig
 import metifikys.config.HypeLineConfig
 import metifikys.config.WeeklyConfig
 import metifikys.db.CoveredEventRow
 import metifikys.db.NewsDatabase
 import metifikys.db.RejectedEventRow
+import metifikys.fetch.ImageCandidate
+import metifikys.fetch.ImagePicker
+import metifikys.fetch.ImageProbe
+import metifikys.fetch.UrlGuard
 import metifikys.format.TopicFormatter
 import metifikys.log.RunContext
 import metifikys.model.Article
@@ -25,6 +30,7 @@ import metifikys.story.BarometerChart
 import metifikys.story.Hype
 import metifikys.story.StoryClusterLoader
 import metifikys.story.StoryLines
+import metifikys.telegram.AlbumPhoto
 import metifikys.telegram.TelegramSender
 import java.io.File
 import java.time.LocalDate
@@ -194,7 +200,9 @@ class WeeklyDigest(
     private val embedder: Embedder,
     private val sender: TelegramSender,
     private val weekly: WeeklyConfig = config.weekly ?: WeeklyConfig(),
-    private val baseDir: File = File(".").canonicalFile
+    private val baseDir: File = File(".").canonicalFile,
+    /** `weekly.album` HEAD preflight: may Telegram fetch this picture? Tests stub it. */
+    private val imageCheck: (String) -> Boolean = albumImageCheck(config, weekly)
 ) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
@@ -277,7 +285,7 @@ class WeeklyDigest(
         }
 
         val post = renderPost(name, catCfg.emoji, candidates) ?: return
-        deliver(name, catCfg.channelId, post, candidates.associateBy { it.url })
+        deliver(name, catCfg, post, candidates.associateBy { it.url })
     }
 
     /**
@@ -447,7 +455,8 @@ class WeeklyDigest(
      * [TopicFormatter.toHtml] (invoked inside [TelegramSender.sendToChannel]) renders every
      * `[label](url)` link, so the multi-link message formats correctly as a single post.
      */
-    private fun deliver(name: String, channelId: String, post: String, candidatesByUrl: Map<String, WeeklyStory>) {
+    private fun deliver(name: String, catCfg: CategoryConfig, post: String, candidatesByUrl: Map<String, WeeklyStory>) {
+        val channelId = catCfg.channelId
         val allowedUrls = candidatesByUrl.keys
         val segments = post.split("•").map { it.trim() }.filter { it.isNotEmpty() }
         if (segments.isEmpty()) {
@@ -458,11 +467,15 @@ class WeeklyDigest(
         val outletsByUrl = if (weekly.showOutlets && config.storyIntel.enabled) outletsOf(name, candidatesByUrl) else emptyMap()
         val out = StringBuilder()
         var bullets = 0
+        var header: String? = null
+        // The story URLs of the kept bullets, in order — the weekly.album pictures.
+        val bulletUrls = mutableListOf<String>()
         for ((i, seg) in segments.withIndex()) {
             val urls = TopicFormatter.extractUrls(seg)
             // The first segment before any bullet, if it carries no link, is the header line.
             if (i == 0 && urls.isEmpty()) {
                 out.append(seg)
+                header = seg
                 continue
             }
             val foreign = urls - allowedUrls
@@ -476,6 +489,7 @@ class WeeklyDigest(
             if (out.isNotEmpty()) out.append("\n\n")
             out.append("• ").append(bullet)
             bullets++
+            (story?.url ?: urls.firstOrNull())?.let { bulletUrls += it }
         }
 
         if (bullets == 0) {
@@ -487,12 +501,57 @@ class WeeklyDigest(
         barometer?.text?.let { out.append("\n\n").append(it) }
         weekly.hashtag?.trim()?.takeIf { it.isNotEmpty() }?.let { out.append("\n\n").append(it) }
 
+        // weekly.album: the stories' pictures go first, the text right after; no album → text only.
+        albumPhotos(name, catCfg, bulletUrls)?.let { photos -> sendAlbum(name, channelId, photos, header) }
         val sent = sender.sendToChannel(channelId, out.toString(), disablePreview = true).isNotEmpty()
         if (sent) {
             logger.info { "[Weekly:$name] weekly roundup posted to $channelId ($bullets bullet(s))." }
             barometer?.png?.let { png -> sendBarometer(name, channelId, png, barometer.caption) }
         } else {
             logger.warn { "[Weekly:$name] failed to post weekly roundup to $channelId." }
+        }
+    }
+
+    /**
+     * `weekly.album`: the pictures of the stories behind [bulletUrls] — each URL's stored
+     * `articles.image_url`, in bullet order, one per picture URL, judged by the category's
+     * `post.images` picker (logos, avatars, …) and the HEAD preflight — at most `maxPhotos`. Null
+     * when off, fewer than `minPhotos` pass, or the lookup fails.
+     */
+    private fun albumPhotos(name: String, catCfg: CategoryConfig, bulletUrls: List<String>): List<String>? {
+        val cfg = weekly.album
+        if (!cfg.enabled || bulletUrls.size < cfg.minPhotos) return null
+        return try {
+            val imageByLink = db.fetchArticlesByLinks(bulletUrls.distinct()).mapNotNull { a -> a.imageUrl?.let { a.link to it } }.toMap()
+            val picker = ImagePicker(catCfg.post?.images?.minWidth ?: 0, catCfg.post?.images?.ignore.orEmpty())
+            val photos = mutableListOf<String>()
+            for (image in bulletUrls.mapNotNull { imageByLink[it] }.distinct()) {
+                if (photos.size >= cfg.maxPhotos) break
+                val reason = picker.rejectReason(ImageCandidate(image))
+                    ?: if (imageCheck(image)) null else "HEAD preflight failed"
+                if (reason != null) {
+                    logger.info { "[Weekly:$name][Album] skipping $image: $reason" }
+                    continue
+                }
+                photos += image
+            }
+            if (photos.size < cfg.minPhotos) {
+                logger.info { "[Weekly:$name][Album] ${photos.size} usable picture(s) of ${bulletUrls.size} stories < minPhotos=${cfg.minPhotos} — text only" }
+                null
+            } else photos
+        } catch (e: Exception) {
+            logger.warn(e) { "[Weekly:$name][Album] picture lookup failed — text only" }
+            null
+        }
+    }
+
+    /** Posts the album with the roundup's [header] line as the first photo's caption; failure is only logged. */
+    private fun sendAlbum(name: String, channelId: String, photos: List<String>, header: String?) {
+        val album = photos.mapIndexed { i, url -> AlbumPhoto(url, header?.takeIf { i == 0 }) }
+        if (sender.sendMediaGroup(channelId, album).isNotEmpty()) {
+            logger.info { "[Weekly:$name][Album] ${photos.size} photo(s) posted to $channelId" }
+        } else {
+            logger.warn { "[Weekly:$name][Album] album post failed — the roundup goes out as text only" }
         }
     }
 
@@ -632,6 +691,13 @@ class WeeklyDigest(
 
     companion object {
         private const val MAX_EMBED_INPUT_CHARS = 6000
+
+        /** The `weekly.album` HEAD preflight through the SSRF guard; `{ false }` while the album is off. */
+        fun albumImageCheck(config: AppConfig, weekly: WeeklyConfig): (String) -> Boolean {
+            if (!weekly.album.enabled) return { false }
+            val probe = ImageProbe(UrlGuard.forConfig(config), timeoutSeconds = weekly.album.timeoutSeconds)
+            return { url -> probe.isPostable(url, weekly.album.maxBytes) }
+        }
 
         /** How far before the barometer window `event_history` is read for release dates inside it. */
         private const val BAROMETER_RELEASE_LOOKBACK_DAYS = 365L
