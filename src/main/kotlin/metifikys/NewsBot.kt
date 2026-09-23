@@ -24,6 +24,7 @@ import metifikys.digest.EventSemanticAnalyzer
 import metifikys.digest.LongForm
 import metifikys.digest.MuteRegistry
 import metifikys.digest.PauseStore
+import metifikys.digest.PersonaWriter
 import metifikys.digest.PostImages
 import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.TrackerUpdater
@@ -255,6 +256,9 @@ class NewsBot(
             PostImages.forConfig(config, db, articleFetcher),
             telegraph = if (config.categories.values.any { it.post?.longForm?.telegraph?.enabled == true }) {
                 TelegraphPublisher(config.telegraph, db)
+            } else null,
+            personaWriter = if (config.categories.values.any { it.post?.persona?.enabled == true }) {
+                PersonaWriter({ llmClientsFactory.forPersona(it) })
             } else null
         )
 

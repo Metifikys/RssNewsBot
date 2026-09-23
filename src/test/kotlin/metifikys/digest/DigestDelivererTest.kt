@@ -931,6 +931,36 @@ class DigestDelivererTest {
         val (db, _, _) = exploreDelivery(post = null, sendOk = false)
         verify(exactly = 0) { db.setState(any(), any()) }
     }
+
+    // ── post.persona ────────────────────────────────────────────────────────────
+
+    @Test
+    fun `the persona remark leads the footer of the top event only, and its arm is stored`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sent = mutableListOf<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } answers { listOf(SentRef(-100L, 10L + sent.size)) }
+        val rows = slot<List<DigestMessageRow>>()
+        every { db.insertDigestMessages(capture(rows)) } returns Unit
+        val writer = mockk<PersonaWriter>()
+        every { writer.write("tech", any(), any(), match { it.eventKey == "evt-1" }, any()) } returns
+            PersonaWriter.Outcome(DigestMessageRow.VARIANT_PERSONA, "💬 Нарешті.")
+
+        val persona = metifikys.config.PersonaConfig(promptFile = "p.yaml")
+        val post = PostConfig(hashtags = HashtagsConfig(category = "#tech"), persona = persona)
+        // The renderer put the top event second; the remark still follows the event, not the position.
+        val summary = "• **Second.**\n\n[Title 2](https://example.com/2)\n• **First.**\n\n[Title 1](https://example.com/1)"
+        val shortlist = listOf(shortlistItem("evt-1", article(1).link), shortlistItem("evt-2", article(2).link))
+        DigestDeliverer(configWithPost(post), db, sender, personaWriter = writer)
+            .deliver("tech", summary, listOf(article(1), article(2)), shortlist)
+
+        assertEquals("**Second.**\n\n[Title 2](https://example.com/2)\n\n#tech", sent[0])
+        assertEquals("**First.**\n\n[Title 1](https://example.com/1)\n\n💬 Нарешті.\n#tech", sent[1])
+        assertEquals(listOf(null, DigestMessageRow.VARIANT_PERSONA), rows.captured.map { it.variant })
+        verify(exactly = 1) { writer.write(any(), any(), any(), any(), any()) }
+        verify { db.saveSummary("tech", match { "💬" !in it }, 2) }
+    }
 }
 
 private typealias ImageCandidateOrNull = metifikys.fetch.ImageCandidate?

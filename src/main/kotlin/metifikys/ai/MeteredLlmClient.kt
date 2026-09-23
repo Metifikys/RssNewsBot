@@ -19,7 +19,7 @@ class MeteredLlmClient(
     val inner: LlmClient,
     private val recorder: LlmCallRecorder,
     private val category: String?,
-    private val useCase: LlmUseCase
+    val useCase: LlmUseCase
 ) : LlmClient {
 
     override val endpoint: LlmEndpoint get() = inner.endpoint

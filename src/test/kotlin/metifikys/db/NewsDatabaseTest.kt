@@ -355,6 +355,26 @@ class NewsDatabaseTest {
     }
 
     @Test
+    fun `fetchVariantPosts returns tagged posts with their reactions, chunks summed, unreacted included`() {
+        val now = LocalDateTime.now()
+        db.insertDigestMessages(listOf(
+            digestMsg(-100L, 1).copy(variant = DigestMessageRow.VARIANT_PERSONA, eventKey = "a", sentAt = now),
+            digestMsg(-100L, 2).copy(variant = DigestMessageRow.VARIANT_PERSONA, eventKey = "a", sentAt = now), // 2nd chunk
+            digestMsg(-100L, 3).copy(variant = DigestMessageRow.VARIANT_CONTROL, eventKey = "b"),
+            digestMsg(-100L, 4)                                                                                // untagged
+        ))
+        db.replaceReactionCounts(-100L, 1, listOf(ReactionCount("👍", 2)))
+        db.replaceReactionCounts(-100L, 2, listOf(ReactionCount("👍", 1), ReactionCount("👎", 1)))
+        db.replaceReactionCounts(-100L, 4, listOf(ReactionCount("🔥", 9)))
+
+        val posts = db.fetchVariantPosts(now.minusDays(1)).sortedBy { it.variant }
+        assertEquals(listOf("control", "persona"), posts.map { it.variant })
+        assertEquals(emptyList(), posts[0].reactions)
+        assertEquals(setOf(ReactionCount("👍", 3), ReactionCount("👎", 1)), posts[1].reactions.toSet())
+        assertTrue(db.fetchVariantPosts(now.plusDays(1)).isEmpty())
+    }
+
+    @Test
     fun `replaceReactionCounts replaces the whole set, not increments`() {
         db.insertDigestMessages(listOf(digestMsg(-100L, 1)))
         db.replaceReactionCounts(-100L, 1, listOf(ReactionCount("👍", 5), ReactionCount("👎", 2)))

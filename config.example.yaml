@@ -596,6 +596,21 @@ categories:
       #   minSimilarity: 0.82
       #   maxAgeDays: 3
       #   logOnly: true
+      # 💬 editor persona: one characterful line under the digest's top event, as an A/B test.
+      # The top event's arm is fixed by its key (floorMod(hashCode, 100) < share×100 → persona,
+      # else control — no call, no line); both arms are written to digest_messages.variant and
+      # /status compares their reactions (🧪 Variants, 30d). One extra LLM call per digest at
+      # most (llm.persona, else llm.render, else the sync default; llm_calls use_case PERSONA).
+      # A remark over maxChars, with a URL / [ ] # ` ** / a number the topic lacks / a banned
+      # phrase, or a failed call (timeoutSeconds) → no line and variant null (out of the test).
+      # promptFile is required: copy prompts/persona.example.yaml and write the voice yourself.
+      # Needs ≥40 posts per arm (3–4 weeks of gaming) — fix the decision rule before starting.
+      # persona:
+      #   promptFile: prompts/persona-gaming.yaml
+      #   share: 0.5
+      #   maxChars: 160
+      #   timeoutSeconds: 60
+      #   bannedPhrases: ["це важливо", "варто звернути увагу", "чому це цікаво", "як редактор", "як штучний інтелект"]
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),
@@ -660,6 +675,7 @@ categories:
       batch:            { provider: openai,     model: gpt-5-mini-2025-08-07 }
       summarize:        { provider: openai,     model: gpt-5-mini-2025-08-07 }
       batchFallback:    { provider: anthropic,  model: claude-haiku-4-5-20251001 }
+      # persona:        { provider: openrouter, model: … }   # post.persona remark; default: the render route
       # On-failure fallback (nested, sync slots). E.g. primary Claude CLI, fall back to Codex CLI:
       #   render: { provider: claudecli, model: "", fallback: { provider: codexcli, model: "" } }
     # Optional: this category's own cadences (per-category scheduler mode).

@@ -1040,8 +1040,40 @@ data class PostConfig(
     /** Better post pictures: og:image first, logos / avatars / small thumbnails dropped; see [PostImagesConfig]. */
     val images: PostImagesConfig? = null,
     /** `🔗 У 🖥 Tech: …` — the related post another category's channel already carries; see [CrossLinksConfig]. */
-    val crossLinks: CrossLinksConfig? = null
+    val crossLinks: CrossLinksConfig? = null,
+    /** `💬 …` — the editor persona's one-line remark under the top event, as an A/B test; see [PersonaConfig]. */
+    val persona: PersonaConfig? = null
 )
+
+/**
+ * The editor persona: one characterful line `💬 <remark>` under the digest's top event (the first
+ * ranked item), from a separate cheap LLM call (`llm.persona`, else the render route; metered as
+ * `PERSONA`) so the bullet itself is the same in both arms. At most one call per digest.
+ *
+ * A/B: the top event's arm is fixed by its key — `floorMod(eventKey.hashCode(), 100) < share×100`
+ * is `persona`, the rest `control` (no call, no line); both are written to
+ * `digest_messages.variant`, and `/status` compares reactions per arm (🧪 *Variants*). A remark
+ * that fails a guard — longer than [maxChars], a URL, `[`, `]`, `#`, `` ` ``, `**`, a number the
+ * topic does not have, several lines, one of [bannedPhrases] — or a failed / slow call
+ * ([timeoutSeconds]) sends the post without the line and `variant` null, so it stays out of the
+ * comparison. The style is the owner's: [promptFile] (keys `persona.system` / `persona.user`, see
+ * `prompts/persona.example.yaml`) is required; without a readable file neither arm is tagged.
+ */
+data class PersonaConfig(
+    val enabled: Boolean = true,
+    val share: Double = 0.5,
+    val maxChars: Int = 160,
+    val promptFile: String = "",
+    val timeoutSeconds: Long = 60,
+    val bannedPhrases: List<String> = DEFAULT_BANNED_PHRASES
+) {
+    companion object {
+        /** Meta framing the render prompt forbids too; matched case-insensitively. */
+        val DEFAULT_BANNED_PHRASES: List<String> = listOf(
+            "це важливо", "варто звернути увагу", "чому це цікаво", "як редактор", "як штучний інтелект"
+        )
+    }
+}
 
 /**
  * `🔗 У 🖥 Tech: [<subject>](https://t.me/…)`: the post about the same story that another
@@ -1410,7 +1442,12 @@ data class CategoryLlmOverrides(
      * the primary batch endpoint and producing the digest immediately. All three providers
      * are valid here (sync path, no Batch API constraint).
      */
-    val batchFallback: LlmOverride? = null
+    val batchFallback: LlmOverride? = null,
+    /**
+     * The editor-persona remark (`post.persona`), one short sync call per digest. Null falls back
+     * to the [render] override, then to the global sync default; metered as `PERSONA` either way.
+     */
+    val persona: LlmOverride? = null
 )
 
 data class DedupPromptsInline(
@@ -2022,6 +2059,17 @@ object ConfigLoader {
                         }
                     }
                 }
+                post.persona?.takeIf { it.enabled }?.let { p ->
+                    require(p.share in 0.0..1.0) { "Category '$name' post.persona.share must be in [0.0, 1.0] (got ${p.share})" }
+                    require(p.maxChars in 20..400) { "Category '$name' post.persona.maxChars must be in 20..400 (got ${p.maxChars})" }
+                    require(p.promptFile.isNotBlank()) {
+                        "Category '$name' post.persona.promptFile is required — the persona's style is yours (see prompts/persona.example.yaml)"
+                    }
+                    require(p.timeoutSeconds >= 1) { "Category '$name' post.persona.timeoutSeconds must be >= 1 (got ${p.timeoutSeconds})" }
+                    require(category.dedup != null) {
+                        "Category '$name' post.persona needs a dedup: block — the remark goes under Step 1's top-ranked event"
+                    }
+                }
                 post.also?.let { a ->
                     require(a.max >= 1) { "Category '$name' post.also.max must be >= 1 (got ${a.max})" }
                     for ((host, label) in a.names) {
@@ -2180,6 +2228,7 @@ object ConfigLoader {
                 validateOverride(name, "batch", ovr.batch, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "summarize", ovr.summarize, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "batchFallback", ovr.batchFallback, openRouter, anthropic, config.claudeCli, config.codexCli)
+                validateOverride(name, "persona", ovr.persona, openRouter, anthropic, config.claudeCli, config.codexCli)
                 ovr.batch?.let { b ->
                     require(b.provider in setOf("openai", "anthropic")) {
                         "Category '$name' llm.batch: batch override only supports provider: openai or anthropic (OpenRouter, Claude CLI, and Codex CLI have no Batch API)"

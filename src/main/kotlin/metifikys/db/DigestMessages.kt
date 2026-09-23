@@ -154,6 +154,14 @@ interface DigestMessageStore {
      */
     fun fetchPublishedLinkGroupsSince(since: LocalDateTime): List<Set<String>>
 
+    /**
+     * Every post tagged with an experiment arm (`variant` not null) sent since [since], with the
+     * reactions it collected: one entry per post (the chunks of a topic share chat, category,
+     * event key and `sent_at` and are summed), posts without reactions included. Backs the
+     * `/status` arm comparison (persona / control / explore).
+     */
+    fun fetchVariantPosts(since: LocalDateTime): List<VariantPost>
+
     /** The row of one delivered message, or null. */
     fun fetchDigestMessage(chatId: Long, messageId: Long): DigestMessageRow?
 
@@ -337,6 +345,44 @@ internal class DigestMessageRepository : DigestMessageStore {
             .size
     }
 
+    override fun fetchVariantPosts(since: LocalDateTime): List<VariantPost> {
+        data class Rec(val key: List<Any?>, val category: String, val variant: String, val emoji: String?, val count: Int)
+        val recs = transaction {
+            DigestMessagesTable
+                .join(
+                    ReactionCountsTable, JoinType.LEFT,
+                    additionalConstraint = {
+                        (ReactionCountsTable.chatId eq DigestMessagesTable.chatId) and
+                            (ReactionCountsTable.messageId eq DigestMessagesTable.messageId)
+                    }
+                )
+                .select(
+                    DigestMessagesTable.chatId, DigestMessagesTable.category, DigestMessagesTable.eventKey,
+                    DigestMessagesTable.sentAt, DigestMessagesTable.variant,
+                    ReactionCountsTable.emoji, ReactionCountsTable.count
+                )
+                .where { DigestMessagesTable.variant.isNotNull() and (DigestMessagesTable.sentAt greaterEq since) }
+                .map {
+                    val category = it[DigestMessagesTable.category]
+                    val variant = it[DigestMessagesTable.variant]!!
+                    Rec(
+                        key = listOf(it[DigestMessagesTable.chatId], category, it[DigestMessagesTable.eventKey], it[DigestMessagesTable.sentAt], variant),
+                        category = category,
+                        variant = variant,
+                        emoji = it.getOrNull(ReactionCountsTable.emoji),
+                        count = it.getOrNull(ReactionCountsTable.count) ?: 0
+                    )
+                }
+        }
+        return recs.groupBy { it.key }.map { (_, list) ->
+            val first = list.first()
+            val reactions = list.filter { it.emoji != null && it.count > 0 }
+                .groupBy { it.emoji!! }
+                .map { (emoji, rows) -> ReactionCount(emoji, rows.sumOf { it.count }) }
+            VariantPost(first.category, first.variant, reactions)
+        }
+    }
+
     private fun ResultRow.toDigestMessageRow() = DigestMessageRow(
         chatId = this[DigestMessagesTable.chatId],
         messageId = this[DigestMessagesTable.messageId],
@@ -398,3 +444,6 @@ internal class DigestMessageRepository : DigestMessageStore {
         val count: Int
     )
 }
+
+/** One post of an experiment arm (`digest_messages.variant`) and the reactions it collected. */
+data class VariantPost(val category: String, val variant: String, val reactions: List<ReactionCount>)

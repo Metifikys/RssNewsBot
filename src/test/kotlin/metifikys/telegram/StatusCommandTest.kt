@@ -144,6 +144,23 @@ class StatusCommandTest {
         assertTrue(!text.contains("✅ 0 ("))
     }
 
+    @Test
+    fun `variants section compares the arms per category and is absent without tagged posts`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchVariantPosts(any()) } returns listOf(
+            metifikys.db.VariantPost("tech", "control", emptyList()),
+            metifikys.db.VariantPost("tech", "persona", listOf(metifikys.db.ReactionCount("👍", 2)))
+        )
+        val config = mockk<AppConfig>(relaxed = true)
+        every { config.categories } returns mapOf("tech" to mockk<CategoryConfig>(relaxed = true))
+        every { config.feedback } returns metifikys.config.FeedbackConfig()
+        val text = StatusCommand(config = config, db = db, errorLog = CycleErrorLog()).build()
+        assertTrue(text.contains("🧪 *Variants* (30d)\n  tech: persona 1 · 2.0/post · 100% reacted · 100% 👍+ | control 1 · 0.0/post · 0% reacted"), text)
+
+        every { db.fetchVariantPosts(any()) } returns emptyList()
+        assertTrue("Variants" !in StatusCommand(config = config, db = db, errorLog = CycleErrorLog()).build())
+    }
+
     private fun feedHealthCmd(enabled: Boolean, db: NewsDatabase): StatusCommand {
         val config = mockk<AppConfig>(relaxed = true)
         every { config.feedHealth } returns FeedHealthConfig(enabled = enabled)

@@ -226,6 +226,15 @@ via a `/status` admin snapshot.
     is skipped). No LLM, no extra embedding call; needs `semanticDedup.eventEnabled` on both
     sides ([`CrossLinks`](src/main/kotlin/metifikys/digest/CrossLinks.kt)). `[CrossLink]` logs
     each match; `logOnly` keeps the line out. Links point back only (newer post → older).
+  - **persona** — `💬 <remark>`: one characterful line from the editor under the digest's top
+    event, as an A/B test. The event key fixes the arm (`share` of keys → `persona`, the rest →
+    `control` with no call); both go to `digest_messages.variant` and `/status` compares them
+    (`🧪 Variants` (30d): posts, reactions/post, share reacted, share of positive reactions). One
+    extra LLM call per digest at most (`llm.persona`, else the render route; metered as `PERSONA`).
+    [`PersonaRemark`](src/main/kotlin/metifikys/format/PersonaRemark.kt) guards the remark (length,
+    no URL / markup / banned phrase, no number the topic lacks); a failed guard or call means no
+    line and no variant. The voice is the owner's: `promptFile` (see
+    `prompts/persona.example.yaml`) is required.
 - **Industry barometer** (opt-in, `weekly.barometer`, needs `storyIntel`) — after the weekly
   roundup, a 1200×675 PNG of distinct subjects per ISO week over the last 12 weeks from
   `event_history`, one panel per series with its own scale: layoffs / closures (by type, or a
@@ -1026,6 +1035,7 @@ llm:                      # per-use-case provider+model overrides
   batch:            { provider: …, model: … }    # openai|anthropic only
   summarize:        { provider: …, model: … }
   batchFallback:    { provider: …, model: … }    # any provider
+  persona:          { provider: …, model: … }    # post.persona remark (default: the render route)
 
 dedup:                    # two-step pipeline opt-in
   promptFile: prompts/X.yaml

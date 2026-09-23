@@ -69,7 +69,9 @@ class DigestDeliverer(
     /** og:image-first picture choice (`post.images`); null when no category sets it. */
     private val postImages: PostImages? = null,
     /** telegra.ph pages for long posts (`post.longForm.telegraph`); null when no category sets it. */
-    private val telegraph: TelegraphPublisher? = null
+    private val telegraph: TelegraphPublisher? = null,
+    /** The editor persona's remark under the top event (`post.persona`); null when no category sets it. */
+    private val personaWriter: PersonaWriter? = null
 ) {
 
     /**
@@ -198,6 +200,11 @@ class DigestDeliverer(
         val imagesCfg = postCfg?.images?.takeIf { categoryConfig.enableImages && postImages != null }
         val imageDeadline = imagesCfg?.let { postImages?.newDeadline(it) } ?: 0L
 
+        // post.persona: the digest's top event (first in ranker order; never the anti-bubble pick).
+        // Cleared once its topic got its remark, so the digest makes one LLM call at most.
+        val personaCfg = postCfg?.persona?.takeIf { it.enabled }
+        var personaKey: String? = if (personaCfg != null) shortlist?.firstOrNull { !it.isExplore }?.eventKey else null
+
         for ((idx, topic) in topics.withIndex()) {
             val image = if (imagesCfg != null && postImages != null) {
                 chooseImage(categoryName, topicUrls[idx], topicUrls[idx].firstNotNullOfOrNull { itemByUrl[it] }, articleByLink, imagesCfg, imageDeadline)
@@ -228,12 +235,18 @@ class DigestDeliverer(
             val storyLines = eventKey?.let { storyLinesByKey[it] }.orEmpty()
             // 🧭 the anti-bubble pick (dedup.digest.antiBubble): marked in the footer, variant explore.
             val explore = item?.isExplore == true
+            // 💬 the editor persona (post.persona) under the top event only: A/B arm + remark.
+            val persona = if (personaCfg != null && personaWriter != null && item != null && item.eventKey == personaKey) {
+                personaKey = null
+                personaWriter.write(categoryName, categoryConfig, personaCfg, item, topic)
+            } else null
             val footer = buildFooter(
                 categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLines, articleByLink, feedLabels,
                 eventKey?.let { crossLinkByKey[it] },
-                exploreLine = if (explore) antiBubbleLabel(categoryConfig) else null
+                exploreLine = if (explore) antiBubbleLabel(categoryConfig) else null,
+                personaLine = persona?.line
             )
-            val variant = if (explore) DigestMessageRow.VARIANT_EXPLORE else null
+            val variant = if (explore) DigestMessageRow.VARIANT_EXPLORE else persona?.variant
             // Long-form (post.longForm): a text message with the image as a large link preview
             // above it, so neither the body nor the footer is squeezed into the 1024-char caption.
             // A long post that fits a caption anyway still goes out as a normal photo post.
@@ -509,10 +522,12 @@ class DigestDeliverer(
         articleByLink: Map<String, Article> = emptyMap(),
         feedLabels: Map<String, String> = emptyMap(),
         crossLink: String? = null,
-        exploreLine: String? = null
+        exploreLine: String? = null,
+        personaLine: String? = null
     ): List<String> {
         if (post == null) return FooterLines().add(Slot.EXPLORE, exploreLine).build()
         val footer = FooterLines()
+        footer.add(Slot.PERSONA, personaLine)
         footer.add(Slot.EXPLORE, exploreLine)
         val enabledBadges = post.badges?.enabledIds.orEmpty()
         if (badgeResolver != null && enabledBadges.isNotEmpty()) {

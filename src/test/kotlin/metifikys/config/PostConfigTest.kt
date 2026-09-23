@@ -137,6 +137,24 @@ class PostConfigTest {
     }
 
     @Test
+    fun `persona block needs a prompt file, a dedup block and sane knobs`() {
+        val dedup = "dedup:\n  promptFile: prompts/games-dedup.example.yaml\n"
+        val ok = load(yaml(dedup + "post:\n  persona:\n    promptFile: prompts/persona.example.yaml\n    share: 0.3"))
+        val p = ok.categories.getValue("gaming").post!!.persona!!
+        assertEquals(0.3, p.share)
+        assertEquals(160, p.maxChars)
+        assertEquals(PersonaConfig.DEFAULT_BANNED_PHRASES, p.bannedPhrases)
+
+        assertThrows<IllegalArgumentException> { load(yaml(dedup + "post:\n  persona:\n    share: 0.5")) }
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  persona:\n    promptFile: p.yaml")) }
+        for (bad in listOf("share: 1.5", "maxChars: 5", "timeoutSeconds: 0")) {
+            assertThrows<IllegalArgumentException> { load(yaml(dedup + "post:\n  persona:\n    promptFile: p.yaml\n    $bad")) }
+        }
+        val llm = load(yaml(dedup + "llm:\n  persona: { provider: openai, model: gpt-mini }\npost:\n  persona:\n    promptFile: p.yaml"))
+        assertEquals("gpt-mini", llm.categories.getValue("gaming").llm!!.persona!!.model)
+    }
+
+    @Test
     fun `official block needs a dedup block and real domains`() {
         val ok = load(yaml("dedup:\n  promptFile: prompts/games-dedup.example.yaml\npost:\n  official:\n    domains: [blog.playstation.com, nintendo.com]"))
         val official = ok.categories.getValue("gaming").post!!.official!!

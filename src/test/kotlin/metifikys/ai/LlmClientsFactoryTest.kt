@@ -86,6 +86,20 @@ class LlmClientsFactoryTest {
     }
 
     @Test
+    fun `forPersona uses its own override, else the render one, else the sync default — metered as PERSONA`() {
+        val recorder = mockk<LlmCallRecorder>(relaxed = true)
+        val own = cat(CategoryLlmOverrides(persona = LlmOverride("openai", "gpt-mini"), render = LlmOverride("openai", "gpt-render")))
+        val render = cat(CategoryLlmOverrides(render = LlmOverride("openai", "gpt-render")))
+        val factory = LlmClientsFactory(config(categories = mapOf("g" to own, "r" to render)), db, recorder)
+        assertEquals("gpt-mini", factory.forPersona(own).endpoint.model)
+        assertEquals("gpt-render", factory.forPersona(render).endpoint.model)
+        assertEquals("router-default", factory.forPersona(null).endpoint.model)
+        val metered = factory.forPersona(own)
+        assertTrue(metered is MeteredLlmClient)
+        assertEquals(LlmUseCase.PERSONA, metered.useCase)
+    }
+
+    @Test
     fun `forExtract with no override returns primary openai + alternate openrouter`() {
         val factory = LlmClientsFactory(config(withOpenRouter = true), db)
         val (primary, alternate) = factory.forExtract(null)

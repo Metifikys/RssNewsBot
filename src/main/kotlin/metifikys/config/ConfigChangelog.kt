@@ -56,6 +56,7 @@ object ConfigChangelog {
         Entry("categories.*.post.longForm.telegraph", "2026-09-23", "⚡ long post as a telegra.ph Instant View page (teaser | full), token in TELEGRAPH_TOKEN or bot_state"),
         Entry("weekly.album", "2026-09-23", "photo album of the stories' pictures before the weekly roundup text (sendMediaGroup)"),
         Entry("categories.*.dedup.digest.antiBubble", "2026-09-23", "🧭 weekly pick of an important event outside the audience's taste, variant explore (needs feedback.enabled)"),
+        Entry("categories.*.post.persona", "2026-09-23", "💬 editor-persona remark under the top event, A/B persona / control (needs your own promptFile; /status 🧪 Variants)"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */

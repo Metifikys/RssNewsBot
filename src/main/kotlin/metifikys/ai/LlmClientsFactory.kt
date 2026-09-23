@@ -37,6 +37,21 @@ class LlmClientsFactory(
     }
 
     /**
+     * The editor-persona remark (`post.persona`): `llm.persona`, else the `llm.render` override,
+     * else the global sync default — always a sync client, metered as [LlmUseCase.PERSONA] so its
+     * calls show apart from the render ones in `llm_calls`.
+     */
+    fun forPersona(category: CategoryConfig?): LlmClient {
+        val ovr = category?.llm?.persona ?: category?.llm?.render
+        if (ovr == null) {
+            forOpenRouterDefault(category, LlmUseCase.PERSONA)?.let { return it }
+            return meter(client(LlmEndpoint.forOpenAI(config), batchCapable = false), category, LlmUseCase.PERSONA)
+        }
+        val primary = meter(client(overrideEndpoint(ovr), batchCapable = false), category, LlmUseCase.PERSONA)
+        return withFallback(ovr, primary, category, LlmUseCase.PERSONA)
+    }
+
+    /**
      * Client for the global `openrouter:` default, honoring the `models:` priority ladder:
      * the first model is primary and each later one serves as the on-failure fallback for
      * the one before it ([FallbackLlmClient] chain). Free-tier endpoints come and go by

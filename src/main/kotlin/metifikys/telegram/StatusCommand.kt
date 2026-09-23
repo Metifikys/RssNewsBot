@@ -15,6 +15,9 @@ import java.util.Locale
 
 private val logger = KotlinLogging.logger {}
 
+/** Window of the `/status` arm comparison — about the length of one persona A/B round. */
+private const val VARIANT_WINDOW_DAYS = 30L
+
 /**
  * Builds a one-shot snapshot for the `/status` Telegram command:
  *  - per category: most recent digest's article count vs `dedup.digest.maxDigestItems` cap
@@ -90,6 +93,7 @@ class StatusCommand(
         }
         appendLatencySection(sb)
         appendReactionsSection(sb)
+        appendVariantsSection(sb)
         appendAffinitySection(sb)
         appendFeedHealthSection(sb)
         appendFirstSourceSection(sb)
@@ -150,6 +154,28 @@ class StatusCommand(
             val top = r.byEmoji.take(3).joinToString(", ") { "${it.emoji} ${it.count}" }
             val topCell = if (top.isNotEmpty()) " · top: $top" else ""
             sb.append("  ${escapeMarkdown(name)}: ${r.totalReactions} across ${r.postCount} posts$topCell\n")
+        }
+    }
+
+    /**
+     * `🧪 *Variants*` (30d): reactions per experiment arm (`digest_messages.variant`) — the persona
+     * A/B (`post.persona`) and the anti-bubble `explore` posts — one line per category that has
+     * tagged posts, see [metifikys.feedback.VariantStats]. Omitted when there are none or the
+     * query fails.
+     */
+    private fun appendVariantsSection(sb: StringBuilder) {
+        val posts = try {
+            db.fetchVariantPosts(LocalDateTime.now().minusDays(VARIANT_WINDOW_DAYS))
+        } catch (e: Exception) {
+            logger.warn(e) { "[/status] fetchVariantPosts failed — omitting the variants section" }
+            return
+        }
+        if (posts.isEmpty()) return
+        val byCategory = metifikys.feedback.VariantStats.aggregate(posts, metifikys.feedback.ReactionValence(config.feedback.valence))
+        sb.append('\n').append("🧪 *Variants* (${VARIANT_WINDOW_DAYS}d)\n")
+        for ((name, _) in config.categories) {
+            val arms = byCategory[name] ?: continue
+            sb.append("  ${escapeMarkdown(name)}: ${arms.joinToString(" | ") { metifikys.feedback.VariantStats.cell(it) }}\n")
         }
     }
 
