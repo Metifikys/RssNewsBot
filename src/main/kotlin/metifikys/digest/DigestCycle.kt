@@ -83,7 +83,9 @@ class DigestCycle(
     /** Weekly mute proposals to the admin chat (`admin.muteSuggestions`); null = off. */
     private val muteSuggester: metifikys.feedback.MuteSuggester? = null,
     /** `claude` / `codex` health: setup-token expiry and the idle probe (`health.enabled`); null = off. */
-    private val cliHealthMonitor: metifikys.ai.CliHealthMonitor? = null
+    private val cliHealthMonitor: metifikys.ai.CliHealthMonitor? = null,
+    /** Per-feed fetch outcomes, flushed to `feed_stats` on the maintenance tick (`feedHealth.enabled`); null = off. */
+    private val feedHealthRecorder: metifikys.fetch.FeedHealthRecorder? = null
 ) {
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -165,11 +167,22 @@ class DigestCycle(
         affinityAggregator?.recomputeIfStale()
         muteSuggester?.runIfDue()
         runCliHealth()
+        flushFeedHealth()
         statusPoster?.post()
         val seconds = (System.nanoTime() - startedNanos) / 1_000_000_000
         logger.info {
             "[Maintenance] cleanup + affinity + status post done in ${seconds}s" +
                 (if (statusPoster == null) " (no status chat configured)" else "")
+        }
+    }
+
+    /** Writes the fetch outcomes collected since the last tick into `feed_stats`; metrics only, never fatal. */
+    private fun flushFeedHealth() {
+        val recorder = feedHealthRecorder ?: return
+        try {
+            db.applyFeedStats(recorder.drain())
+        } catch (e: Exception) {
+            logger.warn(e) { "[FeedHealth] feed_stats flush failed" }
         }
     }
 
@@ -197,6 +210,7 @@ class DigestCycle(
 
             muteSuggester?.runIfDue()
             runCliHealth()
+            flushFeedHealth()
 
             // One shared wall-clock deadline for the whole cycle's fetch stage — every
             // category's feeds go through the fetcher's bounded pool, so the budget is

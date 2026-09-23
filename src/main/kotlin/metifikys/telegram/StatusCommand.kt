@@ -91,6 +91,7 @@ class StatusCommand(
         appendLatencySection(sb)
         appendReactionsSection(sb)
         appendAffinitySection(sb)
+        appendFeedHealthSection(sb)
 
         val errorCommitToken = if (errors.isEmpty()) {
             -1L
@@ -185,6 +186,33 @@ class StatusCommand(
             if (bottom.isNotEmpty()) sb.append(" · ↓ ${bottom.joinToString(", ") { cell(it) }}")
             sb.append('\n')
         }
+    }
+
+    /**
+     * `📡 Feeds` (`feedHealth.enabled` + `statusSection`): a per-category count line and the worst
+     * anomalies, [metifikys.feeds.FeedHealthSection.MAX_LINES] lines at most. A failing snapshot
+     * query drops the section, never the status post.
+     */
+    private fun appendFeedHealthSection(sb: StringBuilder) {
+        val fh = config.feedHealth
+        if (!fh.enabled || !fh.statusSection) return
+        val lines = try {
+            val now = LocalDateTime.now()
+            metifikys.feeds.FeedHealthSection.render(
+                metifikys.feeds.FeedHealthSection.metrics(config, db, now),
+                fh.windowDays,
+                metifikys.feeds.FeedHealthSection.labels(config),
+                config.categories.keys.toList(),
+                now,
+                ::escapeMarkdown
+            )
+        } catch (e: Exception) {
+            logger.warn(e) { "[/status] feed health snapshot failed — omitting the feeds section" }
+            return
+        }
+        if (lines.isEmpty()) return
+        sb.append('\n')
+        lines.forEach { sb.append(it).append('\n') }
     }
 
     private fun safeFetchAffinity(): List<metifikys.db.AudienceAffinityRow> = try {

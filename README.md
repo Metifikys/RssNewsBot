@@ -197,6 +197,17 @@ via a `/status` admin snapshot.
   The maintenance tick probes a CLI with no successful run in `cliProbe.intervalHours` (codex: the
   cheap `codex login status` first when available) and warns daily before a `claude setup-token`
   expires (`claudeTokenExpires`). `/status` shows `CLI: claude ✅ 2h · codex ⛔ auth з 03:10`.
+- **Feed quality metrics** — every article records the configured feed that brought it
+  (`articles.feed_url`), its first-ingest time (`fetched_at`) and a Step 0 mute (`drop_reason`);
+  a link a second feed also brought lands in `feed_sightings`. With `feedHealth.enabled` the
+  fetcher keeps one outcome per feed per pass (a 304 is healthy; flushed to `feed_stats` on the
+  maintenance tick) and `/status` gets a `📡 Feeds` section: a per-category `ok` count plus at most
+  seven anomaly lines — 💀 dead, 💤 nothing new, 🗑 noisy (little published, mostly muted / Step 1
+  rejected / never selected), 🪞 mirror (rarely the first feed with a published story). Pure logic
+  in [`FeedQuality`](src/main/kotlin/metifikys/feeds/FeedQuality.kt); suggestions only, nothing is
+  disabled automatically. The full per-feed table (published %, junk %, first %, echo lag, fetch
+  errors) is the "Per-feed quality" section of `bench/db-audit/report.mjs`. A junk-classifier score
+  column (`articles.junk_score`) is averaged per feed once it exists.
 - **Per-LLM-call cost ledger** — `llm_calls` table records `(provider, model, category,
   useCase, promptTokens, completionTokens, estCostUsd, ts)` for every call, including the
   Batch API auto-halving.
@@ -815,6 +826,7 @@ first cycle.
 | `weekly`          | no       | Weekly top-story roundup (off by default)                   |
 | `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`) |
 | `health`          | no       | `claude` / `codex` login + usage-limit alerts in the admin chat, idle probe, `setup-token` expiry (off by default) |
+| `feedHealth`      | no       | Per-feed fetch health + the `/status` 📡 Feeds anomalies: `enabled`, `windowDays` (14, max 30), `statusSection`, `thresholds` (off by default) |
 | `pricing`         | no       | USD/1M tokens per (provider, model)                          |
 | `categories`      | yes      | Map of category name → `CategoryConfig`                     |
 
@@ -858,6 +870,7 @@ feeds:                    # plain string OR object form
   - url: https://other.com/feed
     fetchFullContent: true
     summarize: openai     # openai | openrouter | anthropic
+    label: "Other News"   # name in the feed-health section / report (default: host + path)
 
 systemPrompt: …           # legacy single-step prompt
 userPrompt: …
@@ -944,6 +957,7 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 |----------------------|---------------------------------------------------------------------------|
 | `articles`           | Canonical article rows + status (`UNPROCESSED`/`PROCESSING`/`PROCESSED`/`DUPLICATE`) + `duplicate_of` pointer + image/summary cache; `feed_url` (the configured feed that first brought the link), `fetched_at` (first-ingest time, our clock — unlike `pub_date`) and `drop_reason` (`mute` for Step 0 keyword drops) are null on rows older than the columns |
 | `feed_sightings`     | `(link, feed_url, seen_at)`: a link a second feed brought after another feed already had it — the unique-link insert otherwise hides the echo. A feed re-reading its own links is not recorded |
+| `feed_stats`         | Fetch health per feed url (`feedHealth.enabled`): last attempt / success, `fail_streak` (failed passes since the last success; 304 = success), totals, last error and entry count |
 | `pending_batches`    | In-flight batch jobs (`kind`, `category_names`, `article_links`, `shortlist_json`) for restart-safe resume |
 | `summaries`          | Delivered digest text + article count; injected as context next cycle and used for previous-URL filtering |
 | `covered_events`     | Step 1 dedup memory: one row per `(category, event_key)`; upsert keeps subject/franchise/eventType stable |

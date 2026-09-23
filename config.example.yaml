@@ -101,6 +101,21 @@ anthropic:
 #   claudeTokenExpires: "2027-08-01"  # only for a `claude setup-token` login; warns daily from…
 #   warnDaysBefore: 14                # …this many days before
 
+# Optional: per-feed quality metrics (off by default). Every article already records the feed that
+# brought it (`articles.feed_url`, `fetched_at`); this adds per-feed fetch health (`feed_stats`,
+# flushed on the maintenance tick) and a `📡 Feeds` section in /status that lists only anomalies:
+# 💀 dead (no fetch success for deadDays / deadFailStreak failed passes), 💤 nothing new for
+# staleNewDays, 🗑 noisy (≥ noisyMinArticles, < noisyMaxPublishedPct published, > noisyMinJunkPct
+# junk), 🪞 mirror (first in < mirrorMaxFirstPct of its published stories). Suggestions only — no
+# feed is ever disabled. The full per-feed table: `node bench/db-audit/report.mjs logs/news.db`.
+# feedHealth:
+#   enabled: true
+#   windowDays: 14          # by fetched_at; max 30 (rejected_events retention)
+#   statusSection: true
+#   thresholds: { deadDays: 3, deadFailStreak: 10, staleNewDays: 14, noisyMinArticles: 30,
+#                 noisyMaxPublishedPct: 2, noisyMinJunkPct: 80, minPublishedForFirst: 5,
+#                 mirrorMaxFirstPct: 10, primaryMinFirstPct: 50 }
+
 database:
   path: "news.db"
 
@@ -578,3 +593,4 @@ categories:
       # - url: https://example.com/feed
       #   fetchFullContent: true       # optional: fetch the full article body before summarizing
       #   summarize: openrouter         # one of: openai | openrouter
+      #   label: "Example News"         # optional: name in the /status 📡 Feeds section and the report

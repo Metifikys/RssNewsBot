@@ -60,7 +60,12 @@ class RssFetcher(
      * Per-host gate shared by ALL feeds and categories: a 429 cools the whole host down
      * and teaches it a request spacing. Self-tuning — injectable only for tests.
      */
-    private val hostThrottle: HostThrottle = HostThrottle()
+    private val hostThrottle: HostThrottle = HostThrottle(),
+    /**
+     * Per-feed fetch outcomes for the feed-health metrics (`feedHealth.enabled`); null records
+     * nothing. One final outcome per feed per pass — a retry that later succeeds is a success.
+     */
+    val healthRecorder: FeedHealthRecorder? = null
 ) {
 
     companion object {
@@ -202,6 +207,7 @@ class RssFetcher(
                     validateFeedUrl(feedConfig.url)
                 } catch (e: IllegalArgumentException) {
                     logger.warn { "Rejected feed URL '${feedConfig.url}': ${e.message}" }
+                    healthRecorder?.onFailure(feedConfig.url, category, "rejected URL: ${e.message}")
                     return@mapNotNull null
                 }
             }
@@ -231,6 +237,9 @@ class RssFetcher(
             if (result.isDone) return@Runnable
             if (System.nanoTime() >= deadlineNanos) {
                 logger.warn { "Fetch deadline reached before attempt $attempt for ${feedConfig.url} — deferred to next cycle" }
+                // A retry that ran out of stage time is a failed pass; a first attempt that never
+                // started (host cooling down, crowded pool) says nothing about this feed.
+                if (attempt > 1) healthRecorder?.onFailure(feedConfig.url, category, "retries outlasted the fetch deadline")
                 result.complete(emptyList())
                 return@Runnable
             }
@@ -250,6 +259,7 @@ class RssFetcher(
             when (val outcome = fetchFeedOnce(feedConfig, category)) {
                 is FetchOutcome.Success -> {
                     hostThrottle.onSuccess(host)
+                    healthRecorder?.onSuccess(feedConfig.url, category, outcome.articles.size)
                     result.complete(outcome.articles)
                 }
                 // 304: the feed is unchanged since our last successful parse. Its entries are
@@ -257,12 +267,14 @@ class RssFetcher(
                 // produced anyway — and it still counts as a healthy response for the host.
                 FetchOutcome.NotModified -> {
                     hostThrottle.onSuccess(host)
+                    healthRecorder?.onNotModified(feedConfig.url, category)
                     result.complete(emptyList())
                 }
                 is FetchOutcome.Fatal -> {
                     // HTTP itself succeeded (the failure was parse-side), so it still counts
                     // as a success for the host's rate limiting.
                     hostThrottle.onSuccess(host)
+                    healthRecorder?.onFailure(feedConfig.url, category, outcome.reason)
                     result.complete(emptyList())
                 }
                 is FetchOutcome.Retryable -> {
@@ -275,6 +287,7 @@ class RssFetcher(
                     val nextDelay = if (attempt >= maxAttempts) null
                         else nextRetryDelayMs(hostCooldownMs ?: outcome.retryAfterMs, retryDelayMs, remainingMs)
                     if (nextDelay == null) {
+                        healthRecorder?.onFailure(feedConfig.url, category, outcome.reason)
                         if (outcome.cause != null) {
                             logger.error(outcome.cause) { "${outcome.reason} from ${feedConfig.url} (attempt $attempt/$maxAttempts) — deferred to next cycle" }
                         } else {

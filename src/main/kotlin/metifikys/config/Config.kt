@@ -301,6 +301,45 @@ data class CliProbeConfig(
     val codexModel: String = ""
 )
 
+/**
+ * Per-feed quality metrics (`.claude/plans/2026-09-ideas-sources.md` §23): which configured feeds
+ * actually reach the channel, which are noise, which bring stories first, and whether they fetch
+ * at all. With [enabled] the fetcher keeps per-feed fetch outcomes (flushed to `feed_stats` on the
+ * maintenance tick) and `/status` gets a `📡 Feeds` section listing only the anomalies. Suggestions
+ * only — nothing is ever disabled automatically. The full per-feed table is the static report
+ * (`bench/db-audit/report.mjs`), which reads the same columns.
+ */
+data class FeedHealthConfig(
+    val enabled: Boolean = false,
+    /** Metrics window over `articles.fetched_at`; capped at 30 (the `rejected_events` retention). */
+    val windowDays: Long = 14,
+    /** The `/status` section; off keeps recording without the section. */
+    val statusSection: Boolean = true,
+    val thresholds: FeedHealthThresholds = FeedHealthThresholds()
+)
+
+/** The hint rules (deterministic, text only): 💀 dead, 💤 stale, 🗑 noisy, 🪞 mirror, ⭐ first source. */
+data class FeedHealthThresholds(
+    /** 💀 no successful fetch for this many days ... */
+    val deadDays: Long = 3,
+    /** ... or this many failed passes in a row. */
+    val deadFailStreak: Int = 10,
+    /** 💤 fetches fine but brought nothing new for this many days. */
+    val staleNewDays: Long = 14,
+    /** 🗑 needs at least this many articles in the window ... */
+    val noisyMinArticles: Int = 30,
+    /** ... fewer than this share published ... */
+    val noisyMaxPublishedPct: Double = 2.0,
+    /** ... and more than this share junk (muted, Step 1 rejected, never selected). */
+    val noisyMinJunkPct: Double = 80.0,
+    /** 🪞 / ⭐ need at least this many published articles. */
+    val minPublishedForFirst: Int = 5,
+    /** 🪞 first in fewer than this share of its clusters: other feeds bring it all anyway. */
+    val mirrorMaxFirstPct: Double = 10.0,
+    /** ⭐ first in at least this share: keep. */
+    val primaryMinFirstPct: Double = 50.0
+)
+
 data class AppConfig(
     val telegram: TelegramConfig,
     val openai: OpenAIConfig,
@@ -324,6 +363,8 @@ data class AppConfig(
     val badges: BadgeSettings = BadgeSettings(),
     /** `claude` / `codex` login and usage-limit alerts; see [HealthConfig]. */
     val health: HealthConfig = HealthConfig(),
+    /** Per-feed quality metrics and fetch health; see [FeedHealthConfig]. */
+    val feedHealth: FeedHealthConfig = FeedHealthConfig(),
     /**
      * Per-(provider, model) prices used by `/status` cost stats. Costs are in USD per
      * 1,000,000 tokens (matches how OpenAI / Anthropic publish their pricing pages).
@@ -607,7 +648,8 @@ class FeedConfigDeserializer : JsonDeserializer<FeedConfig>() {
                 url = node.get("url")?.asText()?.takeIf { it.isNotBlank() }
                     ?: error("FeedConfig missing 'url' field"),
                 fetchFullContent = node.get("fetchFullContent")?.asBoolean() ?: false,
-                summarize = summarize
+                summarize = summarize,
+                label = node.get("label")?.asText()?.takeIf { it.isNotBlank() }
             )
         }
     }
@@ -622,13 +664,15 @@ data class FeedConfig(
     val url: String,
     val fetchFullContent: Boolean = false,
     /** When set, each article from this feed is summarized via the named provider before DB insert. */
-    val summarize: String? = null
+    val summarize: String? = null,
+    /** Human name in the feed-health `/status` section and report; default = host + path. */
+    val label: String? = null
 ) {
     companion object {
         val SUMMARIZE_PROVIDERS = setOf("openai", "openrouter", "anthropic", "claudecli", "codexcli")
 
         /** The keys the object form accepts ([FeedConfigDeserializer] rejects any other). */
-        val KEYS: Set<String> = linkedSetOf("url", "fetchFullContent", "summarize")
+        val KEYS: Set<String> = linkedSetOf("url", "fetchFullContent", "summarize", "label")
     }
 }
 
@@ -1363,6 +1407,7 @@ object ConfigLoader {
 
         validateAdmin(config)
         validateHealth(config)
+        validateFeedHealth(config)
 
         val badges = config.badges.copy(
             githubToken = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() } ?: config.badges.githubToken
@@ -1643,6 +1688,26 @@ object ConfigLoader {
             require(!config.admin.statusChatId.isNullOrBlank()) {
                 "health.enabled needs admin.statusChatId — the CLI alerts are sent there"
             }
+        }
+    }
+
+    /** `feedHealth:` block — a window the `rejected_events` retention can still answer, sane thresholds. */
+    private fun validateFeedHealth(config: AppConfig) {
+        val f = config.feedHealth
+        require(f.windowDays in 1..30) {
+            "feedHealth.windowDays must be within 1..30 (got ${f.windowDays}); rejected_events is kept 30 days"
+        }
+        val t = f.thresholds
+        require(t.deadDays >= 1 && t.staleNewDays >= 1) { "feedHealth.thresholds.deadDays / staleNewDays must be >= 1" }
+        require(t.deadFailStreak >= 1) { "feedHealth.thresholds.deadFailStreak must be >= 1 (got ${t.deadFailStreak})" }
+        require(t.noisyMinArticles >= 1 && t.minPublishedForFirst >= 1) {
+            "feedHealth.thresholds.noisyMinArticles / minPublishedForFirst must be >= 1"
+        }
+        for ((name, v) in listOf(
+            "noisyMaxPublishedPct" to t.noisyMaxPublishedPct, "noisyMinJunkPct" to t.noisyMinJunkPct,
+            "mirrorMaxFirstPct" to t.mirrorMaxFirstPct, "primaryMinFirstPct" to t.primaryMinFirstPct
+        )) {
+            require(v in 0.0..100.0) { "feedHealth.thresholds.$name must be within 0..100 (got $v)" }
         }
     }
 

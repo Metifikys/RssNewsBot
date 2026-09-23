@@ -37,6 +37,7 @@ import metifikys.feedback.AffinityAggregator
 import metifikys.feedback.MuteSuggester
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
+import metifikys.fetch.FeedHealthRecorder
 import metifikys.fetch.HostThrottle
 import metifikys.fetch.RssFetcher
 import metifikys.fetch.TextScrubRules
@@ -84,7 +85,8 @@ class NewsBot(
         retryDelayMs = config.fetcher.retryDelaySeconds * 1000,
         maxConcurrentFetches = config.fetcher.maxConcurrentFetches,
         fetchDeadlineMs = config.fetcher.fetchDeadlineSeconds * 1000,
-        hostThrottle = SHARED_HOST_THROTTLE
+        hostThrottle = SHARED_HOST_THROTTLE,
+        healthRecorder = if (config.feedHealth.enabled) FeedHealthRecorder() else null
     ),
     // Validation-only RssFetcher (validateFeedUrl); its lazy fetch pool never starts.
     articleFetcher: ArticleFetcher = ArticleFetcher(
@@ -270,7 +272,9 @@ class NewsBot(
         retentionArchiver = config.archive?.takeIf { it.enabled }?.let { RetentionArchiver.create(it, db) },
         pauseStore = pauseStore,
         muteSuggester = muteSuggester,
-        cliHealthMonitor = cliHealthMonitor
+        cliHealthMonitor = cliHealthMonitor,
+        // Only read with the feature on: tests hand in strict fetcher mocks.
+        feedHealthRecorder = if (config.feedHealth.enabled) fetcher.healthRecorder else null
     )
 
     /**

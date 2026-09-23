@@ -383,10 +383,140 @@ function sourceOf(link) {
     body += `<h3>Regular sources silent for more than ${SILENT_DAYS} days (${silent.length})</h3>` +
       table(silent, cols, { empty: `<p class="empty">Every source with ${REGULAR_MIN}+ articles in the window published within the last ${SILENT_DAYS} days.</p>` });
     body += `<h3>Top sources by volume</h3>` + table(byVol, cols, { cap: 40 });
-    body += `<p class="note">Sources are derived from article links (there is no feed table): host, or t.me channel / subreddit; "regular" = ${REGULAR_MIN}+ articles in the window. ` +
+    body += `<p class="note">Sources are derived from article links (works on rows older than <code>articles.feed_url</code>; see "Per-feed quality" for the real feeds): host, or t.me channel / subreddit; "regular" = ${REGULAR_MIN}+ articles in the window. ` +
       `Windowed by the feed's own <code>pub_date</code>; a feed dead since before the window does not appear. ${future} article(s) carry a future pub_date and are ignored for "newest".</p>`;
   }
   sections.push(section('feeds', 'Feed / domain health', body));
+}
+
+// 4b. Per-feed quality (articles.feed_url, feed_stats, feed_sightings) ─────────
+// Mirrors metifikys.feeds.FeedQuality with its default thresholds (feedHealth.thresholds): the
+// bot's /status shows only the anomalies, this is the full table. Rows older than the feed_url
+// column carry no feed and are left to the host-based section above.
+const cols = (t) => (has(t) ? db.prepare(`PRAGMA table_info(${t})`).all().map((r) => r.name) : []);
+const FEED_T = { deadDays: 3, deadFailStreak: 10, staleNewDays: 14, noisyMinArticles: 30, noisyMaxPublishedPct: 2,
+  noisyMinJunkPct: 80, minPublishedForFirst: 5, mirrorMaxFirstPct: 10, primaryMinFirstPct: 50 };
+function feedName(url) {
+  try {
+    const u = new URL(url);
+    const host = u.host.replace(/^www\.|^old\./, '');
+    const seg = u.pathname.split('/').filter(Boolean);
+    if (host.endsWith('reddit.com') && seg[0] === 'r' && seg[1]) return `reddit r/${seg[1]}`;
+    return seg.length ? `${host}/${seg.join('/')}` : host;
+  } catch { return url; }
+}
+{
+  let body = '';
+  const aCols = cols('articles');
+  if (!aCols.includes('feed_url') || !aCols.includes('fetched_at')) {
+    body = '<p class="empty">This DB predates <code>articles.feed_url</code> / <code>fetched_at</code>; see the host-based section above.</p>';
+  } else {
+    const junkCol = aCols.includes('junk_score') ? ', junk_score' : '';
+    const arts = q(`SELECT id, feed_url, category, link, status, drop_reason, fetched_at, duplicate_of${junkCol}
+                    FROM articles WHERE feed_url IS NOT NULL AND fetched_at >= ? AND fetched_at <= ?`, SINCE, NOW_S);
+    const verdict = new Map();
+    if (has('rejected_events')) {
+      for (const r of q(`SELECT category, url, status FROM rejected_events WHERE extracted_at >= ?`, SINCE)) {
+        const k = `${r.category}\t${r.url}`;
+        if (verdict.get(k) !== 'rejected') verdict.set(k, r.status === 'duplicate' ? 'duplicate' : 'rejected');
+      }
+    }
+    const groups = has('digest_messages')
+      ? q(`SELECT DISTINCT sent_at, article_links FROM digest_messages WHERE sent_at >= ? AND sent_at <= ?`, SINCE, NOW_S)
+        .map((r) => new Set((r.article_links ?? '').split('\n').map((s) => s.trim()).filter(Boolean))).filter((s) => s.size)
+      : [];
+    const published = new Set(groups.flatMap((g) => [...g]));
+    const sightings = has('feed_sightings') ? q(`SELECT link, feed_url, category, seen_at FROM feed_sightings WHERE seen_at >= ?`, SINCE) : [];
+    const stats = new Map((has('feed_stats') ? q(`SELECT * FROM feed_stats`) : []).map((r) => [r.feed_url, r]));
+    const lastNew = new Map(q(`SELECT feed_url, MAX(fetched_at) m FROM articles WHERE feed_url IS NOT NULL GROUP BY 1`).map((r) => [r.feed_url, r.m]));
+    const trackingSince = one(`SELECT MIN(fetched_at) m FROM articles`).m;
+
+    const feeds = new Map();
+    const feed = (url, cat) => feeds.get(url) ?? feeds.set(url, { url, category: cat, total: 0, pending: 0, published: 0, muted: 0,
+      dup: 0, s1dup: 0, s1rej: 0, unsel: 0, first: 0, echo: 0, lags: [], junk: [] }).get(url);
+    for (const r of arts) {
+      const f = feed(r.feed_url, r.category);
+      f.total++;
+      if (r.junk_score != null) f.junk.push(r.junk_score);
+      const v = verdict.get(`${r.category}\t${r.link}`);
+      if (r.status === 'UNPROCESSED' || r.status === 'PROCESSING') f.pending++;
+      else if (r.drop_reason === 'mute') f.muted++;
+      else if (published.has(r.link)) f.published++;
+      else if (r.status === 'DUPLICATE') f.dup++;
+      else if (v === 'duplicate') f.s1dup++;
+      else if (v) f.s1rej++;
+      else f.unsel++;
+    }
+    // Clusters: a sent post's links + L2 duplicates of them + second-feed sightings; earliest arrival is first.
+    const byLink = new Map(arts.map((r) => [r.link, r]));
+    const dupsOf = new Map();
+    for (const r of arts) if (r.duplicate_of != null) (dupsOf.get(r.duplicate_of) ?? dupsOf.set(r.duplicate_of, []).get(r.duplicate_of)).push(r);
+    const sightByLink = new Map();
+    for (const s of sightings) (sightByLink.get(s.link) ?? sightByLink.set(s.link, []).get(s.link)).push(s);
+    for (const g of groups) {
+      const arrival = new Map();
+      const seen = (url, cat, at) => { if (!arrival.has(url) || at < arrival.get(url).at) arrival.set(url, { at, cat }); };
+      for (const link of g) {
+        const a = byLink.get(link);
+        if (a) { seen(a.feed_url, a.category, a.fetched_at); for (const d of dupsOf.get(a.id) ?? []) seen(d.feed_url, d.category, d.fetched_at); }
+        for (const s of sightByLink.get(link) ?? []) seen(s.feed_url, s.category, s.seen_at);
+      }
+      if (!arrival.size) continue;
+      const firstAt = parseLocal([...arrival.values()].map((x) => x.at).sort()[0]);
+      for (const [url, { at, cat }] of arrival) {
+        const f = feed(url, cat ?? '?');
+        const lag = Math.floor((parseLocal(at) - firstAt) / 60_000);
+        if (lag <= 0) f.first++; else { f.echo++; f.lags.push(lag); }
+      }
+    }
+    for (const [url, st] of stats) feed(url, st.category);
+    const deadBefore = hoursAgo(24 * FEED_T.deadDays);
+    const staleBefore = hoursAgo(24 * FEED_T.staleNewDays);
+    const rows = [...feeds.values()].map((f) => {
+      const st = stats.get(f.url);
+      const decided = f.total - f.pending;
+      const clusters = f.first + f.echo;
+      const r = { ...f, name: feedName(f.url), decided, clusters,
+        pubRate: decided ? f.published / decided : 0, junkRate: decided ? (f.muted + f.s1rej + f.unsel) / decided : 0,
+        firstShare: clusters ? f.first / clusters : 0,
+        lag: f.lags.length ? f.lags.sort((a, b) => a - b)[Math.floor(f.lags.length / 2)] : null,
+        avgJunk: f.junk.length ? f.junk.reduce((a, b) => a + b, 0) / f.junk.length : null,
+        lastSuccess: st?.last_success_at ?? null, failStreak: st?.fail_streak ?? 0, lastError: st?.last_error ?? '',
+        lastNew: lastNew.get(f.url) ?? null, hints: [] };
+      const dead = st && (st.fail_streak >= FEED_T.deadFailStreak || (st.last_success_at && st.last_success_at < deadBefore));
+      if (dead) r.hints.push('💀');
+      if (!dead && st?.last_success_at >= deadBefore && trackingSince && trackingSince < staleBefore && (!r.lastNew || r.lastNew < staleBefore)) r.hints.push('💤');
+      if (r.total >= FEED_T.noisyMinArticles && r.pubRate * 100 < FEED_T.noisyMaxPublishedPct && r.junkRate * 100 > FEED_T.noisyMinJunkPct) r.hints.push('🗑');
+      if (clusters >= FEED_T.minPublishedForFirst && r.firstShare * 100 < FEED_T.mirrorMaxFirstPct) r.hints.push('🪞');
+      if (clusters >= FEED_T.minPublishedForFirst && r.firstShare * 100 >= FEED_T.primaryMinFirstPct) r.hints.push('⭐');
+      return r;
+    }).sort((a, b) => a.category.localeCompare(b.category) || b.total - a.total);
+    summary.feedAnomalies = rows.filter((r) => r.hints.some((h) => h !== '⭐')).length;
+    const fcols = [
+      { key: 'hints', label: '', fmt: (v) => esc(v.join(' ')) },
+      { key: 'name', label: 'feed', fmt: (v, r) => `<span title="${esc(r.url)}">${esc(v)}</span>` },
+      { key: 'category', label: 'category' },
+      { key: 'total', label: 'articles', num: true, fmt: (v, r) => `${num(v)}${r.pending ? ` <span class="muted">+${r.pending} queued</span>` : ''}` },
+      { key: 'pubRate', label: 'published', num: true, fmt: (v, r) => `${num(r.published)} <span class="muted">${pct(r.published, r.decided)}</span>` },
+      { key: 'junkRate', label: 'junk', num: true, fmt: (v, r) => pct(r.muted + r.s1rej + r.unsel, r.decided), cls: (r) => (r.hints.includes('🗑') ? 'bad' : '') },
+      { key: 'muted', label: 'muted · L2 · S1 dup', num: true, fmt: (v, r) => `${num(r.muted)} · ${num(r.dup)} · ${num(r.s1dup)}` },
+      { key: 'firstShare', label: 'first', num: true, fmt: (v, r) => (r.clusters ? `${r.first}/${r.clusters} <span class="muted">${pct(r.first, r.clusters)}</span>` : '—'), cls: (r) => (r.hints.includes('⭐') ? 'good' : r.hints.includes('🪞') ? 'warn' : '') },
+      { key: 'lag', label: 'echo lag', num: true, fmt: (v) => (v == null ? '—' : v < 120 ? `${v} min` : `${(v / 60).toFixed(1)} h`) },
+      ...(junkCol ? [{ key: 'avgJunk', label: 'avg junk score', num: true, fmt: (v) => (v == null ? '—' : v.toFixed(2)) }] : []),
+      { key: 'lastNew', label: 'last new', fmt: (v) => `${esc(v?.slice(0, 16) || '—')} <span class="muted">${ageText(v)}</span>`, cls: (r) => (r.hints.includes('💤') ? 'warn' : '') },
+      { key: 'lastSuccess', label: 'fetch', fmt: (v, r) => (v == null && !r.failStreak ? '<span class="muted">no stats</span>'
+        : `${esc(ageText(v) || 'never ok')}${r.failStreak ? ` · ${r.failStreak} failed${r.lastError ? `: ${esc(r.lastError.slice(0, 60))}` : ''}` : ''}`), cls: (r) => (r.hints.includes('💀') ? 'bad' : '') },
+    ];
+    const flagged = rows.filter((r) => r.hints.length);
+    body += `<h3>Suggestions (${flagged.length})</h3>` + table(flagged, fcols, { empty: '<p class="empty">No feed crosses a hint threshold.</p>' });
+    body += `<h3>All feeds (${rows.length})</h3>` + table(rows, fcols);
+    body += `<p class="note">Window by <code>fetched_at</code> (our first-ingest clock). Outcome order: queued → muted → published (link in a sent post) → L2 duplicate → Step 1 duplicate → Step 1 rejected → unselected; junk = muted + Step 1 rejected + unselected over decided. ` +
+      `"first" = sent posts where this feed brought the story first (same fetch minute counts as first) — the post's links, their L2 duplicates and <code>feed_sightings</code> make one cluster. ` +
+      `Hints (defaults of <code>feedHealth.thresholds</code>): 💀 no fetch success for ${FEED_T.deadDays} d or ${FEED_T.deadFailStreak} failed passes, 💤 nothing new for ${FEED_T.staleNewDays} d, 🗑 ${FEED_T.noisyMinArticles}+ articles, &lt;${FEED_T.noisyMaxPublishedPct}% published, &gt;${FEED_T.noisyMinJunkPct}% junk, ` +
+      `🪞 first in &lt;${FEED_T.mirrorMaxFirstPct}% of ${FEED_T.minPublishedForFirst}+ posts, ⭐ first in ${FEED_T.primaryMinFirstPct}%+. Suggestions only: the bot never disables a feed. Fetch columns need <code>feedHealth.enabled</code> (<code>feed_stats</code>). ` +
+      `Feeds removed from the config still show while their rows are in the window.</p>`;
+  }
+  sections.push(section('feedq', 'Per-feed quality', body));
 }
 
 // 5. Dedup layers ──────────────────────────────────────────────────────────────
@@ -571,6 +701,7 @@ const head = tiles([
   ['API cost (est.)', usd(summary.apiCost ?? 0), `+ ${usd(summary.subCost ?? 0)} API-equiv. on subscriptions`],
   ['Queue', num(summary.pending), `${num(summary.processing)} processing · ${num(summary.orphans)} orphans`],
   ['Silent sources', num(summary.silent), `regular sources quiet > ${SILENT_DAYS} d`],
+  ...(summary.feedAnomalies != null ? [['Feed hints', num(summary.feedAnomalies), 'feeds with 💀 💤 🗑 🪞']] : []),
   ['CLI', esc(summary.cli ?? '—'), 'health state from bot_state'],
 ]);
 const nav = sections.map((s) => { const m = /id="(\w+)"><h2>([^<]+)/.exec(s); return `<a href="#${m[1]}">${m[2]}</a>`; }).join('');

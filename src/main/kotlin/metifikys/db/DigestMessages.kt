@@ -133,6 +133,13 @@ interface DigestMessageStore {
      */
     fun countDigestPostsSince(category: String, since: LocalDateTime): Int
 
+    /**
+     * The article links of every post sent since [since], one set per post (the chunks of one
+     * topic share `(sent_at, article_links)` and count once): the published clusters of the
+     * feed-quality "who was first" metric.
+     */
+    fun fetchPublishedLinkGroupsSince(since: LocalDateTime): List<Set<String>>
+
     /** The row of one delivered message, or null. */
     fun fetchDigestMessage(chatId: Long, messageId: Long): DigestMessageRow?
 
@@ -293,6 +300,16 @@ internal class DigestMessageRepository : DigestMessageStore {
             }
             .flatMap { row -> row[DigestMessagesTable.articleLinks].lines().map { it.trim() }.filter { it.isNotEmpty() } }
             .toSet()
+    }
+
+    override fun fetchPublishedLinkGroupsSince(since: LocalDateTime): List<Set<String>> = transaction {
+        DigestMessagesTable
+            .select(DigestMessagesTable.sentAt, DigestMessagesTable.articleLinks)
+            .where { DigestMessagesTable.sentAt greaterEq since }
+            .map { it[DigestMessagesTable.sentAt] to it[DigestMessagesTable.articleLinks] }
+            .distinct()
+            .map { (_, links) -> links.lines().map { it.trim() }.filter { it.isNotEmpty() }.toSet() }
+            .filter { it.isNotEmpty() }
     }
 
     override fun countDigestPostsSince(category: String, since: LocalDateTime): Int = transaction {

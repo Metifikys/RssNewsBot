@@ -4,6 +4,10 @@ import io.mockk.every
 import io.mockk.mockk
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
+import metifikys.config.FeedConfig
+import metifikys.config.FeedHealthConfig
+import metifikys.db.FeedStatsRow
+import java.time.LocalDateTime
 import metifikys.db.CategoryArticleCounts
 import metifikys.db.NewsDatabase
 import metifikys.db.ProviderLatency
@@ -138,6 +142,42 @@ class StatusCommandTest {
         val text = StatusCommand(config = config, db = db, errorLog = CycleErrorLog()).build()
         assertTrue(text.contains("✅ 0 · 📰 0 · ⛔ 0"))
         assertTrue(!text.contains("✅ 0 ("))
+    }
+
+    private fun feedHealthCmd(enabled: Boolean, db: NewsDatabase): StatusCommand {
+        val config = mockk<AppConfig>(relaxed = true)
+        every { config.feedHealth } returns FeedHealthConfig(enabled = enabled)
+        every { config.categories } returns mapOf(
+            "tech" to CategoryConfig(emoji = "x", feeds = listOf(FeedConfig("https://dead.example/feed")), channelId = "@t")
+        )
+        return StatusCommand(config = config, db = db, errorLog = CycleErrorLog())
+    }
+
+    private fun feedDb(): NewsDatabase {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchFeedTrackingSince() } returns LocalDateTime.now().minusDays(60)
+        every { db.fetchFeedLastNew() } returns emptyMap()
+        every { db.fetchFeedStats() } returns listOf(
+            FeedStatsRow("https://dead.example/feed", "tech", LocalDateTime.now(), null, 12, 12, 12, "Got HTTP 404", null)
+        )
+        return db
+    }
+
+    @Test
+    fun `feeds section lists a dead feed when feedHealth is on`() {
+        val text = feedHealthCmd(true, feedDb()).build()
+        assertTrue(text.contains("📡 *Feeds* (14d): tech 0 ok · 1 💀"), text)
+        assertTrue(text.contains("💀 tech dead.example/feed — no success yet, 12 failed in a row (Got HTTP 404)"), text)
+    }
+
+    @Test
+    fun `feeds section is absent when off and dropped when its query fails`() {
+        assertTrue("Feeds" !in feedHealthCmd(false, feedDb()).build())
+        val broken = feedDb()
+        every { broken.fetchFeedArticleOutcomes(any()) } throws IllegalStateException("boom")
+        val text = feedHealthCmd(true, broken).build()
+        assertTrue("Feeds" !in text)
+        assertTrue(text.contains("📊 *Status*"))
     }
 
     @Test
