@@ -50,6 +50,7 @@ object ConfigChangelog {
         Entry("categories.*.post.storyLines.conflicts", "2026-09-23", "⚖️ sources-disagree check: log-only by default ([StoryConflict]), mode: post adds the line"),
         Entry("categories.*.post.also", "2026-09-23", "📰 Також: the other outlets folded into the event (start with logOnly: true)"),
         Entry("categories.*.post.official", "2026-09-23", "link the post to the press release / studio blog when the event cluster has one"),
+        Entry("categories.*.post.images", "2026-09-23", "og:image first, no logos / avatars / small thumbnails, cluster fallback (needs enableImages)"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */

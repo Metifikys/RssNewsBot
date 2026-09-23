@@ -531,6 +531,22 @@ categories:
       # official:
       #   domains: [blog.playstation.com, news.xbox.com, nintendo.com, steampowered.com, ea.com, ubisoft.com]
       #   matchEntityDomain: false
+      # Better pictures (needs enableImages: true). Logos, author avatars, tracking pixels,
+      # .svg/.ico, a known width under minWidth or an aspect beyond 4:1 / 1:3 never become the
+      # post picture; `ignore` adds URL substrings (a site's branded fallback og:image).
+      # At ingest the first ACCEPTABLE feed image is stored (not simply the first one). At
+      # delivery: ogFirst fetches the post article's og:image (one page per post, timeoutSeconds
+      # each, maxTotalSeconds per digest, cached 7 days), then the stored images of the topic,
+      # then with fromCluster those of the event's other batch articles. probe sizes a picture
+      # without a declared size from its first 64 KB. Nothing acceptable → a text post.
+      # images:
+      #   ogFirst: true
+      #   fromCluster: true
+      #   minWidth: 400
+      #   probe: false
+      #   ignore: []
+      #   timeoutSeconds: 5
+      #   maxTotalSeconds: 20
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),

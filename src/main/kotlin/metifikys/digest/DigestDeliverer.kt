@@ -5,6 +5,7 @@ import metifikys.config.AlsoConfig
 import metifikys.config.AppConfig
 import metifikys.config.ConflictLineConfig
 import metifikys.config.PostConfig
+import metifikys.config.PostImagesConfig
 import metifikys.config.StoryLinesConfig
 import metifikys.config.ThreadsConfig
 import metifikys.config.VaporwareLineConfig
@@ -58,7 +59,9 @@ class DigestDeliverer(
     /** Living tracker messages; null when no category configures `trackers`. */
     private val trackerUpdater: TrackerUpdater? = null,
     /** Moderation messages in the admin chat (`admin.moderation`); null when off. */
-    private val moderationNotifier: ModerationNotifier? = null
+    private val moderationNotifier: ModerationNotifier? = null,
+    /** og:image-first picture choice (`post.images`); null when no category sets it. */
+    private val postImages: PostImages? = null
 ) {
 
     /**
@@ -181,8 +184,14 @@ class DigestDeliverer(
         val moderate = moderationNotifier?.appliesTo(categoryName) == true
         val sentAt = LocalDateTime.now()
 
+        // post.images: one og:image / probe budget per delivered digest.
+        val imagesCfg = postCfg?.images?.takeIf { categoryConfig.enableImages && postImages != null }
+        val imageDeadline = imagesCfg?.let { postImages?.newDeadline(it) } ?: 0L
+
         for ((idx, topic) in topics.withIndex()) {
-            val image = if (categoryConfig.enableImages) {
+            val image = if (imagesCfg != null && postImages != null) {
+                chooseImage(categoryName, topicUrls[idx], topicUrls[idx].firstNotNullOfOrNull { itemByUrl[it] }, articleByLink, imagesCfg, imageDeadline)
+            } else if (categoryConfig.enableImages) {
                 val urls = TopicFormatter.extractUrls(topic)
                 val matched = urls.map { url -> url to articleByLink[url] }
                 val firstImage = matched.firstNotNullOfOrNull { (_, art) -> art?.imageUrl }
@@ -474,6 +483,29 @@ class DigestDeliverer(
         val lines = footer.build()
         if (lines.isNotEmpty()) logger.debug { "[Category:$categoryName][Post] footer: $lines" }
         return lines
+    }
+
+    /**
+     * `post.images`: the post's picture — the post article's og:image (`ogFirst`), the topic
+     * articles' stored images, then (`fromCluster`) those of the event's other cluster articles,
+     * the first one [PostImages] accepts. The post article is the item's `url` when the topic
+     * links it, else the topic's first link.
+     */
+    private fun chooseImage(
+        categoryName: String,
+        topicLinks: Set<String>,
+        item: ShortlistItem?,
+        articleByLink: Map<String, Article>,
+        cfg: PostImagesConfig,
+        deadline: Long
+    ): String? {
+        val postUrl = item?.url?.takeIf { it in topicLinks } ?: topicLinks.firstOrNull { it in articleByLink }
+        val clusterLinks = if (cfg.fromCluster && item != null) item.sourceLinks else emptyList()
+        val feedImages = (topicLinks + clusterLinks).distinct().mapNotNull { articleByLink[it]?.imageUrl }
+        val label = "[Category:$categoryName]" + (item?.eventKey?.let { "[$it]" } ?: "")
+        val image = postImages?.choose(label, postUrl, feedImages, cfg, deadline)
+        if (image != null) logger.debug { "$label[Image] using $image" }
+        return image
     }
 
     /**

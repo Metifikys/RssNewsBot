@@ -149,4 +149,18 @@ class PostConfigTest {
             load(yaml("dedup:\n  promptFile: prompts/games-dedup.example.yaml\npost:\n  official:\n    domains: []"))
         }
     }
+
+    @Test
+    fun `images block needs enableImages and sane budgets`() {
+        val ok = load(yaml("enableImages: true\npost:\n  images:\n    minWidth: 500\n    ignore: [\"default-og.png\"]"))
+        val images = ok.categories.getValue("gaming").post!!.images!!
+        assertTrue(images.ogFirst)
+        assertTrue(images.fromCluster)
+        assertEquals(false, images.probe)
+        assertEquals(500, images.minWidth)
+        assertEquals(listOf("default-og.png"), images.ignore)
+
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  images:\n    minWidth: 500")) }
+        assertThrows<IllegalArgumentException> { load(yaml("enableImages: true\npost:\n  images:\n    timeoutSeconds: 10\n    maxTotalSeconds: 5")) }
+    }
 }

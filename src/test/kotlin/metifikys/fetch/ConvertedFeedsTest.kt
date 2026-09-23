@@ -128,4 +128,37 @@ class ConvertedFeedsTest {
         assertEquals("https://t.me/news/5", a.meta()!!.source!!.postUrl)
         assertEquals("https://t.me/news/5", fetch(xml) { FeedConfig(it, kind = "social") }.single().link, "off without repointLinks")
     }
+
+    @Test
+    fun `with an image picker a small logo enclosure is skipped for the large media content`() {
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel><title>Site</title>
+            <item><title>Big news</title><link>https://site.com/big-news</link>
+              <description>Text.</description>
+              <enclosure url="https://site.com/img/site-logo.png" type="image/png" length="1000"/>
+              <media:content url="https://cdn.site.com/thumb-120.jpg" medium="image" width="120" height="120"/>
+              <media:content url="https://cdn.site.com/hero-1200.jpg" medium="image" width="1200" height="675"/>
+            </item></channel></rss>
+        """.trimIndent().toByteArray()
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/feed") { ex ->
+            ex.sendResponseHeaders(200, xml.size.toLong())
+            ex.responseBody.use { it.write(xml) }
+        }
+        server.start()
+        val picking = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0, imagePickers = mapOf("games" to ImagePicker(minWidth = 400)))
+        val plain = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val url = "http://localhost:${server.address.port}/feed"
+            assertEquals("https://cdn.site.com/hero-1200.jpg", picking.fetchFeed(FeedConfig(url), "games").single().imageUrl)
+            // Another category (no picker) and the plain fetcher keep the first image, as before.
+            assertEquals("https://site.com/img/site-logo.png", picking.fetchFeed(FeedConfig(url), "tech").single().imageUrl)
+            assertEquals("https://site.com/img/site-logo.png", plain.fetchFeed(FeedConfig(url), "games").single().imageUrl)
+        } finally {
+            picking.shutdown()
+            plain.shutdown()
+            server.stop(0)
+        }
+    }
 }

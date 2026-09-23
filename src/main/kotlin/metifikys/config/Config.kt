@@ -1015,7 +1015,33 @@ data class PostConfig(
     /** `📰 Також: IGN · PC Gamer` — the other outlets the dedup folded into the event; see [AlsoConfig]. */
     val also: AlsoConfig? = null,
     /** Link the post to the official source (press release, studio blog) when the cluster has it; see [OfficialConfig]. */
-    val official: OfficialConfig? = null
+    val official: OfficialConfig? = null,
+    /** Better post pictures: og:image first, logos / avatars / small thumbnails dropped; see [PostImagesConfig]. */
+    val images: PostImagesConfig? = null
+)
+
+/**
+ * Picture choice for a category with `enableImages` ([metifikys.fetch.ImagePicker] does the
+ * judging: no logos, avatars, tracking pixels, `.svg` / `.ico`, widths under [minWidth] or aspect
+ * ratios beyond 4:1 / 1:3 when the size is known; [ignore] adds URL substrings such as a site's
+ * branded fallback image).
+ *
+ * At ingest every image the feed entry offers is collected (with its declared width / height)
+ * and the first acceptable one is stored — not simply the first. At delivery the candidates are,
+ * in order: with [ogFirst] the post article's `og:image` (one page fetch per post, under
+ * [timeoutSeconds] each and [maxTotalSeconds] per digest, cached in `badge_cache` as `ogimage`),
+ * the topic articles' stored images, then with [fromCluster] the images of the other articles of
+ * the event's cluster. With [probe] a candidate of unknown size is sized from its first 64 KB
+ * (a `Range` GET, header only) within the same budget. No acceptable picture → a text post.
+ */
+data class PostImagesConfig(
+    val ogFirst: Boolean = true,
+    val fromCluster: Boolean = true,
+    val minWidth: Int = 400,
+    val probe: Boolean = false,
+    val ignore: List<String> = emptyList(),
+    val timeoutSeconds: Long = 5,
+    val maxTotalSeconds: Long = 20
 )
 
 /**
@@ -1896,6 +1922,15 @@ object ConfigLoader {
                     require(!o.enabled || category.dedup != null) {
                         "Category '$name' post.official needs a dedup: block — the candidates are Step 1's event clusters"
                     }
+                }
+                post.images?.let { i ->
+                    require(category.enableImages) { "Category '$name' post.images needs enableImages: true" }
+                    require(i.minWidth >= 0) { "Category '$name' post.images.minWidth must be >= 0 (got ${i.minWidth})" }
+                    require(i.timeoutSeconds >= 1) { "Category '$name' post.images.timeoutSeconds must be >= 1 (got ${i.timeoutSeconds})" }
+                    require(i.maxTotalSeconds >= i.timeoutSeconds) {
+                        "Category '$name' post.images.maxTotalSeconds must be >= timeoutSeconds (got ${i.maxTotalSeconds})"
+                    }
+                    require(i.ignore.none { it.isBlank() }) { "Category '$name' post.images.ignore must not contain blank entries" }
                 }
             }
             category.dedup?.digest?.ranker?.let { r ->

@@ -306,6 +306,30 @@ class ArticleFetcher(
         }
     }
 
+    /**
+     * The page's link-preview image for a post about to be sent (`post.images.ogFirst`): the
+     * [extractOgImage] URL with the `og:image:width` / `og:image:height` the page declares. One
+     * page fetch through the guard and the shared host throttle; null on any failure, never throws.
+     */
+    fun fetchPreviewImage(url: String): ImageCandidate? {
+        if (url.isBlank() || !passesUrlValidation(url)) return null
+        return try {
+            val html = fetchHtml(url) ?: return null
+            extractOgImageCandidate(html, url)
+        } catch (e: Exception) {
+            logFetchFailure(url, "preview image", e)
+            null
+        }
+    }
+
+    /** [extractOgImage] plus the declared `og:image:width` / `og:image:height`. */
+    internal fun extractOgImageCandidate(html: String, baseUrl: String): ImageCandidate? {
+        val image = extractOgImage(html, baseUrl) ?: return null
+        val doc = Jsoup.parse(html, baseUrl)
+        fun intMeta(property: String) = doc.selectFirst("meta[property=$property]")?.attr("content")?.trim()?.toIntOrNull()
+        return ImageCandidate(image, intMeta("og:image:width"), intMeta("og:image:height"))
+    }
+
     /** SSRF guard shared by every fetch path. Returns false (and logs) when the URL is rejected. */
     private fun passesUrlValidation(url: String): Boolean {
         return try {

@@ -775,4 +775,33 @@ class DigestDelivererTest {
         )
         assertEquals("**Story.**\n\n[IGN](https://www.ign.com/a)\n\n#tech", logOnly)
     }
+
+    // ── post.images ──────────────────────────────────────────────────────────
+
+    @Test
+    fun `images block takes the og image first and falls back to the cluster's pictures`() {
+        val cluster = listOf("https://example.com/1", "https://example.com/2")
+        val articles = listOf(
+            article(1).copy(imageUrl = "https://example.com/img/site-logo.png"),
+            article(2).copy(imageUrl = "https://cdn.example.com/hero.jpg")
+        )
+        val item = shortlistItem("evt-1", "https://example.com/1").copy(sourceLinks = cluster)
+        fun deliver(og: ImageCandidateOrNull, images: metifikys.config.PostImagesConfig): String? {
+            val db = mockk<NewsDatabase>(relaxed = true)
+            every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+            val sender = mockk<TelegramSender>(relaxed = true)
+            val photo = slot<String>()
+            every { sender.sendPhotoToChannel(any(), capture(photo), any(), any()) } returns SentRef(-100L, 12L)
+            val cfg = configWithPost(PostConfig(images = images), enableImages = true)
+            DigestDeliverer(cfg, db, sender, postImages = PostImages({ og }, { null }))
+                .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", articles, listOf(item))
+            return if (photo.isCaptured) photo.captured else null
+        }
+        val cfg = metifikys.config.PostImagesConfig()
+        assertEquals("https://example.com/og.jpg", deliver(metifikys.fetch.ImageCandidate("https://example.com/og.jpg", 1200, 630), cfg))
+        assertEquals("https://cdn.example.com/hero.jpg", deliver(null, cfg))
+        assertEquals(null, deliver(null, cfg.copy(fromCluster = false)))
+    }
 }
+
+private typealias ImageCandidateOrNull = metifikys.fetch.ImageCandidate?

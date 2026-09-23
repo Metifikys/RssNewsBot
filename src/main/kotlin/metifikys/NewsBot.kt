@@ -24,6 +24,7 @@ import metifikys.digest.EventSemanticAnalyzer
 import metifikys.digest.LongForm
 import metifikys.digest.MuteRegistry
 import metifikys.digest.PauseStore
+import metifikys.digest.PostImages
 import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.TrackerUpdater
 import metifikys.digest.WeeklyDigest
@@ -91,7 +92,8 @@ class NewsBot(
         fetchDeadlineMs = config.fetcher.fetchDeadlineSeconds * 1000,
         hostThrottle = SHARED_HOST_THROTTLE,
         healthRecorder = if (config.feedHealth.enabled) FeedHealthRecorder() else null,
-        pathScopedThrottleHosts = config.fetcher.pathScopedThrottleHosts
+        pathScopedThrottleHosts = config.fetcher.pathScopedThrottleHosts,
+        imagePickers = PostImages.ingestPickers(config)
     ),
     // Same guard rule as the feed fetcher: private addresses only for the configured feed hosts
     // (and fetcher.privateHostAllowlist) — never for a link that merely came out of a feed.
@@ -246,7 +248,10 @@ class NewsBot(
         moderationExecutor?.let { ModerationNotifier(config, db, muteRegistry, sender, it) }
 
     internal val deliverer =
-        DigestDeliverer(config, db, sender, badgeResolver, introProvider, trackerUpdater, moderationNotifier)
+        DigestDeliverer(
+            config, db, sender, badgeResolver, introProvider, trackerUpdater, moderationNotifier,
+            PostImages.forConfig(config, db, articleFetcher)
+        )
 
     private val categoryProcessor = CategoryProcessor(
         config = config,

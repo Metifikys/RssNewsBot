@@ -68,7 +68,12 @@ class RssFetcher(
      */
     val healthRecorder: FeedHealthRecorder? = null,
     /** `fetcher.pathScopedThrottleHosts`: hosts throttled per route instead of per host (lowercase). */
-    pathScopedThrottleHosts: Collection<String> = emptyList()
+    pathScopedThrottleHosts: Collection<String> = emptyList(),
+    /**
+     * `post.images`: category → the picker that filters feed images at ingest (logos, avatars,
+     * too-small thumbnails). A category without one keeps the first image the feed offers.
+     */
+    private val imagePickers: Map<String, ImagePicker> = emptyMap()
 ) {
 
     private val pathScopedHosts: Set<String> = pathScopedThrottleHosts.map { it.trim().lowercase() }.toSet()
@@ -484,7 +489,9 @@ class RssFetcher(
                         // description — the <img>/thumbnail lives in the markup being stripped.
                         description = HtmlText.strip(reddit?.description ?: description),
                         pubDate = pubDate,
-                        imageUrl = extractImageUrl(entry, description, mediaGroups = kind != null),
+                        imageUrl = imagePickers[category]
+                            ?.let { picker -> pickImage(entry, description, kind != null, picker) }
+                            ?: if (category in imagePickers) null else extractImageUrl(entry, description, mediaGroups = kind != null),
                         // A rewritten entry has no body of its own, so the page behind the
                         // outbound link is the only source of text — fetch it regardless of
                         // what the feed's own `fetchFullContent` says.
@@ -512,6 +519,59 @@ class RssFetcher(
             logger.info { "[RSS] $url → $dropped item(s) dropped by the feed's exclude / minTextChars." }
         }
         return articles
+    }
+
+    /** `post.images` at ingest: the first of the entry's images that [picker] accepts; null logs why none did. */
+    private fun pickImage(entry: SyndEntry, description: String, mediaGroups: Boolean, picker: ImagePicker): String? {
+        val candidates = extractImageCandidates(entry, description, mediaGroups)
+        val picked = picker.pick(candidates)
+        if (picked != candidates.firstOrNull()) {
+            logger.debug {
+                "[RSS image] ${entry.link}: " + candidates.takeWhile { it != picked }
+                    .joinToString("; ") { "${it.url} rejected (${picker.rejectReason(it)})" } +
+                    (picked?.let { " → ${it.url}" } ?: " → none")
+            }
+        }
+        return picked?.url
+    }
+
+    /**
+     * Every image the entry offers, in [extractImageUrl]'s priority order (image enclosures,
+     * image `media:content`, `media:thumbnail`, `media:group` thumbnails with [mediaGroups], then
+     * each `<img>` of the description), with the width / height the feed declares. Duplicates
+     * dropped.
+     */
+    internal fun extractImageCandidates(entry: SyndEntry, description: String, mediaGroups: Boolean = false): List<ImageCandidate> {
+        val out = LinkedHashMap<String, ImageCandidate>()
+        fun add(url: String?, width: Int? = null, height: Int? = null) {
+            val u = url?.trim()?.takeIf { it.isNotEmpty() } ?: return
+            out.putIfAbsent(u, ImageCandidate(u, width, height))
+        }
+        entry.enclosures.orEmpty()
+            .filter { it.type?.startsWith("image/", ignoreCase = true) == true }
+            .forEach { add(it.url) }
+        val mediaModule = entry.getModule("http://search.yahoo.com/mrss/") as? MediaEntryModule
+        if (mediaModule != null) {
+            mediaModule.mediaContents.orEmpty()
+                .filter { mc -> mc.medium?.lowercase() == "image" || mc.type?.lowercase()?.startsWith("image/") == true }
+                .forEach { mc -> add(mc.reference?.toString(), mc.width, mc.height) }
+            mediaModule.metadata?.thumbnail.orEmpty().forEach { t -> add(t.url?.toString(), t.width, t.height) }
+            if (mediaGroups) {
+                mediaModule.mediaGroups.orEmpty()
+                    .flatMap { g -> g.metadata?.thumbnail.orEmpty().toList() }
+                    .forEach { t -> add(t.url?.toString(), t.width, t.height) }
+            }
+        }
+        if (description.contains("<img", ignoreCase = true)) {
+            try {
+                Jsoup.parseBodyFragment(description).select("img[src]").forEach { img ->
+                    add(img.attr("src"), img.attr("width").toIntOrNull(), img.attr("height").toIntOrNull())
+                }
+            } catch (e: Exception) {
+                logger.debug(e) { "[RSS image] HTML parse failed for ${entry.link}" }
+            }
+        }
+        return out.values.toList()
     }
 
     /**

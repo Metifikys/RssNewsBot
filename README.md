@@ -200,6 +200,14 @@ via a `/status` admin snapshot.
     instead of the outlet Step 1 picked — image, long-form source and `covered_events.url` follow,
     the outlet goes to the also line. After the ranker; logs `[Official] <key>: ign.com →
     blog.playstation.com` ([`OfficialSource`](src/main/kotlin/metifikys/digest/OfficialSource.kt)).
+  - **images** (with `enableImages`) — [`ImagePicker`](src/main/kotlin/metifikys/fetch/ImagePicker.kt)
+    drops logos, avatars, tracking pixels, `.svg` / `.ico`, known widths under `minWidth` and
+    aspect ratios beyond 4:1 / 1:3 (plus `ignore` URL substrings). At ingest the first acceptable
+    feed image is kept; at delivery the post article's `og:image` goes first (`ogFirst`, one page
+    fetch per post under `timeoutSeconds` / `maxTotalSeconds`, cached in `badge_cache` as
+    `ogimage`), then the topic's stored images, then the cluster's (`fromCluster`); `probe` sizes an
+    undeclared picture from its first 64 KB (`Range` GET through the SSRF guard). No acceptable
+    picture → a text post.
 - **Industry barometer** (opt-in, `weekly.barometer`, needs `storyIntel`) — after the weekly
   roundup, a 1200×675 PNG of distinct subjects per ISO week over the last 12 weeks from
   `event_history`, one panel per series with its own scale: layoffs / closures (by type, or a
@@ -1074,7 +1082,7 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 | `reaction_counts`    | Current aggregated reaction counts per `(chat_id, message_id, emoji)` from `message_reaction_count` updates (replace-all per message) |
 | `bot_state`          | Key/value store for restart-surviving runtime state (the Telegram `getUpdates` offset, tracker message ids + body hashes, `/pause` state as `pause:<category>`) |
 | `audience_affinity`  | Reaction-feedback scores per `(category, dimension, key)` with `n_tone` evidence counts, rebuilt on the maintenance tick |
-| `badge_cache`        | Rendered footer badges per `(provider, key)` with a per-provider TTL; `""` caches a negative lookup |
+| `badge_cache`        | Rendered footer badges per `(provider, key)` with a per-provider TTL; `""` caches a negative lookup; also `ogimage` (a post page's og:image, `post.images`) |
 | `entity_intros`      | First-mention memory for the Wikipedia intro: one row per `(category, entity key)`, hits and misses |
 | `tracker_entries`    | Living-tracker state per `(category, tracker, entity)`: event date, previous date, status, latest post |
 | `admin_mutes`        | Keyword mutes added from Telegram (`/mute`, suggestions, moderation), merged over the YAML mute lists; `category` null = global |
