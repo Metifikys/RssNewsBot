@@ -1497,7 +1497,31 @@ data class DigestConfig(
      */
     val maxPostsPerEvent: Int? = null,
     /** Window for [maxPostsPerEvent], days. */
-    val updateWindowDays: Long = 7
+    val updateWindowDays: Long = 7,
+    /** Once a week one important event the audience's taste would have left out; see [AntiBubbleConfig]. */
+    val antiBubble: AntiBubbleConfig? = null
+)
+
+/**
+ * Anti-bubble (`dedup.digest.antiBubble`): at most once per [intervalDays], one event the ranker
+ * left out of the digest (the `maxDigestItems` / `maxPerFranchise` caps, or the affinity term) is
+ * added past `maxDigestItems` when its newsworthiness is at least [minNewsworthiness] and its
+ * audience affinity (`audience_affinity`, the ranker's item score) at most [maxAffinity] — a story
+ * that matters but sits outside what the channel usually picks. Events under the digestFit floor
+ * and events whose subject is already in the digest are never picked. The post carries [label]
+ * and `digest_messages.variant = explore`, so its reactions can be read apart; the interval clock
+ * (`bot_state`, `antibubble:<category>`) starts only when the post actually went out.
+ *
+ * Needs `ranker.enabled` and affinity data (`feedback.enabled`); without rows for the category
+ * nothing is picked. Step 1 itself also sees `{{AUDIENCE_SIGNALS}}` and may score such stories
+ * lower — that part of the bubble is not visible here. Logs `[AntiBubble]`.
+ */
+data class AntiBubbleConfig(
+    val enabled: Boolean = true,
+    val intervalDays: Long = 7,
+    val minNewsworthiness: Int = 8,
+    val maxAffinity: Double = -0.05,
+    val label: String = "🧭 Поза звичним вибором"
 )
 
 data class RankerConfig(
@@ -2067,6 +2091,19 @@ object ConfigLoader {
                     require(m >= 1) { "Category '$name' digest.maxPostsPerEvent must be >= 1 (got $m); null disables the cap" }
                 }
                 require(d.updateWindowDays >= 1) { "Category '$name' digest.updateWindowDays must be >= 1 (got ${d.updateWindowDays})" }
+                d.antiBubble?.takeIf { it.enabled }?.let { a ->
+                    require(a.intervalDays >= 1) { "Category '$name' digest.antiBubble.intervalDays must be >= 1 (got ${a.intervalDays})" }
+                    require(a.minNewsworthiness in 1..10) {
+                        "Category '$name' digest.antiBubble.minNewsworthiness must be in 1..10 (got ${a.minNewsworthiness})"
+                    }
+                    require(a.label.isNotBlank()) { "Category '$name' digest.antiBubble.label must not be blank" }
+                    require(d.ranker.enabled) {
+                        "Category '$name' digest.antiBubble needs digest.ranker.enabled — it picks from the events the ranker left out"
+                    }
+                    require(config.feedback.enabled) {
+                        "Category '$name' digest.antiBubble needs feedback.enabled — without the affinity table nothing is ever picked"
+                    }
+                }
             }
             category.minArticles?.let { m ->
                 require(m >= 1) { "Category '$name' minArticles must be >= 1 (got $m)" }

@@ -719,6 +719,20 @@ categories:
         # scored above it. Omit to disable.
         # maxPostsPerEvent: 2
         # updateWindowDays: 7
+        # Anti-bubble: at most once per intervalDays, one event the ranker left out (the
+        # maxDigestItems / maxPerFranchise caps or the affinity term) is added past maxDigestItems
+        # when newsworthiness >= minNewsworthiness and its audience affinity <= maxAffinity — a
+        # story that matters but sits outside what the channel usually picks. Never an event under
+        # the digestFit floor or one whose subject is already in the digest. The post gets the
+        # label line and digest_messages.variant = explore; the interval starts only once it was
+        # really sent (bot_state antibubble:<category>). Needs ranker.enabled and feedback.enabled
+        # (no affinity rows → nothing picked). Makes sense only where the affinity data has tone
+        # variance — gaming on prod; tech / science have 👍 only. Logs [AntiBubble].
+        # antiBubble:
+        #   intervalDays: 7
+        #   minNewsworthiness: 8
+        #   maxAffinity: -0.05
+        #   label: "🧭 Поза звичним вибором"
       # Optional: inline prompt overrides — any non-null field takes priority over the file.
       # prompts:
       #   extractSystem: "..."

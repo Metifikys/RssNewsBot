@@ -890,6 +890,47 @@ class DigestDelivererTest {
         assertTrue("\n\nДругий абзац." in sent)
         assertFalse("⚡" in sent)
     }
+
+    // ── dedup.digest.antiBubble ─────────────────────────────────────────────────
+
+    private fun exploreDelivery(post: PostConfig?, sendOk: Boolean = true): Triple<NewsDatabase, List<String>, List<DigestMessageRow>> {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sent = mutableListOf<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } answers {
+            if (sendOk) listOf(SentRef(-100L, 10L + sent.size)) else emptyList()
+        }
+        val rows = slot<List<DigestMessageRow>>()
+        every { db.insertDigestMessages(capture(rows)) } returns Unit
+        val articles = listOf(article(1), article(2))
+        val shortlist = listOf(
+            shortlistItem("evt-1", article(1).link),
+            shortlistItem("evt-2", article(2).link).copy(lane = ShortlistItem.LANE_EXPLORE)
+        )
+        val summary = "• **First.**\n\n[Title 1](https://example.com/1)\n• **Second.**\n\n[Title 2](https://example.com/2)"
+        DigestDeliverer(configWithPost(post), db, sender).deliver("tech", summary, articles, shortlist)
+        return Triple(db, sent, if (rows.isCaptured) rows.captured else emptyList())
+    }
+
+    @Test
+    fun `the anti-bubble pick is marked, tagged explore, and starts the interval once sent`() {
+        val (db, sent, rows) = exploreDelivery(PostConfig(hashtags = HashtagsConfig(category = "#tech")))
+        assertEquals("**First.**\n\n[Title 1](https://example.com/1)\n\n#tech", sent[0])
+        assertEquals("**Second.**\n\n[Title 2](https://example.com/2)\n\n🧭 Поза звичним вибором\n#tech", sent[1])
+        assertEquals(listOf(null, DigestMessageRow.VARIANT_EXPLORE), rows.map { it.variant })
+        verify { db.setState("antibubble:tech", any()) }
+        verify { db.saveSummary("tech", match { "🧭" !in it }, 2) }
+    }
+
+    @Test
+    fun `the explore marker shows without a post block, and a failed send leaves the interval alone`() {
+        val (_, sent, _) = exploreDelivery(post = null)
+        assertEquals("**Second.**\n\n[Title 2](https://example.com/2)\n\n🧭 Поза звичним вибором", sent[1])
+
+        val (db, _, _) = exploreDelivery(post = null, sendOk = false)
+        verify(exactly = 0) { db.setState(any(), any()) }
+    }
 }
 
 private typealias ImageCandidateOrNull = metifikys.fetch.ImageCandidate?

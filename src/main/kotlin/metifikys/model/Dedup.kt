@@ -80,12 +80,22 @@ data class ShortlistItem(
      * resolved while the article list is still the prompt's (see `metifikys.story.EventMembership`).
      * Travels with the shortlist through a pending batch; empty on rows saved before it existed.
      */
-    val sourceLinks: List<String> = emptyList()
+    val sourceLinks: List<String> = emptyList(),
+    /**
+     * Set by code in Step 1 post-processing, never by the model: [LANE_EXPLORE] for the anti-bubble
+     * pick (`dedup.digest.antiBubble`) — an event the ranker left out, appended past
+     * `maxDigestItems`; null for every ordinary item. Travels with the shortlist through a pending
+     * batch, so delivery can mark the post `🧭` and tag it `variant = explore`.
+     */
+    val lane: String? = null
 ) {
     val isLongForm: Boolean get() = depth == DEPTH_LONG
 
+    val isExplore: Boolean get() = lane == LANE_EXPLORE
+
     companion object {
         const val DEPTH_LONG = "long"
+        const val LANE_EXPLORE = "explore"
     }
 }
 

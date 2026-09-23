@@ -71,10 +71,14 @@ object ShortlistRanker {
 
         // 1. Floor filter — drop weak digestFit unless newsworthiness saves it.
         val survivedFloor = shortlist.filter { item ->
-            val news = effectiveNewsworthiness(item)
-            val fit = effectiveDigestFit(item)
-            val keep = fit >= config.minDigestFit || news >= config.newsworthinessOverride
-            if (!keep) dropped += Dropped(item, "digestFit=$fit<${config.minDigestFit} and newsworthiness=$news<${config.newsworthinessOverride}")
+            val keep = passesFloor(item, config)
+            if (!keep) {
+                dropped += Dropped(
+                    item,
+                    "digestFit=${effectiveDigestFit(item)}<${config.minDigestFit} and " +
+                        "newsworthiness=${effectiveNewsworthiness(item)}<${config.newsworthinessOverride}"
+                )
+            }
             keep
         }
 
@@ -120,6 +124,13 @@ object ShortlistRanker {
 
         return Result(kept = kept, dropped = dropped)
     }
+
+    /**
+     * The digestFit floor of [rank]: a weak `digestFit` is dropped unless `newsworthiness` reaches
+     * `newsworthinessOverride`. Public for the anti-bubble pick, which must not revive such an item.
+     */
+    fun passesFloor(item: ShortlistItem, config: DigestConfig): Boolean =
+        effectiveDigestFit(item) >= config.minDigestFit || effectiveNewsworthiness(item) >= config.newsworthinessOverride
 
     /**
      * The item's composite score (0–10) without the affinity term, weighted as [rank] weighs it.

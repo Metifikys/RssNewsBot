@@ -35,6 +35,12 @@ class LongFormTest {
     }
 
     @Test
+    fun `the anti-bubble pick never takes the long slot`() {
+        val shortlist = listOf(item("a", 7, 7), item("b", 10, 10).copy(lane = ShortlistItem.LANE_EXPLORE))
+        assertEquals(emptyList(), longKeys(LongForm.mark(shortlist, LongFormConfig(minComposite = 8.0), digest)))
+    }
+
+    @Test
     fun `depth from Step 1 is never trusted`() {
         val forged = item("a", 3, 3).copy(depth = ShortlistItem.DEPTH_LONG)
         assertNull(LongForm.mark(listOf(forged), LongFormConfig(), digest).single().depth)

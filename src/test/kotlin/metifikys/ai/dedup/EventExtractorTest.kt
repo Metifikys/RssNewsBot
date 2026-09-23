@@ -721,4 +721,64 @@ class EventExtractorTest {
         val ready = assertIs<ExtractOutcome.Ready>(extractor.extract("games", cat(), clusterArticles))
         assertEquals(1, ready.result.shortlist.size)
     }
+
+    // ── dedup.digest.antiBubble ─────────────────────────────────────────────────
+
+    /** Three events for a 1-item digest: a liked top story, a disliked important one, a weak one. */
+    private val antiBubbleJson = """
+        {
+          "extractions": [],
+          "shortlist": [
+            { "eventKey": "top", "subject": "Hades II", "franchise": "Hades", "coreFact": "a",
+              "newsworthiness": 9, "digestFit": 9, "url": "https://a.com/1", "status": "new", "articleIndices": [0] },
+            { "eventKey": "outside", "subject": "FIFA 27", "franchise": "FIFA", "coreFact": "b",
+              "newsworthiness": 8, "digestFit": 6, "url": "https://a.com/2", "status": "new", "articleIndices": [1],
+              "lane": "explore" },
+            { "eventKey": "minor", "subject": "Minor", "franchise": "Minor", "coreFact": "c",
+              "newsworthiness": 5, "digestFit": 5, "url": "https://a.com/3", "status": "new", "articleIndices": [2] }
+          ]
+        }
+    """.trimIndent()
+
+    private fun antiBubbleCat(anti: metifikys.config.AntiBubbleConfig?) = cat(
+        DedupConfig(
+            promptFile = "any.yaml",
+            digest = DigestConfig(ranker = RankerConfig(enabled = true), maxDigestItems = 1, antiBubble = anti)
+        )
+    )
+
+    private fun extractAntiBubble(anti: metifikys.config.AntiBubbleConfig?, lastSent: String? = null): List<metifikys.model.ShortlistItem> {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { db.getState("antibubble:games") } returns lastSent
+        every { db.fetchAudienceAffinity() } returns listOf(
+            metifikys.db.AudienceAffinityRow("games", "franchise", "fifa", 5.0, 5.0, -1.0, -1.0, -0.4, LocalDateTime.now()),
+            metifikys.db.AudienceAffinityRow("games", "franchise", "hades", 5.0, 5.0, 1.0, 1.0, 0.4, LocalDateTime.now()),
+            metifikys.db.AudienceAffinityRow("tech", "franchise", "fifa", 5.0, 5.0, 1.0, 1.0, 0.4, LocalDateTime.now())
+        )
+        every { openAI.completeJson(any(), any(), any()) } returns antiBubbleJson
+        val articles = listOf(article("https://a.com/1"), article("https://a.com/2"), article("https://a.com/3"))
+        return assertIs<ExtractOutcome.Ready>(extractor.extract("games", antiBubbleCat(anti), articles)).result.shortlist
+    }
+
+    @Test
+    fun `anti-bubble appends the important low-affinity event past maxDigestItems`() {
+        val shortlist = extractAntiBubble(metifikys.config.AntiBubbleConfig())
+        assertEquals(listOf("top", "outside"), shortlist.map { it.eventKey })
+        assertEquals(listOf(null, "explore"), shortlist.map { it.lane })
+    }
+
+    @Test
+    fun `without the block, or within the interval, the model's lane is cleared and nothing is added`() {
+        val off = extractAntiBubble(anti = null)
+        assertEquals(listOf("top"), off.map { it.eventKey })
+        assertTrue(off.all { it.lane == null })
+
+        val recent = extractAntiBubble(metifikys.config.AntiBubbleConfig(), LocalDateTime.now().minusDays(3).toString())
+        assertEquals(listOf("top"), recent.map { it.eventKey })
+
+        val due = extractAntiBubble(metifikys.config.AntiBubbleConfig(), LocalDateTime.now().minusDays(8).toString())
+        assertEquals(listOf("top", "outside"), due.map { it.eventKey })
+    }
 }

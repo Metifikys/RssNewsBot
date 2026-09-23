@@ -295,6 +295,8 @@ class EventExtractor(
             }
             ok
         }.map { item -> guardEventDate(category, item, articles) }
+            // `lane` is code's field (the anti-bubble pick below), never the model's.
+            .map { item -> if (item.lane == null) item else item.copy(lane = null) }
             .let { list ->
                 // Article → event, resolved once while `articles` is still the prompt's list: the
                 // shortlist carries its sources to delivery, and (storyIntel) the clusters are stored.
@@ -351,7 +353,8 @@ class EventExtractor(
                         "franchiseConcentration=${"%.2f".format(ranked.franchiseConcentration())}"
                 }
             }
-            applyAffinity(category, cappedShortlist, ranked, digestConfig)
+            val kept = applyAffinity(category, cappedShortlist, ranked, digestConfig)
+            applyAntiBubble(category, cappedShortlist, kept, ranked, digestConfig, now)
         } else {
             cappedShortlist
         }
@@ -416,6 +419,52 @@ class EventExtractor(
         } catch (e: Exception) {
             logger.warn(e) { "[Category:$category][AffinityRank] failed — using baseline ranking" }
             baseline.kept
+        }
+    }
+
+    /**
+     * `digest.antiBubble`: when the category's interval has passed (`bot_state`, written by the
+     * delivery only once the post went out), appends the [AntiBubble] pick from the events the
+     * ranker left out — past `maxDigestItems`, with `lane = explore`. [baseline] only names the
+     * drop reason in the log. No affinity rows, no pick, or any failure → [kept] unchanged.
+     */
+    private fun applyAntiBubble(
+        category: String,
+        pool: List<ShortlistItem>,
+        kept: List<ShortlistItem>,
+        baseline: ShortlistRanker.Result,
+        digestConfig: DigestConfig,
+        now: LocalDateTime
+    ): List<ShortlistItem> {
+        val cfg = digestConfig.antiBubble?.takeIf { it.enabled } ?: return kept
+        if (kept.isEmpty() || pool.size <= kept.size) return kept
+        return try {
+            val last = db.getState(AntiBubble.stateKey(category))
+                ?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
+            if (!AntiBubble.isDue(last, cfg, now)) {
+                logger.debug { "[Category:$category][AntiBubble] last explore post $last — next after ${cfg.intervalDays} day(s)" }
+                return kept
+            }
+            val scores = affinityScoresFor(category)
+            if (scores.isEmpty()) {
+                logger.info { "[Category:$category][AntiBubble] no affinity data yet — nothing picked" }
+                return kept
+            }
+            val pick = AntiBubble.pick(pool, kept, digestConfig, cfg) { scores.itemScore(it) }
+            if (pick == null) {
+                logger.debug { "[Category:$category][AntiBubble] no candidate among ${pool.size - kept.size} left-out event(s)" }
+                return kept
+            }
+            val reason = baseline.dropped.firstOrNull { it.item.eventKey == pick.item.eventKey }
+                ?.reason?.substringBefore("=") ?: "affinity"
+            logger.info {
+                "[Category:$category][AntiBubble] ${pick.item.eventKey} nw=${pick.item.effectiveNewsworthiness} " +
+                    "affinity=${"%+.2f".format(java.util.Locale.ROOT, pick.affinity)} (dropped: $reason)"
+            }
+            kept + pick.item.copy(lane = ShortlistItem.LANE_EXPLORE)
+        } catch (e: Exception) {
+            logger.warn(e) { "[Category:$category][AntiBubble] pick failed — digest without it" }
+            kept
         }
     }
 

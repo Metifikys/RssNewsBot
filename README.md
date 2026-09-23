@@ -247,6 +247,14 @@ via a `/status` admin snapshot.
   the threshold skips the weak-shortlist hold-back, so a lone top story goes out at once; and a
   **posts-per-story cap** (`dedup.digest.maxPostsPerEvent`) that no newsworthiness score can
   override.
+- **Anti-bubble** (opt-in, `dedup.digest.antiBubble`, needs the ranker and `feedback`) — at most
+  once per `intervalDays`, one event the ranker left out with newsworthiness >= `minNewsworthiness`
+  and audience affinity <= `maxAffinity` (never under the digestFit floor, never a subject already
+  in the digest) is added past `maxDigestItems`
+  ([`AntiBubble`](src/main/kotlin/metifikys/ai/dedup/AntiBubble.kt)). It posts with a `🧭 Поза
+  звичним вибором` line and `digest_messages.variant = explore`, does not count toward the
+  hold-back or the breaking lane, never goes long-form; the interval (`bot_state`) starts only
+  once the post was sent. Logs `[AntiBubble] <key> nw=9 affinity=-0.21 (dropped: maxDigestItems)`.
 
 ### Observability
 - **Logback** with day-rolling, gzipped archive; structured `[Category:foo]` /
@@ -1046,6 +1054,11 @@ dedup:                    # two-step pipeline opt-in
     minDigestFit: 3
     newsworthinessOverride: 8
     meaningfulUpdateCooldownMinutes: 90
+    antiBubble:           # weekly 🧭 pick outside the audience's taste (needs feedback.enabled)
+      intervalDays: 7
+      minNewsworthiness: 8
+      maxAffinity: -0.05
+      label: "🧭 Поза звичним вибором"
 
 semanticDedup:            # embedding detector opt-in
   enabled: true

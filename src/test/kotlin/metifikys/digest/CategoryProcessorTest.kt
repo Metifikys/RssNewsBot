@@ -577,6 +577,14 @@ class CategoryProcessorTest {
         verify { t.db.markUnprocessed(listOf("https://example.com/1")) }
     }
 
+    @Test
+    fun `the anti-bubble pick neither triggers the breaking lane nor strengthens a weak shortlist`() {
+        val explore = shortlistItem(2).copy(newsworthiness = 10, lane = ShortlistItem.LANE_EXPLORE)
+        val t = breakingDeps(breakingCat(9), listOf(shortlistItem(1).copy(newsworthiness = 8), explore))
+        t.processor.process(threeArticles)
+        verify(exactly = 0) { t.factory.forBatch(any()) }
+    }
+
     // ── submitOrSync(): exception handling ────────────────────────────────────
 
     @Test

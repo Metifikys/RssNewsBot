@@ -327,7 +327,10 @@ open class CategoryProcessor(
                     }
                     val digestCfg = categoryConfig.dedup?.digest
                     if (digestCfg != null && digestCfg.ranker.enabled) {
-                        val shortlistSize = extraction.shortlist.size
+                        // The anti-bubble pick rides along past maxDigestItems: it neither makes
+                        // a shortlist strong enough nor breaking.
+                        val ranked = extraction.shortlist.filterNot { it.isExplore }
+                        val shortlistSize = ranked.size
                         // Breaking lane: one item scored at/above the threshold (raw Step 1
                         // newsworthiness, not the affinity-adjusted composite — audience taste
                         // must not make a story "urgent") skips the count-based hold-back for
@@ -335,7 +338,7 @@ open class CategoryProcessor(
                         // a "weak" shortlist is a small one, not a bad one.
                         val breakingThreshold = digestCfg.breakingNewsworthiness
                         val breaking = breakingThreshold
-                            ?.let { t -> extraction.shortlist.filter { it.effectiveNewsworthiness >= t } }
+                            ?.let { t -> ranked.filter { it.effectiveNewsworthiness >= t } }
                             .orEmpty()
                         if (shortlistSize < digestCfg.minStrongItems && breaking.isNotEmpty()) {
                             logger.info {

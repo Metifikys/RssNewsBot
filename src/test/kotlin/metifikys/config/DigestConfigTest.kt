@@ -77,4 +77,29 @@ class DigestConfigTest {
         val ex = assertThrows<IllegalArgumentException> { load(yaml(categoryExtra = "minArticles: 0")) }
         assertTrue("minArticles" in ex.message.orEmpty(), ex.message)
     }
+
+    private val feedbackOn = "feedback:\n  enabled: true\n"
+
+    @Test
+    fun `antiBubble is off by default and parsed with its defaults`() {
+        assertNull(load(yaml()).categories.getValue("gaming").dedup!!.digest!!.antiBubble)
+        val a = load(yaml("antiBubble: { intervalDays: 14 }") + feedbackOn)
+            .categories.getValue("gaming").dedup!!.digest!!.antiBubble!!
+        assertEquals(14, a.intervalDays)
+        assertEquals(8, a.minNewsworthiness)
+        assertEquals(-0.05, a.maxAffinity)
+        assertEquals("🧭 Поза звичним вибором", a.label)
+    }
+
+    @Test
+    fun `antiBubble needs feedback and sane knobs`() {
+        val noFeedback = assertThrows<IllegalArgumentException> { load(yaml("antiBubble: {}")) }
+        assertTrue("feedback.enabled" in noFeedback.message.orEmpty(), noFeedback.message)
+        for (bad in listOf("intervalDays: 0", "minNewsworthiness: 11", "label: \" \"")) {
+            val ex = assertThrows<IllegalArgumentException> { load(yaml("antiBubble: { $bad }") + feedbackOn) }
+            assertTrue("antiBubble" in ex.message.orEmpty(), ex.message)
+        }
+        // A disabled block is not validated.
+        load(yaml("antiBubble: { enabled: false, intervalDays: 0 }"))
+    }
 }

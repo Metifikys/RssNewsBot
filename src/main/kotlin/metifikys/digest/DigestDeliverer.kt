@@ -1,7 +1,9 @@
 package metifikys.digest
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import metifikys.ai.dedup.AntiBubble
 import metifikys.config.AlsoConfig
+import metifikys.config.AntiBubbleConfig
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
 import metifikys.config.ConflictLineConfig
@@ -224,7 +226,14 @@ class DigestDeliverer(
             val replyTo = eventKey?.let { replyTargets[it] }
             val topicArticles = topicUrls[idx].mapNotNull { articleByLink[it] }
             val storyLines = eventKey?.let { storyLinesByKey[it] }.orEmpty()
-            val footer = buildFooter(categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLines, articleByLink, feedLabels, eventKey?.let { crossLinkByKey[it] })
+            // 🧭 the anti-bubble pick (dedup.digest.antiBubble): marked in the footer, variant explore.
+            val explore = item?.isExplore == true
+            val footer = buildFooter(
+                categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLines, articleByLink, feedLabels,
+                eventKey?.let { crossLinkByKey[it] },
+                exploreLine = if (explore) antiBubbleLabel(categoryConfig) else null
+            )
+            val variant = if (explore) DigestMessageRow.VARIANT_EXPLORE else null
             // Long-form (post.longForm): a text message with the image as a large link preview
             // above it, so neither the body nor the footer is squeezed into the 1024-char caption.
             // A long post that fits a caption anyway still goes out as a normal photo post.
@@ -284,7 +293,8 @@ class DigestDeliverer(
                         category = categoryName,
                         eventKey = eventKey,
                         articleLinks = linksJson,
-                        sentAt = sentAt
+                        sentAt = sentAt,
+                        variant = variant
                     )
                 }
                 if (moderate) {
@@ -308,6 +318,10 @@ class DigestDeliverer(
         // sibling topics failed — a delivered message collects reactions on its own.
         if (digestMessageRows.isNotEmpty()) {
             db.insertDigestMessages(digestMessageRows)
+            // The anti-bubble interval starts only once its post is really in the channel.
+            if (digestMessageRows.any { it.variant == DigestMessageRow.VARIANT_EXPLORE }) {
+                markExploreSent(categoryName, sentAt)
+            }
             // Trackers see exactly the events that reached the channel.
             if (trackerUpdater != null && shortlist != null) {
                 val sentKeys = digestMessageRows.mapNotNull { it.eventKey }.toSet()
@@ -367,6 +381,20 @@ class DigestDeliverer(
                         (if (unsentEventKeys.isEmpty()) "." else ", ${unsentEventKeys.size} event(s) left uncovered for retry: $unsentEventKeys")
                 }
             }
+        }
+    }
+
+    /** The `🧭` footer line of the category's anti-bubble pick. */
+    private fun antiBubbleLabel(categoryConfig: CategoryConfig): String =
+        categoryConfig.dedup?.digest?.antiBubble?.label ?: AntiBubbleConfig().label
+
+    /** Starts the `dedup.digest.antiBubble` interval (`bot_state`); a failure only logs. */
+    private fun markExploreSent(categoryName: String, sentAt: LocalDateTime) {
+        try {
+            db.setState(AntiBubble.stateKey(categoryName), sentAt.toString())
+            logger.info { "[Category:$categoryName][AntiBubble] explore post sent at $sentAt" }
+        } catch (e: Exception) {
+            logger.warn(e) { "[Category:$categoryName][AntiBubble] could not store the explore post time" }
         }
     }
 
@@ -480,10 +508,12 @@ class DigestDeliverer(
         storyLines: List<String> = emptyList(),
         articleByLink: Map<String, Article> = emptyMap(),
         feedLabels: Map<String, String> = emptyMap(),
-        crossLink: String? = null
+        crossLink: String? = null,
+        exploreLine: String? = null
     ): List<String> {
-        if (post == null) return emptyList()
+        if (post == null) return FooterLines().add(Slot.EXPLORE, exploreLine).build()
         val footer = FooterLines()
+        footer.add(Slot.EXPLORE, exploreLine)
         val enabledBadges = post.badges?.enabledIds.orEmpty()
         if (badgeResolver != null && enabledBadges.isNotEmpty()) {
             footer.addAll(Slot.BADGES, badgeResolver.resolve(enabledBadges, item, topicArticles, badgeDeadline, "[Category:$categoryName]"))
