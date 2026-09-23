@@ -166,6 +166,11 @@ via a `/status` admin snapshot.
     Metascore Steam's `appdetails` already carries (Metacritic has no API; Steam fills the field
     some days after release), plus `OpenCritic: 91, рекомендують 97%` when `badges.openCriticKey` (env
     `OPENCRITIC_RAPIDAPI_KEY`, a RapidAPI key) is set — without it no request goes to OpenCritic.
+    `cve` (for tech) — `🛡 [CVE-2021-44228](…): CVSS 10.0, критична · експлуатується (CISA KEV)` for up
+    to 2 CVE IDs the bullet or its articles name, from the NVD API 2.0 (CVSS v4 → v3.1 → v3.0 → v2,
+    NVD's score before the CNA's; the provider keeps NVD's 5 requests / 30 s window, 50 with
+    `badges.nvdApiKey` / env `NVD_API_KEY`); analyzed records cached 7 days, pending 6 h, misses 3 h.
+    *This product uses the NVD API but is not endorsed or certified by the NVD.*
   - **intro** — the first time a franchise appears in the category, one Wikipedia line
     (`📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`), remembered in `entity_intros`.
   - **longForm** — the top-ranked events of a digest (composite ≥ `minComposite`, at most

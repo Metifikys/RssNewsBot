@@ -94,9 +94,9 @@ class PostConfigTest {
 
         val all = load(
             "badges:\n  ukLocalizationShowMissing: true\n" +
-                yaml("post:\n  badges:\n    ukLocalization: true\n    deck: true\n    critic: true")
+                yaml("post:\n  badges:\n    ukLocalization: true\n    deck: true\n    critic: true\n    cve: true")
         )
-        assertEquals(setOf("uk_lang", "deck", "critic"), all.categories.getValue("gaming").post!!.badges!!.enabledIds)
+        assertEquals(setOf("uk_lang", "deck", "critic", "cve"), all.categories.getValue("gaming").post!!.badges!!.enabledIds)
         assertTrue(all.badges.ukLocalizationShowMissing)
     }
 

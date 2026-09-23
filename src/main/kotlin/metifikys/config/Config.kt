@@ -1331,7 +1331,9 @@ data class IntroConfig(
  *   (Steam's GetItems; no line without Ukrainian unless `badges.ukLocalizationShowMissing`);
  * - [deck]: `🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти)` for a Steam game (also on `patch`);
  * - [critic]: `🏆 Metacritic: 90` on release / review events of a released Steam game (the Metascore in
- *   Steam's appdetails), plus OpenCritic with `badges.openCriticKey`.
+ *   Steam's appdetails), plus OpenCritic with `badges.openCriticKey`;
+ * - [cve]: `🛡 CVE-2021-44228: CVSS 10.0, критична · експлуатується (CISA KEV)` when the bullet names a CVE ID
+ *   (NVD API 2.0; any category, meant for tech).
  */
 data class BadgesConfig(
     val steam: Boolean = false,
@@ -1340,7 +1342,8 @@ data class BadgesConfig(
     val trailer: Boolean = false,
     val ukLocalization: Boolean = false,
     val deck: Boolean = false,
-    val critic: Boolean = false
+    val critic: Boolean = false,
+    val cve: Boolean = false
 ) {
     /** Provider ids to run for this category, matching [metifikys.enrich.BadgeProvider.id]. */
     val enabledIds: Set<String>
@@ -1352,6 +1355,7 @@ data class BadgesConfig(
             if (hn) add("hn")
             if (github) add("github")
             if (trailer) add("trailer")
+            if (cve) add("cve")
         }
 }
 
@@ -1383,7 +1387,9 @@ data class BadgeSettings(
      * Optional RapidAPI key for OpenCritic (env `OPENCRITIC_RAPIDAPI_KEY` wins): adds the OpenCritic
      * score to `post.badges.critic`. Empty (default) = Metacritic from Steam only, no OpenCritic request.
      */
-    val openCriticKey: String? = null
+    val openCriticKey: String? = null,
+    /** Optional NVD API key (env `NVD_API_KEY` wins) for `post.badges.cve`: 50 requests / 30 s instead of 5. */
+    val nvdApiKey: String? = null
 )
 
 data class ThreadsConfig(
@@ -1943,7 +1949,8 @@ object ConfigLoader {
 
         val badges = config.badges.copy(
             githubToken = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() } ?: config.badges.githubToken,
-            openCriticKey = System.getenv("OPENCRITIC_RAPIDAPI_KEY")?.takeIf { it.isNotBlank() } ?: config.badges.openCriticKey
+            openCriticKey = System.getenv("OPENCRITIC_RAPIDAPI_KEY")?.takeIf { it.isNotBlank() } ?: config.badges.openCriticKey,
+            nvdApiKey = System.getenv("NVD_API_KEY")?.takeIf { it.isNotBlank() } ?: config.badges.nvdApiKey
         )
         require(badges.timeoutSeconds >= 1) { "badges.timeoutSeconds must be >= 1 (got ${badges.timeoutSeconds})" }
         require(badges.maxTotalSeconds >= badges.timeoutSeconds) {

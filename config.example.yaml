@@ -313,6 +313,9 @@ weekly:
 #   # answers "API key is required" without one; the free plan allows 25 searches / 200 requests
 #   # a day, the bot searches at most 20). Env OPENCRITIC_RAPIDAPI_KEY wins. Empty = Metacritic only.
 #   openCriticKey: ""
+#   # 🛡 CVE badge (post.badges.cve): NVD allows 5 requests / 30 s without a key, 50 with a free one
+#   # (https://nvd.nist.gov/developers/request-an-api-key). Env NVD_API_KEY wins.
+#   nvdApiKey: ""
 
 # telegra.ph account for the long-form Instant View pages (post.longForm.telegraph inside a
 # category). Token: env TELEGRAPH_TOKEN, else accessToken, else the one stored in bot_state
@@ -489,6 +492,8 @@ categories:
       #            ProtonDB summary, both undocumented; game events as steam plus patch)
       #   critic — 🏆 Metacritic: 90 (the PC Metascore in Steam's appdetails; release / review events of a
       #            game that is out — Steam fills it some days after release; + OpenCritic with badges.openCriticKey)
+      #   cve    — 🛡 CVE-2021-44228: CVSS 10.0, критична · експлуатується (CISA KEV) when the bullet or its
+      #            articles name a CVE ID (NVD API 2.0, at most 2 IDs; for a tech category; badges.nvdApiKey)
       # The Steam-based badges share one store search + appdetails per game (cached in the DB).
       badges:
         steam: true
@@ -498,6 +503,7 @@ categories:
         hn: false
         github: false
         trailer: false
+        cve: false
       # One Wikipedia line the FIRST time a franchise (else subject) appears in this category:
       #   📚 Team Cherry: австралійська студія відеоігор · Вікіпедія
       # The page's short description when it has one, else the first sentence of the summary —

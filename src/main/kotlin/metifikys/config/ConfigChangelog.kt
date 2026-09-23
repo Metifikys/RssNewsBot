@@ -61,6 +61,8 @@ object ConfigChangelog {
         Entry("categories.*.post.badges.deck", "2026-09-23", "🕹 Steam Deck verified / playable + ProtonDB tier of a Steam game (undocumented public endpoints)"),
         Entry("categories.*.post.badges.critic", "2026-09-23", "🏆 Metacritic score of a released Steam game on release / review events (from Steam appdetails)"),
         Entry("badges.openCriticKey", "2026-09-23", "optional RapidAPI key (env OPENCRITIC_RAPIDAPI_KEY) adding OpenCritic to the 🏆 critic badge"),
+        Entry("categories.*.post.badges.cve", "2026-09-23", "🛡 CVSS score / severity / CISA KEV for CVE IDs named in a bullet (NVD API 2.0; meant for tech)"),
+        Entry("badges.nvdApiKey", "2026-09-23", "optional NVD API key (env NVD_API_KEY): 50 instead of 5 CVE lookups per 30 s"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */

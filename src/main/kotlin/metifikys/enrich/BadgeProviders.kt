@@ -36,6 +36,7 @@ object BadgeProviders {
                 val fetchPage = pageHtml.takeIf { settings.trailerFetchOnDelivery }
                 add(TrailerBadgeProvider(http, cache, settings.trailerEventTypes, fetchPage))
             }
+            if (CveBadgeProvider.ID in needed) add(CveBadgeProvider(http, cache, settings.nvdApiKey))
         }
         logger.info {
             "[Badge] providers enabled: ${providers.map { it.id }} (timeout ${settings.timeoutSeconds}s each, " +
