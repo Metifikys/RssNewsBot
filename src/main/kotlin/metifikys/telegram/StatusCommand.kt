@@ -92,6 +92,7 @@ class StatusCommand(
         appendReactionsSection(sb)
         appendAffinitySection(sb)
         appendFeedHealthSection(sb)
+        appendFirstSourceSection(sb)
 
         val errorCommitToken = if (errors.isEmpty()) {
             -1L
@@ -212,6 +213,36 @@ class StatusCommand(
         }
         if (lines.isEmpty()) return
         sb.append('\n')
+        lines.forEach { sb.append(it).append('\n') }
+    }
+
+    /**
+     * `🥇 Хто першим` (`storyIntel.enabled`): per category, the outlets most often first with a
+     * story over `weekly.sourceLeaderboard.lookbackDays` (stories with 3+ outlets, outlets with
+     * `minEvents`+ stories), `top` of them. Omitted while no outlet qualifies; a failing query
+     * drops the section, never the status post.
+     */
+    private fun appendFirstSourceSection(sb: StringBuilder) {
+        if (!config.storyIntel.enabled) return
+        val cfg = config.weekly?.sourceLeaderboard ?: metifikys.config.SourceLeaderboardConfig()
+        val loader = metifikys.story.StoryClusterLoader(config, db)
+        val lines = mutableListOf<String>()
+        for (name in config.categories.keys) {
+            val rows = try {
+                loader.leaderboard(name, cfg.lookbackDays, cfg.minEvents)
+            } catch (e: Exception) {
+                logger.warn(e) { "[/status] source leaderboard for $name failed — omitting it" }
+                continue
+            }
+            val top = rows.filter { it.firsts > 0 }.take(cfg.top)
+            if (top.isEmpty()) continue
+            val cells = top.joinToString(" · ") { r ->
+                "${escapeMarkdown(r.domain)} ${Math.round(r.firstRate * 100)}% (${r.firsts}/${r.events})"
+            }
+            lines += "  ${escapeMarkdown(name)}: $cells"
+        }
+        if (lines.isEmpty()) return
+        sb.append('\n').append("🥇 *Хто першим* (${cfg.lookbackDays} дн.)\n")
         lines.forEach { sb.append(it).append('\n') }
     }
 

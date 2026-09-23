@@ -246,6 +246,12 @@ weekly:
   showOutlets: false       # needs storyIntel: the badge becomes "📢 N видань · M першоджерел"
                            # over the story's complete clusters (late reprints included);
                            # a story with fewer than two outlets keeps "🔁 N"
+  # "🥇 Хто пише першим (30 дн.): a.com — 12 з 20 · …" after the bullets (needs storyIntel):
+  # outlets most often first over the story clusters with 3+ outlets of the last lookbackDays,
+  # among those with minEvents+ stories. showCopiers adds the outlets most often behind —
+  # naming them publicly is a reputational call, hence off. /status shows the same ranking
+  # (with these numbers) whenever storyIntel is on.
+  # sourceLeaderboard: { enabled: false, lookbackDays: 30, minEvents: 10, top: 3, showCopiers: false }
   hashtag: "#головне"      # optional: appended on its own line at the end of the post (omit = none)
   # Which categories participate. Omit/empty = every category that has a `dedup:` block.
   # categories:
@@ -456,6 +462,11 @@ categories:
       #   # article. When every article credits the same outlet: "усі з посиланням на X".
       #   # At post time the cluster is mostly this digest's batch, hence minOutlets.
       #   hype: { enabled: true, minOutlets: 4, reprintSimilarity: 0.95 }
+      #   # 🥇 першим був insider-gaming.com (+2 год) — the outlet with the earliest article (feed
+      #   # date, or our fetched_at when the feed date lies in its future), shown from minOutlets
+      #   # outlets and a lead >= minLeadMinutes over the second (closer is a tie). With hype on,
+      #   # both share one line: 📢 9 видань · 1 першоджерело · 🥇 insider-gaming.com (+2 год)
+      #   first: { enabled: true, minOutlets: 3, minLeadMinutes: 30 }
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),

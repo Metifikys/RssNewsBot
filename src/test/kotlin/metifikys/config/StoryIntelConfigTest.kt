@@ -87,4 +87,23 @@ class StoryIntelConfigTest {
         val e = assertThrows<IllegalArgumentException> { load(yaml(top = "weekly:\n  enabled: true\n  showOutlets: true")) }
         assertTrue("weekly.showOutlets" in e.message!!, e.message)
     }
+
+    @Test
+    fun `first line and weekly leaderboard are read and checked`() {
+        val c = load(yaml(
+            top = "storyIntel:\n  enabled: true\nweekly:\n  enabled: true\n  sourceLeaderboard: { enabled: true, lookbackDays: 30, minEvents: 5, top: 3 }",
+            post = "storyLines:\n  first: { minOutlets: 3, minLeadMinutes: 45 }"
+        ))
+        assertEquals(45, c.categories.getValue("gaming").post?.storyLines?.first?.minLeadMinutes)
+        assertEquals(5, c.weekly?.sourceLeaderboard?.minEvents)
+
+        val noStory = assertThrows<IllegalArgumentException> {
+            load(yaml(top = "weekly:\n  enabled: true\n  sourceLeaderboard: { enabled: true }"))
+        }
+        assertTrue("weekly.sourceLeaderboard" in noStory.message!!, noStory.message)
+        val tooLong = assertThrows<IllegalArgumentException> {
+            load(yaml(top = "storyIntel:\n  enabled: true\n  retentionDays: 20\nweekly:\n  enabled: true\n  sourceLeaderboard: { enabled: true, lookbackDays: 30 }"))
+        }
+        assertTrue("retentionDays" in tooLong.message!!, tooLong.message)
+    }
 }

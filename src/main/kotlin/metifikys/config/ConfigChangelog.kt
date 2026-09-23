@@ -43,6 +43,7 @@ object ConfigChangelog {
         Entry("storyIntel", "2026-09-23", "record story clusters (event_articles); enable early, the story lines need weeks of data"),
         Entry("categories.*.post.storyLines", "2026-09-23", "story footer lines: 📢 outlets / original sources (needs storyIntel)"),
         Entry("weekly.showOutlets", "2026-09-23", "weekly badge 📢 N видань · M першоджерел instead of 🔁 N (needs storyIntel)"),
+        Entry("weekly.sourceLeaderboard", "2026-09-23", "weekly 🥇 who-writes-first block (needs storyIntel; /status shows it anyway)"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */

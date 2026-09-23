@@ -84,7 +84,9 @@ node bench/db-audit/report.mjs [db=logs/news.db] [out=scratch/db-report.html] \
 Sections: messages per category/day and digest runs; reactions (share of messages with one,
 per emoji, top 10); LLM calls per provider/model/use case with tokens, avg/p95 latency and
 cost; feed/domain health (sources derived from article links, regular sources quiet for more
-than 3 days in red); dedup layers (L2 semantic, Step 1 rejected / duplicate / covered); article
+than 3 days in red); who writes first (per-outlet first rate and median lag over the
+`event_articles` story clusters with 3+ outlets, needs the bot's `storyIntel`); dedup layers
+(L2 semantic, Step 1 rejected / duplicate / covered); article
 status, queue and PROCESSING orphans older than `--stale` hours, batch jobs; CLI health, digest
 pauses, Telegram mutes, mute proposals and moderation presses; the audience-affinity snapshot.
 Sections whose table is missing (an older DB) or empty say so instead of failing.

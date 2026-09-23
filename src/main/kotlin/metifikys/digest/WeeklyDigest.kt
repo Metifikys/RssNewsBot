@@ -436,6 +436,7 @@ class WeeklyDigest(
      *    count is exact regardless of how the LLM phrased the bullet) when `weekly.showMentions`;
      *    with `weekly.showOutlets` the badge is the story's outlets instead (`📢 N видань · M
      *    першоджерел`, from `event_articles`), falling back to "🔁 N" for a story without two outlets;
+     *  - `weekly.sourceLeaderboard` adds the "🥇 Хто пише першим" block after the bullets;
      *  - `weekly.hashtag`, when set, is appended on its own line at the end.
      *
      * [TopicFormatter.toHtml] (invoked inside [TelegramSender.sendToChannel]) renders every
@@ -476,6 +477,7 @@ class WeeklyDigest(
             logger.warn { "[Weekly:$name] no postable bullets after filtering — skipping post." }
             return
         }
+        leaderboardBlock(name)?.let { out.append("\n\n").append(it) }
         weekly.hashtag?.trim()?.takeIf { it.isNotEmpty() }?.let { out.append("\n\n").append(it) }
 
         val sent = sender.sendToChannel(channelId, out.toString(), disablePreview = true).isNotEmpty()
@@ -487,6 +489,21 @@ class WeeklyDigest(
     }
 
     private val storyClusters = StoryClusterLoader(config, db)
+
+    /**
+     * `weekly.sourceLeaderboard`: the "🥇 Хто пише першим" block over the category's story clusters,
+     * or null when it is off, has nobody to name yet, or the lookup fails (the roundup goes out anyway).
+     */
+    private fun leaderboardBlock(name: String): String? {
+        val cfg = weekly.sourceLeaderboard
+        if (!cfg.enabled || !config.storyIntel.enabled) return null
+        return try {
+            StoryLines.leaderboard(storyClusters.leaderboard(name, cfg.lookbackDays, cfg.minEvents, withReprints = cfg.showCopiers), cfg)
+        } catch (e: Exception) {
+            logger.warn(e) { "[Weekly:$name] source leaderboard failed — posting without it" }
+            null
+        }
+    }
 
     /**
      * `weekly.showOutlets`: candidate url → `📢 N видань · M першоджерел` over the story's complete

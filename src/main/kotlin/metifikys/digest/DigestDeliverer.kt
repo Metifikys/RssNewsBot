@@ -15,6 +15,7 @@ import metifikys.format.TopicDecorator
 import metifikys.format.TopicFormatter
 import metifikys.model.Article
 import metifikys.model.ShortlistItem
+import metifikys.story.Genealogy
 import metifikys.story.Hype
 import metifikys.story.StoryClusterLoader
 import metifikys.story.StoryLines
@@ -159,7 +160,7 @@ class DigestDeliverer(
         // One badge time budget per delivered digest, shared by all its bullets; one intro cap too.
         val badgeDeadline = badgeResolver?.newDeadline() ?: 0L
         val introBudget = IntroBudget(postCfg?.intro?.maxPerDigest ?: 0)
-        // Story lines (📢): one cluster lookup per digest, before the send loop; eventKey → line.
+        // Story lines (📢 / 🥇): one cluster lookup per digest, before the send loop; eventKey → line.
         val storyLineByKey = resolveStoryLines(categoryName, shortlist, resolvedArticles, postCfg?.storyLines)
 
         val sentTopics = mutableListOf<String>()
@@ -340,13 +341,18 @@ class DigestDeliverer(
         cfg: StoryLinesConfig?
     ): Map<String, String> {
         if (!config.storyIntel.enabled || cfg == null || shortlist.isNullOrEmpty()) return emptyMap()
-        val hype = cfg.hype?.takeIf { it.enabled } ?: return emptyMap()
+        val hype = cfg.hype?.takeIf { it.enabled }
+        val first = cfg.first?.takeIf { it.enabled }
+        if (hype == null && first == null) return emptyMap()
         val stories = shortlist.associate { it.eventKey to listOfNotNull(it.eventKey, it.relatedPreviousEventKey) }
-        val loaded = storyClusters.load(category, stories, batch, withVectors = hype.reprintSimilarity < 1.0)
+        val loaded = storyClusters.load(category, stories, batch, withVectors = hype != null && hype.reprintSimilarity < 1.0)
         val out = LinkedHashMap<String, String>()
         for ((key, l) in loaded) {
             val line = try {
-                StoryLines.hype(Hype.analyze(l.cluster, l.texts, l.vectors, hype.reprintSimilarity), hype)
+                StoryLines.line(
+                    hype?.let { Hype.analyze(l.cluster, l.texts, l.vectors, it.reprintSimilarity) }, hype,
+                    first?.let { Genealogy.first(l.cluster) }, first
+                )
             } catch (e: Exception) {
                 logger.warn(e) { "[Category:$category][Story] $key: story line failed — sending without it" }
                 null
@@ -360,7 +366,7 @@ class DigestDeliverer(
     /**
      * Footer lines for one bullet, in display order (most valuable first — [TopicDecorator]
      * drops from the end when the message budget is tight): live-data badges, the first-mention
-     * intro, the story line (📢, resolved per digest), then the hashtag line. Lookups run under
+     * intro, the story line (📢 / 🥇, resolved per digest), then the hashtag line. Lookups run under
      * their time budgets and never throw.
      */
     private fun buildFooter(

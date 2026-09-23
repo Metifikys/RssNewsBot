@@ -254,6 +254,8 @@ data class WeeklyConfig(
      * reprints included. Needs `storyIntel.enabled`; a story with fewer than two outlets keeps "🔁 N".
      */
     val showOutlets: Boolean = false,
+    /** "🥇 Хто пише першим" block at the end of the roundup; see [SourceLeaderboardConfig]. */
+    val sourceLeaderboard: SourceLeaderboardConfig = SourceLeaderboardConfig(),
     /**
      * Categories that participate. Empty = every category that has a `dedup:` block (only those
      * accumulate the `covered_events` / `rejected_events` the ranker needs). Names must exist.
@@ -263,6 +265,22 @@ data class WeeklyConfig(
     val promptFile: String? = null,
     /** Inline prompt overrides; any non-null field beats the file and the built-in default. */
     val prompts: WeeklyPromptsInline? = null
+)
+
+/**
+ * The per-outlet "who writes first" ranking over the story clusters of the last [lookbackDays]
+ * (stories with 3+ outlets; needs `storyIntel.enabled`). With [enabled] the weekly roundup ends with
+ * `🥇 Хто пише першим (30 дн.): a.com — 12 з 20 · …` (the [top] outlets by first rate among those
+ * with [minEvents]+ stories); [showCopiers] adds the outlets most often behind — naming them in
+ * public is a reputational call, hence off. `/status` shows the same ranking whenever storyIntel is
+ * on, with these numbers.
+ */
+data class SourceLeaderboardConfig(
+    val enabled: Boolean = false,
+    val lookbackDays: Long = 30,
+    val minEvents: Int = 10,
+    val top: Int = 3,
+    val showCopiers: Boolean = false
 )
 
 data class WeeklyPromptsInline(
@@ -941,7 +959,22 @@ data class PostConfig(
  */
 data class StoryLinesConfig(
     /** `📢 9 видань · 1 першоджерело`; see [HypeLineConfig]. */
-    val hype: HypeLineConfig? = null
+    val hype: HypeLineConfig? = null,
+    /** `🥇 першим був X (+2 год)`; see [FirstLineConfig]. */
+    val first: FirstLineConfig? = null
+)
+
+/**
+ * Who of our sources had the story first: the outlet whose earliest article has the smallest
+ * publish time (the feed date, or our `fetched_at` when the feed date lies more than 10 minutes in
+ * its future), shown when the story has [minOutlets] outlets and the lead over the second outlet
+ * is at least [minLeadMinutes] (anything closer is a tie). Together with `hype` both facts share
+ * one line: `📢 9 видань · 1 першоджерело · 🥇 X (+2 год)`.
+ */
+data class FirstLineConfig(
+    val enabled: Boolean = true,
+    val minOutlets: Int = 3,
+    val minLeadMinutes: Long = 30
 )
 
 /**
@@ -1634,7 +1667,7 @@ object ConfigLoader {
                     require(t.maxAgeDays >= 1) { "Category '$name' post.threads.maxAgeDays must be >= 1 (got ${t.maxAgeDays})" }
                 }
                 post.storyLines?.let { s ->
-                    val anyOn = s.hype?.enabled == true
+                    val anyOn = s.hype?.enabled == true || s.first?.enabled == true
                     require(!anyOn || config.storyIntel.enabled) {
                         "Category '$name' post.storyLines needs storyIntel.enabled: true — the lines read the story clusters it records"
                     }
@@ -1646,6 +1679,10 @@ object ConfigLoader {
                         require(h.reprintSimilarity in 0.0..1.0) {
                             "Category '$name' post.storyLines.hype.reprintSimilarity must be in [0.0, 1.0] (got ${h.reprintSimilarity})"
                         }
+                    }
+                    s.first?.let { f ->
+                        require(f.minOutlets >= 2) { "Category '$name' post.storyLines.first.minOutlets must be >= 2 (got ${f.minOutlets})" }
+                        require(f.minLeadMinutes >= 0) { "Category '$name' post.storyLines.first.minLeadMinutes must be >= 0 (got ${f.minLeadMinutes})" }
                     }
                 }
                 post.longForm?.let { l ->
@@ -1897,6 +1934,17 @@ object ConfigLoader {
         }
         config.weekly?.takeIf { it.enabled && it.showOutlets }?.let {
             require(s.enabled) { "weekly.showOutlets needs storyIntel.enabled: true — the outlets come from its story clusters" }
+        }
+        config.weekly?.sourceLeaderboard?.let { l ->
+            require(l.lookbackDays >= 1) { "weekly.sourceLeaderboard.lookbackDays must be >= 1 (got ${l.lookbackDays})" }
+            require(l.minEvents >= 1) { "weekly.sourceLeaderboard.minEvents must be >= 1 (got ${l.minEvents})" }
+            require(l.top >= 1) { "weekly.sourceLeaderboard.top must be >= 1 (got ${l.top})" }
+            if (l.enabled && config.weekly.enabled) {
+                require(s.enabled) { "weekly.sourceLeaderboard needs storyIntel.enabled: true — the ranking reads its story clusters" }
+                require(l.lookbackDays <= s.retentionDays) {
+                    "weekly.sourceLeaderboard.lookbackDays (${l.lookbackDays}) must be <= storyIntel.retentionDays (${s.retentionDays})"
+                }
+            }
         }
         for ((from, to) in s.domainAliases) {
             require(from.isNotBlank() && to.isNotBlank()) { "storyIntel.domainAliases: blank domain in '$from: $to'" }

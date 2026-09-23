@@ -54,8 +54,7 @@ class WeeklyDigestTest {
     )
 
     /** Runs one weekly roundup with a single covered story and returns the posted text. */
-    private fun post(weekly: WeeklyConfig, storyIntel: Boolean): String {
-        val db = mockk<NewsDatabase>(relaxed = true)
+    private fun post(weekly: WeeklyConfig, storyIntel: Boolean, db: NewsDatabase = mockk(relaxed = true)): String {
         every { db.fetchRecentEvents("games", any(), any()) } returns listOf(
             CoveredEventRow("games", "k1", "Silksong", "Hollow Knight", "release_date", "date", 8, 8, 8, url, LocalDateTime.now())
         )
@@ -93,5 +92,21 @@ class WeeklyDigestTest {
     fun `without showOutlets the badge stays 🔁 N`() {
         val text = post(WeeklyConfig(enabled = true, minMentions = 1), storyIntel = true)
         assertEquals("Тиждень\n\n• **Silksong** отримав дату. [Alpha]($url) 🔁 1", text)
+    }
+
+    @Test
+    fun `the source leaderboard closes the roundup, before the hashtag`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchEventArticlesSince("games", any()) } returns
+            listOf(member(1, "alpha.com"), member(2, "beta.com"), member(3, "gamma.com"))
+        val weekly = WeeklyConfig(
+            enabled = true, minMentions = 1, hashtag = "#тиждень",
+            sourceLeaderboard = metifikys.config.SourceLeaderboardConfig(enabled = true, minEvents = 1, top = 1)
+        )
+        val text = post(weekly, storyIntel = true, db = db)
+        assertEquals(
+            "Тиждень\n\n• **Silksong** отримав дату. [Alpha]($url) 🔁 1\n\n🥇 Хто пише першим (30 дн.): alpha.com — 1 з 1\n\n#тиждень",
+            text
+        )
     }
 }

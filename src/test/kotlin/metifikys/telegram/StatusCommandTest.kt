@@ -189,4 +189,47 @@ class StatusCommandTest {
         val without = StatusCommand(config = config, db = db, errorLog = CycleErrorLog()).build()
         assertTrue("Telegram 429" !in without)
     }
+
+    // ── 🥇 Хто першим (storyIntel) ──────────────────────────────────────────
+
+    private fun firstSourceStatus(storyIntel: Boolean, db: NewsDatabase): StatusCommand {
+        val config = mockk<AppConfig>(relaxed = true)
+        every { config.storyIntel } returns metifikys.config.StoryIntelConfig(enabled = storyIntel)
+        every { config.weekly } returns metifikys.config.WeeklyConfig(
+            sourceLeaderboard = metifikys.config.SourceLeaderboardConfig(lookbackDays = 30, minEvents = 2, top = 2)
+        )
+        every { config.categories } returns mapOf(
+            "gaming" to CategoryConfig(emoji = "x", feeds = listOf(FeedConfig("https://a.example/feed")), channelId = "@g")
+        )
+        return StatusCommand(config = config, db = db, errorLog = CycleErrorLog())
+    }
+
+    private fun storyRows(): List<metifikys.db.EventArticleRow> {
+        val t0 = LocalDateTime.of(2026, 9, 1, 12, 0)
+        var id = 0
+        fun r(key: String, domain: String, min: Long) = metifikys.db.EventArticleRow(
+            "gaming", ++id, key, "https://$domain/$id", domain, t0.plusMinutes(min), null,
+            metifikys.db.EventArticleRole.STEP1, "new", null, t0
+        )
+        return listOf(
+            r("e1", "fast.com", 0), r("e1", "mid.com", 30), r("e1", "slow.com", 90),
+            r("e2", "fast.com", 0), r("e2", "mid.com", 10), r("e2", "slow.com", 60),
+            r("e3", "mid.com", 0), r("e3", "fast.com", 5), r("e3", "slow.com", 20)
+        )
+    }
+
+    @Test
+    fun `first-source section ranks outlets per category`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchEventArticlesSince("gaming", any()) } returns storyRows()
+        val text = firstSourceStatus(true, db).build()
+        assertTrue("🥇 *Хто першим* (30 дн.)\n  gaming: fast.com 67% (2/3) · mid.com 33% (1/3)" in text, text)
+    }
+
+    @Test
+    fun `first-source section is absent with storyIntel off`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchEventArticlesSince(any(), any()) } returns storyRows()
+        assertTrue("Хто першим" !in firstSourceStatus(false, db).build())
+    }
 }

@@ -609,4 +609,29 @@ class DigestDelivererTest {
 
         assertEquals("**Story.**\n\n[Title 1](https://example.com/1)\n\n#tech", sent.captured)
     }
+
+    @Test
+    fun `hype and first-source facts share one footer line`() {
+        val db = storyDb()
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+        val cfg = configWithPost(
+            PostConfig(
+                hashtags = HashtagsConfig(category = "#tech"),
+                storyLines = metifikys.config.StoryLinesConfig(
+                    hype = metifikys.config.HypeLineConfig(minOutlets = 4),
+                    first = metifikys.config.FirstLineConfig(minOutlets = 3, minLeadMinutes = 10)
+                )
+            )
+        ).copy(storyIntel = metifikys.config.StoryIntelConfig(enabled = true))
+
+        DigestDeliverer(cfg, db, sender)
+            .deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", listOf(article(1)), listOf(shortlistItem("evt-1", article(1).link)))
+
+        assertEquals(
+            "**Story.**\n\n[Title 1](https://example.com/1)\n\n📢 4 видання · 1 першоджерело · 🥇 alpha.com (+10 хв)\n#tech",
+            sent.captured
+        )
+    }
 }

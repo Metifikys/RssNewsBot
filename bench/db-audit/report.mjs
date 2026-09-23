@@ -547,6 +547,65 @@ function feedName(url) {
   sections.push(section('candidates', 'Кандидати (feed candidates)', body));
 }
 
+// 4d. Who writes first (event_articles, written by the bot's storyIntel) ─────────────────────────
+{
+  const MIN_OUTLETS = 3;   // SourceLeaderboard: stories with fewer outlets say little about speed
+  const MIN_EVENTS = 3;
+  const FUTURE_SLACK_MS = 10 * 60_000;
+  let body = '';
+  if (!has('event_articles')) {
+    body = '<p class="empty">No <code>event_articles</code> table: enable <code>storyIntel</code> in the bot (recording only).</p>';
+  } else {
+    const rows = q(`SELECT category, event_key, domain, pub_date, seen_at FROM event_articles
+                    WHERE recorded_at >= ? AND recorded_at <= ? AND domain != ''`, SINCE, NOW_S);
+    // Same clock as EventCluster.timeOf: the feed date unless it lies >10 min past our first sighting.
+    const timeOf = (r) => {
+      const p = parseLocal(r.pub_date);
+      const s = r.seen_at ? parseLocal(r.seen_at) : null;
+      return s && p - s > FUTURE_SLACK_MS ? s : p;
+    };
+    const events = new Map();
+    for (const r of rows) {
+      const k = `${r.category}\u0000${r.event_key}`;
+      const ev = events.get(k) ?? events.set(k, { category: r.category, arrival: new Map() }).get(k);
+      const t = timeOf(r);
+      if (!ev.arrival.has(r.domain) || t < ev.arrival.get(r.domain)) ev.arrival.set(r.domain, t);
+    }
+    const acc = new Map();
+    let counted = 0;
+    for (const ev of events.values()) {
+      if (ev.arrival.size < MIN_OUTLETS) continue;
+      counted++;
+      const firstAt = Math.min(...ev.arrival.values());
+      for (const [domain, t] of ev.arrival) {
+        const k = `${ev.category}\u0000${domain}`;
+        const a = acc.get(k) ?? acc.set(k, { category: ev.category, domain, events: 0, first: 0, lags: [] }).get(k);
+        a.events++;
+        const lag = Math.floor((t - firstAt) / 60_000);
+        if (lag < 1) a.first++; else a.lags.push(lag);
+      }
+    }
+    const out = [...acc.values()].filter((a) => a.events >= MIN_EVENTS).map((a) => ({
+      ...a, rate: a.first / a.events,
+      lag: a.lags.length ? a.lags.sort((x, y) => x - y)[Math.floor(a.lags.length / 2)] : null,
+    })).sort((a, b) => a.category.localeCompare(b.category) || b.rate - a.rate || b.events - a.events);
+    summary.storyEvents = counted;
+    body += tiles([['stories with ' + MIN_OUTLETS + '+ outlets', num(counted)], ['clustered articles', num(rows.length)], ['outlets ranked', num(out.length)]]);
+    body += table(out, [
+      { key: 'category', label: 'category' },
+      { key: 'domain', label: 'outlet' },
+      { key: 'events', label: 'stories', num: true, fmt: num },
+      { key: 'rate', label: 'first', num: true, fmt: (v, r) => `${r.first} <span class="muted">${pct(r.first, r.events)}</span>` },
+      { key: 'lag', label: 'median lag', num: true, fmt: (v) => (v == null ? '—' : v < 120 ? `${v} min` : `${(v / 60).toFixed(1)} h`) },
+    ], { empty: `<p class="empty">No outlet with ${MIN_EVENTS}+ stories of ${MIN_OUTLETS}+ outlets in this window yet.</p>` });
+    body += `<p class="note">Stories = <code>event_articles</code> clusters (Step 1 extractions, Layer 2 late reprints, Layer 3.5 merges) recorded in the window; an outlet is a link domain ` +
+      `(the bot's <code>storyIntel.domainAliases</code> are not applied here). Publish time = <code>pub_date</code>, or <code>seen_at</code> when the feed date lies more than 10 min after it. ` +
+      `"first" = the outlet's earliest article is the story's earliest (within a minute counts for both); median lag over the stories it was not first in. Among our feeds only — ` +
+      `the original is often not in any of them. Same ranking as the bot's <code>/status</code> 🥇 section and <code>weekly.sourceLeaderboard</code>.</p>`;
+  }
+  sections.push(section('first', 'Who writes first (story clusters)', body));
+}
+
 // 5. Dedup layers ──────────────────────────────────────────────────────────────
 {
   let body = '';

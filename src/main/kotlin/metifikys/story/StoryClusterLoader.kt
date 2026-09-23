@@ -5,6 +5,7 @@ import metifikys.config.AppConfig
 import metifikys.db.NewsDatabase
 import metifikys.digest.VectorMath
 import metifikys.model.Article
+import java.time.LocalDateTime
 
 private val logger = KotlinLogging.logger {}
 
@@ -67,5 +68,37 @@ class StoryClusterLoader(private val config: AppConfig, private val db: NewsData
         }
     }
 
+    /**
+     * [SourceLeaderboard] over the clusters of [category] recorded in the last [lookbackDays].
+     * With [withReprints] the member texts are read too, so each outlet's retelling share is known
+     * (attribution only — no vectors for a month of articles). Throws on a DB failure; callers
+     * decide what a missing ranking means.
+     */
+    fun leaderboard(
+        category: String,
+        lookbackDays: Long,
+        minEvents: Int,
+        withReprints: Boolean = false,
+        now: LocalDateTime = LocalDateTime.now()
+    ): List<SourceLeaderboard.Row> {
+        val aliases = config.storyIntel.domainAliases
+        val clusters = db.fetchEventArticlesSince(category, now.minusDays(lookbackDays))
+            .groupBy { it.eventKey }
+            .map { (key, rows) -> EventCluster(key, rows, aliases) }
+            .filter { it.outlets >= LEADERBOARD_MIN_OUTLETS }
+        val reprints = if (withReprints) {
+            val links = clusters.flatMap { c -> c.members.map { it.link } }.distinct()
+            val texts = links.chunked(TEXT_CHUNK).flatMap { db.fetchArticlesByLinks(it) }.associate { it.link to textOf(it) }
+            clusters.flatMap { Hype.analyze(it, texts, emptyMap(), 1.0).reprints }.toSet()
+        } else null
+        return SourceLeaderboard.compute(clusters, LEADERBOARD_MIN_OUTLETS, minEvents, reprints)
+    }
+
     private fun textOf(a: Article): String = a.title + "\n" + a.promptText()
+
+    companion object {
+        /** Stories with fewer outlets say little about who is fast. */
+        const val LEADERBOARD_MIN_OUTLETS = 3
+        private const val TEXT_CHUNK = 500
+    }
 }

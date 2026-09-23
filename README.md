@@ -159,7 +159,15 @@ via a `/status` admin snapshot.
     `як повідомляє`, `з посиланням на`, …; its own outlet does not count) or is a near-copy
     (`reprintSimilarity`) of an earlier outlet's article; all crediting one outlet gives
     `усі з посиланням на X`. Shown from `minOutlets` outlets. The weekly roundup can show the same
-    fact over the complete week's clusters instead of `🔁 N` (`weekly.showOutlets`).
+    fact over the complete week's clusters instead of `🔁 N` (`weekly.showOutlets`). **first**:
+    `🥇 першим був insider-gaming.com (+2 год)` — the outlet with the earliest article
+    ([`Genealogy`](src/main/kotlin/metifikys/story/Genealogy.kt); feed date, or `fetched_at` when
+    the feed date lies in its future), from `minOutlets` outlets and a `minLeadMinutes` lead; with
+    hype on both share one line. The per-outlet ranking
+    ([`SourceLeaderboard`](src/main/kotlin/metifikys/story/SourceLeaderboard.kt): first rate,
+    median lag, retelling share) is a `/status` section `🥇 Хто першим`, an optional weekly block
+    (`weekly.sourceLeaderboard`, copiers off by default) and the "Who writes first" section of
+    `bench/db-audit/report.mjs`.
 - **Living trackers** (`trackers:` per category) — e.g. a pinned "📅 Найближчі релізи" message
   the bot edits after every digest from `release_date` / `delay` events and their `eventDate`
   (year cross-checked against the article), with `⏳ було <old date>` on a delay, a
