@@ -511,6 +511,18 @@ categories:
         # deleted through the API. Global account settings: `telegraph:` at the top level.
         # telegraph:
         #   mode: teaser             # teaser | full
+        # Video transcripts for long posts (idea 20) are deliberately NOT implemented — there is no
+        # `transcript:` option. Every keyless way to get a YouTube transcript automates access to
+        # YouTube outside its API: the watch page's captionTracks / timedtext URL, the innertube
+        # `youtubei/v1/player` endpoint with a spoofed ANDROID/IOS client (what yt-dlp does), or
+        # running `yt-dlp --write-auto-subs`. YouTube's Terms of Service forbid automated access
+        # except through the API or with YouTube's permission, and the API's captions.download only
+        # serves the video owner's own captions (OAuth). Practical risk on top: YouTube answers
+        # server IPs with a consent page / "confirm you're not a bot" / PO-token demands and blocks
+        # repeat offenders — a blocked prod IP would also break the ▶️ trailer badge (oEmbed) and
+        # any YouTube feeds. Keyed transcript APIs cost money and are often scrapers themselves.
+        # A transcript is also the author's work: even a licensed source would allow only a
+        # retelling in our own words with the video link. Revisit only with a licensed source.
       # Story lines: deterministic facts about the story behind a bullet, read from the story
       # clusters (needs `storyIntel.enabled: true` at the top level). They sit after the badges
       # and the intro, before the hashtags. Off unless listed.

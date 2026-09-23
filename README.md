@@ -168,6 +168,14 @@ via a `/status` admin snapshot.
     `full` keeps the post and adds the ⚡ line. Any Telegraph failure or timeout sends the long post
     as before. The account (`telegraph:` at the top level) uses `TELEGRAPH_TOKEN` / `accessToken`,
     else a token created once and kept in `bot_state`; pages are recorded in `telegraph_pages`.
+    *Not implemented, by decision:* feeding a long post from the transcript of the video it embeds
+    (idea 20). Every keyless route (watch-page caption tracks / timedtext, the innertube player
+    endpoint, `yt-dlp --write-auto-subs`) automates access to YouTube outside its API, which
+    YouTube's Terms of Service forbid; the Data API's `captions.download` serves only the video
+    owner's own captions; server IPs get bot checks and blocks that would also take out the ▶️
+    trailer badge. See the comment under `longForm` in `config.example.yaml`. How often a long
+    event has a video at all can be read without touching YouTube: the ingest already stores the
+    embedded id (`articles.meta_json` → `video.youtubeId`) for categories with the trailer badge.
   - **storyLines** (needs `storyIntel.enabled`) — deterministic footer facts from the story
     clusters, placed before the hashtags. **hype**: `📢 9 видань · 1 першоджерело` — outlets are
     distinct domains; a member is a retelling when its title/teaser credits another outlet
