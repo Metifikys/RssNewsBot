@@ -161,6 +161,13 @@ via a `/status` admin snapshot.
     source text, and come back as a two-paragraph post; one longer than a photo caption is sent
     as text with the image as a large link preview above it. Needs the render prompt's
     LONG-FORM ITEMS block.
+    With **telegraph** the long post is also published as a telegra.ph page (picture, paragraphs,
+    «Джерела», channel link; [`TelegraphPage`](src/main/kotlin/metifikys/telegraph/TelegraphPage.kt))
+    that Telegram opens with ⚡ Instant View: `mode: teaser` posts the headline, the first
+    paragraph, `⚡ [Читати повністю](…)`, the source and the footer with the page as the preview;
+    `full` keeps the post and adds the ⚡ line. Any Telegraph failure or timeout sends the long post
+    as before. The account (`telegraph:` at the top level) uses `TELEGRAPH_TOKEN` / `accessToken`,
+    else a token created once and kept in `bot_state`; pages are recorded in `telegraph_pages`.
   - **storyLines** (needs `storyIntel.enabled`) — deterministic footer facts from the story
     clusters, placed before the hashtags. **hype**: `📢 9 видань · 1 першоджерело` — outlets are
     distinct domains; a member is a retelling when its title/teaser credits another outlet
@@ -880,6 +887,7 @@ variables (they override the file):
 | `OPENAI_API_KEY`      | yes      | OpenAI API key                       |
 | `ANTHROPIC_API_KEY`   | no       | Used only if `anthropic:` block set  |
 | `OPENROUTER_API_KEY`  | no       | Used only if `openrouter:` block set |
+| `TELEGRAPH_TOKEN`     | no       | telegra.ph token for `post.longForm.telegraph` (else created once, kept in `bot_state`) |
 
 `config.example.yaml` documents every option inline.
 

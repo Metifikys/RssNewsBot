@@ -40,7 +40,8 @@ class NewsDatabase(dbPath: String) :
     FeedCandidateStore by FeedCandidateRepository(),
     EventArticleStore by EventArticleRepository(),
     EventHistoryStore by EventHistoryRepository(),
-    BotStateStore by BotStateRepository() {
+    BotStateStore by BotStateRepository(),
+    TelegraphPageStore by TelegraphPageRepository() {
 
     /** Canonical path of the DB file; side jobs (e.g. [RetentionArchiver]) place their files next to it. */
     val canonicalPath: String

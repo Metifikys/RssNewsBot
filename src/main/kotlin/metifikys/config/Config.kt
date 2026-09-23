@@ -500,6 +500,8 @@ data class AppConfig(
     val feedHealth: FeedHealthConfig = FeedHealthConfig(),
     /** Story clusters (`event_articles`) and the features that read them; see [StoryIntelConfig]. */
     val storyIntel: StoryIntelConfig = StoryIntelConfig(),
+    /** Telegraph (telegra.ph) account for the long-form Instant View pages; see [TelegraphConfig]. */
+    val telegraph: TelegraphConfig = TelegraphConfig(),
     /**
      * Per-(provider, model) prices used by `/status` cost stats. Costs are in USD per
      * 1,000,000 tokens (matches how OpenAI / Anthropic publish their pricing pages).
@@ -1211,7 +1213,43 @@ data class LongFormConfig(
     /** Composite score (0–10) an event needs to qualify. */
     val minComposite: Double = 8.0,
     /** Characters of the refetched article text passed to the renderer for a long item. */
-    val sourceChars: Int = 5000
+    val sourceChars: Int = 5000,
+    /** Publish the long post as a telegra.ph page (Instant View) as well; see [LongFormTelegraphConfig]. */
+    val telegraph: LongFormTelegraphConfig? = null
+)
+
+/**
+ * `post.longForm.telegraph`: the long post is also published as a telegra.ph page (title, picture,
+ * every paragraph, the sources, a link to the channel), which Telegram opens with ⚡ Instant View.
+ * [mode] `teaser`: the channel post keeps the headline, the first paragraph, `⚡ [Читати
+ * повністю](…)`, the source and the footer, with the page as its large link preview; `full`: the
+ * post stays as it is and only gains the ⚡ line. Any Telegraph failure or timeout (the global
+ * [TelegraphConfig.timeoutSeconds]) sends today's long post instead. Pages are public and can't be
+ * deleted through the API, only edited.
+ */
+data class LongFormTelegraphConfig(
+    val enabled: Boolean = true,
+    val mode: String = MODE_TEASER
+) {
+    companion object {
+        const val MODE_TEASER = "teaser"
+        const val MODE_FULL = "full"
+    }
+}
+
+/**
+ * The telegra.ph account the long-form pages are published under. The access token is
+ * `TELEGRAPH_TOKEN` (env), else [accessToken], else the one stored in `bot_state`
+ * (`telegraph:token`); with none of them the bot calls `createAccount` once ([shortName],
+ * [authorName], [authorUrl]) and stores the token there. The token is never logged. [authorUrl]
+ * blank = the category's channel link (`@username` channels). [timeoutSeconds] caps each API call.
+ */
+data class TelegraphConfig(
+    val accessToken: String = "",
+    val shortName: String = "RssNewsBot",
+    val authorName: String = "RSS News",
+    val authorUrl: String = "",
+    val timeoutSeconds: Long = 10
 )
 
 /**
@@ -1917,6 +1955,11 @@ object ConfigLoader {
                     require(l.maxPerDigest >= 1) { "Category '$name' post.longForm.maxPerDigest must be >= 1 (got ${l.maxPerDigest})" }
                     require(l.minComposite in 0.0..10.0) { "Category '$name' post.longForm.minComposite must be within 0..10 (got ${l.minComposite})" }
                     require(l.sourceChars >= 500) { "Category '$name' post.longForm.sourceChars must be >= 500 (got ${l.sourceChars})" }
+                    l.telegraph?.let { t ->
+                        require(t.mode in setOf(LongFormTelegraphConfig.MODE_TEASER, LongFormTelegraphConfig.MODE_FULL)) {
+                            "Category '$name' post.longForm.telegraph.mode must be teaser or full (got '${t.mode}')"
+                        }
+                    }
                 }
                 post.intro?.let { i ->
                     require(i.languages.isNotEmpty()) { "Category '$name' post.intro.languages must not be empty" }
@@ -2139,12 +2182,23 @@ object ConfigLoader {
             }
         }
 
+        val telegraph = config.telegraph.copy(
+            accessToken = System.getenv("TELEGRAPH_TOKEN")?.takeIf { it.isNotBlank() } ?: config.telegraph.accessToken
+        )
+        require(telegraph.shortName.length in 1..32) { "telegraph.shortName must be 1..32 characters" }
+        require(telegraph.authorName.length <= 128) { "telegraph.authorName must be at most 128 characters" }
+        require(telegraph.authorUrl.isBlank() || Regex("""https?://\S+""").matches(telegraph.authorUrl)) {
+            "telegraph.authorUrl must be an http(s) URL (or blank)"
+        }
+        require(telegraph.timeoutSeconds >= 1) { "telegraph.timeoutSeconds must be >= 1 (got ${telegraph.timeoutSeconds})" }
+
         return config.copy(
             telegram = config.telegram.copy(botToken = botToken),
             openai = config.openai.copy(apiKey = apiKey),
             openrouter = openRouter,
             anthropic = anthropic,
-            badges = badges
+            badges = badges,
+            telegraph = telegraph
         )
     }
 

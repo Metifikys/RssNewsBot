@@ -59,6 +59,7 @@ import metifikys.telegram.StatusCommand
 import metifikys.telegram.StatusPoster
 import metifikys.telegram.TelegramSender
 import metifikys.telegram.TelegramUpdatesPoller
+import metifikys.telegraph.TelegraphPublisher
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -251,7 +252,10 @@ class NewsBot(
     internal val deliverer =
         DigestDeliverer(
             config, db, sender, badgeResolver, introProvider, trackerUpdater, moderationNotifier,
-            PostImages.forConfig(config, db, articleFetcher)
+            PostImages.forConfig(config, db, articleFetcher),
+            telegraph = if (config.categories.values.any { it.post?.longForm?.telegraph?.enabled == true }) {
+                TelegraphPublisher(config.telegraph, db)
+            } else null
         )
 
     private val categoryProcessor = CategoryProcessor(

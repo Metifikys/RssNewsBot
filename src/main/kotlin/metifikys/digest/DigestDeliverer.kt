@@ -3,7 +3,9 @@ package metifikys.digest
 import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.AlsoConfig
 import metifikys.config.AppConfig
+import metifikys.config.CategoryConfig
 import metifikys.config.ConflictLineConfig
+import metifikys.config.LongFormTelegraphConfig
 import metifikys.config.PostConfig
 import metifikys.config.PostImagesConfig
 import metifikys.config.StoryLinesConfig
@@ -34,6 +36,8 @@ import metifikys.telegram.ModerationNotifier
 import metifikys.telegram.SentRef
 import metifikys.telegram.TelegramLinks
 import metifikys.telegram.TelegramSender
+import metifikys.telegraph.TelegraphPage
+import metifikys.telegraph.TelegraphPublisher
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -61,7 +65,9 @@ class DigestDeliverer(
     /** Moderation messages in the admin chat (`admin.moderation`); null when off. */
     private val moderationNotifier: ModerationNotifier? = null,
     /** og:image-first picture choice (`post.images`); null when no category sets it. */
-    private val postImages: PostImages? = null
+    private val postImages: PostImages? = null,
+    /** telegra.ph pages for long posts (`post.longForm.telegraph`); null when no category sets it. */
+    private val telegraph: TelegraphPublisher? = null
 ) {
 
     /**
@@ -222,15 +228,33 @@ class DigestDeliverer(
             // Long-form (post.longForm): a text message with the image as a large link preview
             // above it, so neither the body nor the footer is squeezed into the 1024-char caption.
             // A long post that fits a caption anyway still goes out as a normal photo post.
-            val longOutgoing = if (item?.isLongForm == true && image != null) {
+            // With post.longForm.telegraph the text also goes to a telegra.ph page, and the post
+            // (a teaser, or the full text) carries the page as its preview — Telegram's ⚡ Instant
+            // View; no page (any Telegraph failure) → the long post as above.
+            val telegraphCfg = postCfg?.longForm?.telegraph?.takeIf { it.enabled && item?.isLongForm == true }
+            val pageUrl = if (telegraphCfg != null && telegraph != null && item != null) {
+                publishPage(categoryName, categoryConfig, item, topic, image, articleByLink, feedLabels)
+            } else null
+            val longOutgoing = if (pageUrl != null) {
+                val body = if (telegraphCfg?.mode == LongFormTelegraphConfig.MODE_FULL) {
+                    TelegraphPage.withReadMore(topic, pageUrl)
+                } else {
+                    TelegraphPage.teaser(topic, pageUrl)
+                }
+                TopicDecorator.decorate(body, footer, TopicDecorator.TEXT_BUDGET)
+            } else if (item?.isLongForm == true && image != null) {
                 TopicDecorator.decorate(topic, footer, TopicDecorator.TEXT_BUDGET)
                     .takeIf { it.length > TopicDecorator.CAPTION_BUDGET }
             } else null
             val budget = if (image != null) TopicDecorator.CAPTION_BUDGET else TopicDecorator.TEXT_BUDGET
             val outgoing = longOutgoing ?: TopicDecorator.decorate(topic, footer, budget)
             val refs: List<SentRef> = if (longOutgoing != null) {
-                logger.info { "[Category:$categoryName][LongForm] $eventKey: ${outgoing.length} chars as text + image preview" }
-                sender.sendToChannel(channelId, outgoing, disablePreview = true, replyToMessageId = replyTo, previewImageUrl = image)
+                val preview = pageUrl ?: image
+                logger.info {
+                    "[Category:$categoryName][LongForm] $eventKey: ${outgoing.length} chars as text + " +
+                        (if (pageUrl != null) "Telegraph page preview (${telegraphCfg?.mode})" else "image preview")
+                }
+                sender.sendToChannel(channelId, outgoing, disablePreview = true, replyToMessageId = replyTo, previewImageUrl = preview)
             } else if (image != null) {
                 // Single post: photo + caption. Caption is truncated to Telegram's 1024-char
                 // limit inside TelegramSender (with markdown→plain-text fallback on parse errors).
@@ -511,6 +535,35 @@ class DigestDeliverer(
         val image = postImages?.choose(label, postUrl, feedImages, cfg, deadline)
         if (image != null) logger.debug { "$label[Image] using $image" }
         return image
+    }
+
+    /**
+     * `post.longForm.telegraph`: publishes [topic] as a telegra.ph page — the picture, every
+     * paragraph, «Джерела» (the topic's links, then the event's other batch articles named as in
+     * the 📰 line) and the channel link — and returns its URL, or null (the publisher logs why).
+     */
+    private fun publishPage(
+        categoryName: String,
+        categoryConfig: CategoryConfig,
+        item: ShortlistItem,
+        topic: String,
+        image: String?,
+        articleByLink: Map<String, Article>,
+        feedLabels: Map<String, String>
+    ): String? {
+        val publisher = telegraph ?: return null
+        val names = categoryConfig.post?.also?.names.orEmpty()
+        val others = item.sourceLinks.map { link ->
+            val host = AlsoLine.hostOf(link)
+            val feedLabel = articleByLink[link]?.feedUrl?.let { feed -> feedLabels[feed]?.takeIf { AlsoLine.hostOf(feed) == host } }
+            val name = AlsoLine.nameOf(host, names, feedLabel)
+            val title = articleByLink[link]?.title?.replace(Regex("""\s+"""), " ")?.trim()
+            TelegraphPage.Link(if (title.isNullOrEmpty()) name else "$name — $title", link)
+        }
+        val channel = categoryConfig.channelId.trim().takeIf { it.startsWith("@") && it.length > 1 }
+            ?.let { TelegraphPage.Link(it, "https://t.me/${it.drop(1)}") }
+        val content = TelegraphPage.content(topic, image, TelegraphPage.topicLinks(topic) + others, channel)
+        return publisher.publish(categoryName, item.eventKey, TelegraphPage.title(topic), content, channel?.url)
     }
 
     /**

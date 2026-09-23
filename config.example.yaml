@@ -301,6 +301,19 @@ weekly:
 #   trailerEventTypes: [major_announcement, release_date, major_dlc_expansion, delay]
 #   trailerFetchOnDelivery: true
 
+# telegra.ph account for the long-form Instant View pages (post.longForm.telegraph inside a
+# category). Token: env TELEGRAPH_TOKEN, else accessToken, else the one stored in bot_state
+# (telegraph:token); with none, the bot calls createAccount once (shortName / authorName /
+# authorUrl) and stores the token there. authorUrl blank = the channel link (@username channels).
+# The token is never logged. timeoutSeconds caps each API call; a failure or timeout sends the
+# long post without a page.
+# telegraph:
+#   accessToken: ""
+#   shortName: "RssNewsBot"
+#   authorName: "RSS News"
+#   authorUrl: ""
+#   timeoutSeconds: 10
+
 # Optional: reaction-feedback loop (phase 1 — aggregation only). When enabled, the reactions
 # collected by telegram.updatesPolling are periodically rolled up into per-dimension audience
 # affinity scores (franchise / event type / subject / source domain) in the audience_affinity
@@ -484,6 +497,14 @@ categories:
         maxPerDigest: 1
         minComposite: 8.0
         sourceChars: 5000
+        # Also publish the long post as a telegra.ph page (picture, every paragraph, «Джерела»,
+        # channel link) — Telegram opens it with ⚡ Instant View. mode teaser: the channel post keeps
+        # the headline, the first paragraph, `⚡ [Читати повністю](…)`, the source and the footer,
+        # with the page as its large preview; full: the post stays as it is plus the ⚡ line. Any
+        # Telegraph failure sends the long post as without it. Pages are public and cannot be
+        # deleted through the API. Global account settings: `telegraph:` at the top level.
+        # telegraph:
+        #   mode: teaser             # teaser | full
       # Story lines: deterministic facts about the story behind a bullet, read from the story
       # clusters (needs `storyIntel.enabled: true` at the top level). They sit after the badges
       # and the intro, before the hashtags. Off unless listed.

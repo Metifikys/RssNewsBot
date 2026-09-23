@@ -185,4 +185,20 @@ class PostConfigTest {
         assertThrows<IllegalArgumentException> { load(yaml("$sd\npost:\n  crossLinks:\n    categories: []")) }
         assertThrows<IllegalArgumentException> { load(yaml("$sd\npost:\n  crossLinks:\n    categories: [gaming]")) }
     }
+
+    @Test
+    fun `longForm telegraph block and the global telegraph account are parsed and validated`() {
+        val config = load(yaml("post:\n  longForm:\n    telegraph:\n      mode: full") + "telegraph:\n  authorName: \"Ігри\"\n  timeoutSeconds: 5\n")
+        val t = config.categories.getValue("gaming").post!!.longForm!!.telegraph!!
+        assertTrue(t.enabled)
+        assertEquals("full", t.mode)
+        assertEquals("Ігри", config.telegraph.authorName)
+        assertEquals(5L, config.telegraph.timeoutSeconds)
+        assertEquals("RssNewsBot", config.telegraph.shortName)
+        assertEquals("teaser", load(yaml("post:\n  longForm:\n    telegraph: {}")).categories.getValue("gaming").post!!.longForm!!.telegraph!!.mode)
+
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  longForm:\n    telegraph:\n      mode: page")) }
+        assertThrows<IllegalArgumentException> { load(yaml("") + "telegraph:\n  timeoutSeconds: 0\n") }
+        assertThrows<IllegalArgumentException> { load(yaml("") + "telegraph:\n  authorUrl: \"t.me/x\"\n") }
+    }
 }

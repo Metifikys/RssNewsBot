@@ -838,6 +838,58 @@ class DigestDelivererTest {
         )
         verify { db.saveSummary("tech", match { "t.me" !in it }, 1) }
     }
+
+    // ── post.longForm.telegraph (⚡) ─────────────────────────────────────────
+
+    private fun telegraphDelivery(
+        mode: String,
+        pageUrl: String?
+    ): Triple<NewsDatabase, TelegramSender, String> {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any(), any()) } returns listOf(SentRef(-100L, 41L))
+        val publisher = mockk<metifikys.telegraph.TelegraphPublisher>()
+        every { publisher.publish(any(), any(), any(), any(), any()) } returns pageUrl
+        val withImage = article(1).copy(imageUrl = "https://img.example/1.jpg")
+        val body = "Перший абзац. ".repeat(40).trim() + "\n\n" + "Другий абзац. ".repeat(40).trim()
+        val summary = "• 🎮 **Story.** $body\n[Title 1](https://example.com/1)"
+        val long = shortlistItem("evt-1", withImage.link).copy(depth = ShortlistItem.DEPTH_LONG)
+        val post = PostConfig(
+            hashtags = HashtagsConfig(category = "#tech"),
+            longForm = metifikys.config.LongFormConfig(telegraph = metifikys.config.LongFormTelegraphConfig(mode = mode))
+        )
+        DigestDeliverer(configWithPost(post, enableImages = true), db, sender, telegraph = publisher)
+            .deliver("tech", summary, listOf(withImage), listOf(long))
+        return Triple(db, sender, sent.captured)
+    }
+
+    @Test
+    fun `telegraph teaser drops the second paragraph and previews the page`() {
+        val (db, sender, sent) = telegraphDelivery("teaser", "https://telegra.ph/Story-09-23")
+        verify { sender.sendToChannel("@tech", any(), true, null, "https://telegra.ph/Story-09-23") }
+        assertFalse("Другий абзац" in sent)
+        assertTrue(sent.startsWith("🎮 **Story.**\n\nПерший абзац."))
+        assertTrue(sent.endsWith("⚡ [Читати повністю](https://telegra.ph/Story-09-23)\n\n[Title 1](https://example.com/1)\n\n#tech"))
+        // The stored summary is the full clean topic — no teaser cut, no page link.
+        verify { db.saveSummary("tech", match { "Другий абзац" in it && "telegra.ph" !in it }, 1) }
+    }
+
+    @Test
+    fun `telegraph full mode keeps the whole body and adds the read-more line`() {
+        val (_, _, sent) = telegraphDelivery("full", "https://telegra.ph/Story-09-23")
+        assertTrue("\n\nДругий абзац." in sent)
+        assertTrue("⚡ [Читати повністю](https://telegra.ph/Story-09-23)\n\n[Title 1](https://example.com/1)" in sent)
+    }
+
+    @Test
+    fun `a failed telegraph page sends the long post as before`() {
+        val (_, sender, sent) = telegraphDelivery("teaser", null)
+        verify { sender.sendToChannel("@tech", any(), true, null, "https://img.example/1.jpg") }
+        assertTrue("\n\nДругий абзац." in sent)
+        assertFalse("⚡" in sent)
+    }
 }
 
 private typealias ImageCandidateOrNull = metifikys.fetch.ImageCandidate?
