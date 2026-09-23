@@ -216,6 +216,20 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `chunkMessage hard split never cuts a link in half`() {
+        // Found by TelegramSenderPropertyTest: a single over-long line was cut at exactly maxLen,
+        // even inside a [label](url) — both halves then went out as raw Markdown.
+        val link = "[Doom](https://en.wikipedia.org/wiki/Doom_(2016_video_game))"
+        val text = "a".repeat(4080) + link + "b".repeat(100)
+        val chunks = sender.chunkMessage(text, maxLen = 4096)
+        assertEquals(listOf("a".repeat(4080), link + "b".repeat(100)), chunks)
+
+        // A link longer than a whole message cannot be kept; the plain cut still applies.
+        val huge = "[x](https://e/${"y".repeat(5000)})"
+        assertEquals("a$huge", sender.chunkMessage("a$huge", maxLen = 4096).joinToString(""))
+    }
+
+    @Test
     fun `chunkMessage preserves all content`() {
         val lines = (1..100).map { "Line $it: ${"x".repeat(60)}" }
         val text = lines.joinToString("\n")

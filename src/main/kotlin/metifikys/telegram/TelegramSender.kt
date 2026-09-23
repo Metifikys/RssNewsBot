@@ -414,10 +414,14 @@ class TelegramSender(
                 current.clear()
                 if (line.length > maxLen) {
                     // single line too long — hard split, never between the halves of a
-                    // surrogate pair (same invalid-UTF-16 → 400 failure as BUG-009's captions)
+                    // surrogate pair (same invalid-UTF-16 → 400 failure as BUG-009's captions),
+                    // and never inside a [label](url) link that fits in one message: the cut backs
+                    // up to the link's start, as truncateForCaption does (BUG-010).
+                    val links = TopicFormatter.MARKDOWN_LINK.findAll(line).map { it.range }.toList()
                     var start = 0
                     while (start < line.length) {
                         var end = minOf(start + maxLen, line.length)
+                        links.firstOrNull { start < it.first && it.first < end && end <= it.last }?.let { end = it.first }
                         if (end < line.length && end - start > 1 && line[end - 1].isHighSurrogate()) end--
                         chunks.add(line.substring(start, end))
                         start = end
