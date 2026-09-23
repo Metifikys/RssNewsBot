@@ -22,9 +22,11 @@ private val logger = KotlinLogging.logger {}
 object TopicFormatter {
 
     // The trailing source link uses the canonical LINK grammar, so a `[P]`-flaired label or a
-    // `Foo_(bar)` URL still gets the strict layout instead of silently falling back.
+    // `Foo_(bar)` URL still gets the strict layout instead of silently falling back. The emoji
+    // prefix never starts with `*`: otherwise a one-word headline (`**Silksong.**`) was taken
+    // for the "emoji" and the next `**bold**` in the body for the headline.
     private val TOPIC_SHAPE = Regex(
-        """^\s*(?<emoji>\S+)?\s*\*\*(?<headline>.+?)\*\*\s*(?<body>.*?)\s*(?<link>$LINK)\s*$""",
+        """^\s*(?<emoji>[^\s*]\S*)?\s*\*\*(?<headline>.+?)\*\*\s*(?<body>.*?)\s*(?<link>$LINK)\s*$""",
         RegexOption.DOT_MATCHES_ALL
     )
 

@@ -155,6 +155,17 @@ class TopicFormatterTest {
     }
 
     @Test
+    fun `applyStrictTopicLayout reads a one-word headline as the headline, not as an emoji`() {
+        // Found by TopicFormatterPropertyTest (idempotence): `\S+` took "**Silksong." for the emoji
+        // prefix and the body's `**finally**` bold for the headline.
+        val topic = "**Silksong.** Team Cherry **finally** dated it. [Src](https://x/y)"
+        assertEquals(
+            "**Silksong.**\n\nTeam Cherry **finally** dated it.\n\n[Src](https://x/y)",
+            TopicFormatter.applyStrictLayout(topic)
+        )
+    }
+
+    @Test
     fun `applyStrictTopicLayout falls back when input has no bold headline`() {
         val topic = "Plain text without bold [Src](https://x/y)"
         val out = TopicFormatter.applyStrictLayout(topic)
