@@ -24,7 +24,12 @@ private val logger = KotlinLogging.logger {}
 class StatusCommand(
     private val config: AppConfig,
     private val db: NewsDatabase,
-    private val errorLog: CycleErrorLog = CycleErrorLog()
+    private val errorLog: CycleErrorLog = CycleErrorLog(),
+    /**
+     * Telegram 429s in the last 24 hours ([TelegramSender.rateLimitsLast24h]); null omits the line.
+     * Anything above zero in prod is the trigger for a full per-chat / global token bucket.
+     */
+    private val telegramRateLimits: (() -> Int)? = null
 ) {
 
     private val timeFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
@@ -65,6 +70,9 @@ class StatusCommand(
             }
         }
 
+        telegramRateLimits?.let { count ->
+            sb.append('\n').append("📨 Telegram 429 (24h): ${count()}\n")
+        }
         appendLatencySection(sb)
         appendReactionsSection(sb)
         appendAffinitySection(sb)

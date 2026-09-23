@@ -8,6 +8,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
@@ -23,8 +24,20 @@ data class SentRef(val chatId: Long, val messageId: Long)
 class TelegramSender(
     private val botToken: String,
     /** Bot API origin; overridable so tests can point the sender at a local HTTP server. */
-    private val apiBaseUrl: String = "https://api.telegram.org"
+    private val apiBaseUrl: String = "https://api.telegram.org",
+    /** Per-chat spacing + shared 429 cooldown for every call this sender makes (see [ChatPacer]). */
+    private val pacer: ChatPacer = ChatPacer()
 ) {
+
+    /** Epoch millis of every 429 Telegram returned, for the `/status` 24-hour counter. */
+    private val rateLimitHits = ConcurrentLinkedDeque<Long>()
+
+    /** How many 429s Telegram returned in the last 24 hours (in-process; resets on restart). */
+    fun rateLimitsLast24h(): Int {
+        val cutoff = System.currentTimeMillis() - 24 * 3_600_000L
+        while (rateLimitHits.peekFirst()?.let { it < cutoff } == true) rateLimitHits.pollFirst()
+        return rateLimitHits.size
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -269,21 +282,28 @@ class TelegramSender(
 
     /**
      * POSTs [payload] to the given Bot API [endpoint] — the transport every Bot API method goes
-     * through. BUG-007: on 429 the `parameters.retry_after` seconds are honored and the SAME request
-     * is retried exactly once; a second 429 is returned to the caller. Network errors propagate.
+     * through. Every call first waits for its chat's [ChatPacer] slot (≥ 1 s between calls to one
+     * chat). BUG-007: on 429 the chat goes into a shared cooldown of `parameters.retry_after`
+     * seconds and the SAME request is retried exactly once — the retry's pacer wait is that
+     * cooldown; a second 429 is returned to the caller. Every 429 is logged as `[TG429]` and
+     * counted for `/status`. Network errors, and an interrupt during a wait, propagate.
      */
     private fun execute(endpoint: String, payload: String, chatId: String, retryOn429: Boolean = true): RawResponse {
+        pacer.acquire(chatId)
         val request = Request.Builder()
             .url("$apiBaseUrl/bot$botToken/$endpoint")
             .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
         val response = client.newCall(request).execute().use { RawResponse(it.code, it.body?.string().orEmpty()) }
-        if (response.isSuccessful || !retryOn429) return response
+        if (response.isSuccessful) return response
         val err = response.error()
         if ((err?.error_code ?: response.httpCode) != 429) return response
         val retryAfter = (err?.parameters?.retry_after ?: DEFAULT_RETRY_AFTER_SEC).coerceIn(1, MAX_RETRY_AFTER_SEC)
-        logger.warn { "Telegram $endpoint 429 for $chatId — retrying once after ${retryAfter}s" }
-        Thread.sleep(retryAfter * 1000)
+        rateLimitHits.addLast(System.currentTimeMillis())
+        pacer.cooldown(chatId, retryAfter * 1000)
+        // Greppable marker: the criterion for a full token bucket is any of these in prod logs.
+        logger.warn { "[TG429] $endpoint $chatId retry_after=$retryAfter" + if (retryOn429) " — retrying once" else " — giving up" }
+        if (!retryOn429) return response
         return execute(endpoint, payload, chatId, retryOn429 = false)
     }
 
@@ -321,6 +341,12 @@ class TelegramSender(
                     SendResult.Transient
                 }
             }
+        } catch (e: InterruptedException) {
+            // Interrupted while waiting for the chat's slot or a 429 cooldown: keep the flag for the
+            // caller's cancellation handling and stop — no (further) attempt is sent.
+            Thread.currentThread().interrupt()
+            logger.warn { "Telegram $endpoint for $chatId interrupted during a rate-limit wait — not sent" }
+            SendResult.Transient
         } catch (e: Exception) {
             logger.error(e) { "Telegram $endpoint failed for $chatId" }
             SendResult.Transient
@@ -392,6 +418,10 @@ class TelegramSender(
             val ok = response.isSuccessful && response.body.contains("\"ok\":true")
             if (!ok) logger.warn { "Telegram $endpoint failed for $chatId (HTTP ${response.httpCode})" }
             ok
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logger.warn { "Telegram $endpoint for $chatId interrupted during a rate-limit wait — not sent" }
+            false
         } catch (e: Exception) {
             logger.warn(e) { "Telegram $endpoint failed for $chatId" }
             false

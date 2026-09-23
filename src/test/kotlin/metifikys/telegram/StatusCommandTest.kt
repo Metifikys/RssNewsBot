@@ -139,4 +139,14 @@ class StatusCommandTest {
         assertTrue(text.contains("✅ 0 · 📰 0 · ⛔ 0"))
         assertTrue(!text.contains("✅ 0 ("))
     }
+
+    @Test
+    fun `telegram 429 counter is shown only when wired`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val config = mockk<AppConfig>(relaxed = true)
+        val withCounter = StatusCommand(config = config, db = db, errorLog = CycleErrorLog(), telegramRateLimits = { 3 }).build()
+        assertTrue(withCounter.contains("📨 Telegram 429 (24h): 3"), withCounter)
+        val without = StatusCommand(config = config, db = db, errorLog = CycleErrorLog()).build()
+        assertTrue("Telegram 429" !in without)
+    }
 }

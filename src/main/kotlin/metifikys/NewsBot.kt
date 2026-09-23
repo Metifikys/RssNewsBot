@@ -142,7 +142,7 @@ class NewsBot(
     private val errorLog = CycleErrorLog()
 
     private val statusPoster: StatusPoster? = config.admin.statusChatId?.let { chatId ->
-        StatusPoster(chatId, sender, StatusCommand(config, db, errorLog), errorLog)
+        StatusPoster(chatId, sender, StatusCommand(config, db, errorLog, sender::rateLimitsLast24h), errorLog)
     }
 
     /**

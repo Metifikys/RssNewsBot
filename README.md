@@ -580,6 +580,12 @@ chars with ellipsis).
   is used as the photo; caption is the topic text truncated to Telegram's 1024-char
   hard limit. Bullets without a usable image fall back to plain text.
 - 4096-char chunking for plain text; redirects are disabled to prevent bot-token leakage.
+- **Rate limits:** every Bot API call waits for its chat's slot (`ChatPacer`: ≥ 1 s between
+  calls to one chat, Telegram's per-chat guidance; different channels never wait on each
+  other). A 429 puts that chat into a shared `retry_after` cooldown — every thread writing there
+  waits it out — and the request is retried once. Each 429 is logged as `[TG429] <method> <chat>
+  retry_after=N` and counted in `/status` ("Telegram 429 (24h)"). No global token bucket: the bot
+  runs far below 30 msg/s; any `[TG429]` in prod logs is the trigger to add one.
 
 **Partial-send reconciliation:**
 

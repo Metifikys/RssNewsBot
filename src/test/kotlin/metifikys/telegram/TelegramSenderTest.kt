@@ -11,6 +11,9 @@ class TelegramSenderTest {
 
     private val sender = TelegramSender("token")
 
+    /** Tests drive many calls into one chat; the 1 s per-chat spacing is covered by ChatPacerTest. */
+    private fun noPacing() = ChatPacer(minIntervalMs = 0)
+
     /** A fake Bot API that records every request body and answers a fixed `ok` envelope. */
     private fun withFakeApi(block: (sender: TelegramSender, bodies: MutableList<String>) -> Unit) {
         val bodies = mutableListOf<String>()
@@ -24,7 +27,7 @@ class TelegramSenderTest {
         }
         server.start()
         try {
-            block(TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}"), bodies)
+            block(TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing()), bodies)
         } finally {
             server.stop(0)
         }
@@ -92,7 +95,7 @@ class TelegramSenderTest {
         }
         server.start()
         try {
-            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}")
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing())
             assertEquals(TelegramSender.EditResult.NOT_FOUND, s.editMessageText("@ch", 7L, "x"))
             description = "Bad Request: message is not modified"
             assertEquals(TelegramSender.EditResult.OK, s.editMessageText("@ch", 7L, "x"))
@@ -118,7 +121,7 @@ class TelegramSenderTest {
         }
         server.start()
         try {
-            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}")
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing())
             s.sendToChannel("@ch", "[Foo](https://x.com/s?q=\"a\")")
             assertEquals(2, bodies.size)
             assertTrue("""Foo: https://x.com/s?q=\"a\"""" in bodies[1], bodies[1])
@@ -146,7 +149,7 @@ class TelegramSenderTest {
         }
         server.start()
         try {
-            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}")
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing())
             assertTrue(s.pinChatMessage("@ch", 7L))
             assertTrue(s.unpinChatMessage("@ch", 7L))
             assertTrue(s.deleteMessage("@ch", 7L))
@@ -155,6 +158,60 @@ class TelegramSenderTest {
                 paths.map { it.substringAfterLast('/') }
             )
         } finally {
+            server.stop(0)
+        }
+    }
+
+    /** A fake Bot API that answers every call with 429 + [retryAfter]; returns the server and the hit paths. */
+    private fun alwaysRateLimited(retryAfter: Int): Pair<HttpServer, MutableList<String>> {
+        val paths = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { ex ->
+            ex.requestBody.readBytes()
+            paths += ex.requestURI.path.substringAfterLast('/')
+            val bytes = """{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":$retryAfter}}"""
+                .toByteArray()
+            ex.sendResponseHeaders(429, bytes.size.toLong())
+            ex.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        return server to paths
+    }
+
+    @Test
+    fun `a second 429 gives up and both count for status`() {
+        val (server, paths) = alwaysRateLimited(retryAfter = 1)
+        try {
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing())
+            assertFalse(s.deleteMessage("@ch", 7L))
+            assertEquals(listOf("deleteMessage", "deleteMessage"), paths.toList())
+            assertEquals(2, s.rateLimitsLast24h())
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `an interrupt during the 429 wait keeps the flag and stops retrying`() {
+        val (server, paths) = alwaysRateLimited(retryAfter = 30)
+        val caller = Thread.currentThread()
+        val interrupter = Thread {
+            // Wait until the first 429 arrived, then interrupt the cooldown wait.
+            while (paths.isEmpty()) Thread.sleep(10)
+            Thread.sleep(200)
+            caller.interrupt()
+        }
+        try {
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing())
+            interrupter.start()
+            val started = System.nanoTime()
+            assertTrue(s.sendToChannel("@ch", "hello").isEmpty())
+            assertTrue(Thread.interrupted(), "the interrupt flag must survive the rate-limit wait")
+            assertTrue(System.nanoTime() - started < 10_000_000_000L, "gave up promptly instead of waiting 30 s")
+            assertEquals(listOf("sendMessage"), paths.toList(), "no retry after the interrupt")
+        } finally {
+            interrupter.join()
+            Thread.interrupted()
             server.stop(0)
         }
     }
