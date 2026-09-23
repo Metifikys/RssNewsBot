@@ -20,9 +20,11 @@ private val logger = KotlinLogging.logger {}
 class NewsDatabase(dbPath: String) :
     BatchStore by BatchRepository(),
     SummaryStore by SummaryRepository(),
+    CoveredEventStore by CoveredEventRepository(),
     RejectedEventStore by RejectedEventRepository(),
     LlmCallStore by LlmCallRepository(),
     StatusQueryStore by StatusQueryRepository(),
+    EmbeddingStore by EmbeddingRepository(),
     BadgeCacheStore by BadgeCacheRepository(),
     TrackerStore by TrackerRepository(),
     EntityIntroStore by EntityIntroRepository(),
@@ -338,124 +340,6 @@ class NewsDatabase(dbPath: String) :
         }
     }
 
-    // ── Covered events (Step 1 dedup memory) ─────────────────────────────────
-
-    /**
-     * Upserts covered events. On conflict against (category, event_key) the existing row's
-     * `core_fact`, `importance`, `url`, and `covered_at` are refreshed; the key columns are
-     * preserved. Static descriptive fields (`subject`, `franchise`, `event_type`) are NOT
-     * refreshed — they are expected to be stable for a given event_key, and dropping updates
-     * avoids occasional LLM drift destabilizing the row identity.
-     */
-    fun insertCoveredEvents(events: List<CoveredEventRow>) {
-        if (events.isEmpty()) return
-        transaction {
-            for (event in events) {
-                val updatedRows = CoveredEventsTable.update(
-                    {
-                        (CoveredEventsTable.category eq event.category) and
-                            (CoveredEventsTable.eventKey eq event.eventKey)
-                    }
-                ) {
-                    it[coreFact] = event.coreFact
-                    it[importance] = event.importance
-                    it[newsworthiness] = event.newsworthiness
-                    it[digestFit] = event.digestFit
-                    it[url] = event.url
-                    it[coveredAt] = event.coveredAt
-                }
-                if (updatedRows == 0) {
-                    CoveredEventsTable.insertIgnore {
-                        it[category] = event.category
-                        it[eventKey] = event.eventKey
-                        it[subject] = event.subject
-                        it[franchise] = event.franchise
-                        it[eventType] = event.eventType
-                        it[coreFact] = event.coreFact
-                        it[importance] = event.importance
-                        it[newsworthiness] = event.newsworthiness
-                        it[digestFit] = event.digestFit
-                        it[url] = event.url
-                        it[coveredAt] = event.coveredAt
-                    }
-                }
-            }
-        }
-    }
-
-    /** Returns up to [limit] covered events for [category] within [sinceDays], newest-first. */
-    fun fetchRecentEvents(category: String, sinceDays: Long, limit: Int): List<CoveredEventRow> {
-        if (limit <= 0) return emptyList()
-        val cutoff = LocalDateTime.now().minusDays(sinceDays)
-        return transaction {
-            CoveredEventsTable
-                .selectAll()
-                .where {
-                    (CoveredEventsTable.category eq category) and
-                        (CoveredEventsTable.coveredAt greaterEq cutoff)
-                }
-                .orderBy(CoveredEventsTable.coveredAt, SortOrder.DESC)
-                .limit(limit)
-                .map {
-                    CoveredEventRow(
-                        category = it[CoveredEventsTable.category],
-                        eventKey = it[CoveredEventsTable.eventKey],
-                        subject = it[CoveredEventsTable.subject],
-                        franchise = it[CoveredEventsTable.franchise],
-                        eventType = it[CoveredEventsTable.eventType],
-                        coreFact = it[CoveredEventsTable.coreFact],
-                        importance = it[CoveredEventsTable.importance],
-                        newsworthiness = it[CoveredEventsTable.newsworthiness],
-                        digestFit = it[CoveredEventsTable.digestFit],
-                        url = it[CoveredEventsTable.url],
-                        coveredAt = it[CoveredEventsTable.coveredAt]
-                    )
-                }
-        }
-    }
-
-    /**
-     * Covered events for [category] whose `event_key` is in [eventKeys] and `covered_at >= since`.
-     * Keyed lookup for the meaningful-update cooldown: unlike [fetchRecentEvents] it is not
-     * bounded by `maxContextEvents`, so an event that has already scrolled out of the Step 1
-     * prompt context can still be found for the cooldown check.
-     */
-    fun fetchCoveredEventsByKeys(category: String, eventKeys: Collection<String>, since: LocalDateTime): List<CoveredEventRow> {
-        if (eventKeys.isEmpty()) return emptyList()
-        return transaction {
-            CoveredEventsTable
-                .selectAll()
-                .where {
-                    (CoveredEventsTable.category eq category) and
-                        (CoveredEventsTable.eventKey inList eventKeys.toSet()) and
-                        (CoveredEventsTable.coveredAt greaterEq since)
-                }
-                .map {
-                    CoveredEventRow(
-                        category = it[CoveredEventsTable.category],
-                        eventKey = it[CoveredEventsTable.eventKey],
-                        subject = it[CoveredEventsTable.subject],
-                        franchise = it[CoveredEventsTable.franchise],
-                        eventType = it[CoveredEventsTable.eventType],
-                        coreFact = it[CoveredEventsTable.coreFact],
-                        importance = it[CoveredEventsTable.importance],
-                        newsworthiness = it[CoveredEventsTable.newsworthiness],
-                        digestFit = it[CoveredEventsTable.digestFit],
-                        url = it[CoveredEventsTable.url],
-                        coveredAt = it[CoveredEventsTable.coveredAt]
-                    )
-                }
-        }
-    }
-
-    /** Deletes covered events older than [retentionDays]. */
-    fun pruneOldCoveredEvents(retentionDays: Long) {
-        val cutoff = LocalDateTime.now().minusDays(retentionDays)
-        transaction {
-            CoveredEventsTable.deleteWhere { coveredAt less cutoff }
-        }
-    }
-
     // ── Article embeddings (semantic-dedup detector) ─────────────────────────
 
     /**
@@ -470,70 +354,6 @@ class NewsDatabase(dbPath: String) :
                 .select(ArticlesTable.id, ArticlesTable.link)
                 .where { ArticlesTable.link inList links }
                 .associate { it[ArticlesTable.link] to it[ArticlesTable.id] }
-        }
-    }
-
-    /**
-     * Persists a single embedding. Idempotent: if a row already exists for [articleId]
-     * it is replaced with the new model/dim/vector (the detector runs once per cycle
-     * so this is rare, but it keeps re-runs deterministic).
-     */
-    fun saveEmbedding(articleId: Int, model: String, vector: ByteArray) {
-        val dim = vector.size / 4
-        transaction {
-            val updated = ArticleEmbeddingsTable.update(
-                { ArticleEmbeddingsTable.articleId eq articleId }
-            ) {
-                it[ArticleEmbeddingsTable.model] = model
-                it[ArticleEmbeddingsTable.dim] = dim
-                it[ArticleEmbeddingsTable.vector] = org.jetbrains.exposed.sql.statements.api.ExposedBlob(vector)
-                it[createdAt] = LocalDateTime.now()
-            }
-            if (updated == 0) {
-                ArticleEmbeddingsTable.insertIgnore {
-                    it[ArticleEmbeddingsTable.articleId] = articleId
-                    it[ArticleEmbeddingsTable.model] = model
-                    it[ArticleEmbeddingsTable.dim] = dim
-                    it[ArticleEmbeddingsTable.vector] = org.jetbrains.exposed.sql.statements.api.ExposedBlob(vector)
-                    it[createdAt] = LocalDateTime.now()
-                }
-            }
-        }
-    }
-
-    /**
-     * Returns up to [limit] embeddings for articles in [category] whose `pubDate`
-     * is within [sinceDays] days, newest-first. Used by the semantic-dedup detector
-     * to scan candidate neighbours.
-     */
-    fun fetchRecentEmbeddings(category: String, sinceDays: Long, limit: Int): List<EmbeddingRow> {
-        if (limit <= 0) return emptyList()
-        val cutoff = LocalDateTime.now().minusDays(sinceDays)
-        return transaction {
-            (ArticleEmbeddingsTable innerJoin ArticlesTable)
-                .select(
-                    ArticleEmbeddingsTable.articleId, ArticleEmbeddingsTable.model,
-                    ArticleEmbeddingsTable.vector, ArticlesTable.link, ArticlesTable.title,
-                    ArticlesTable.category, ArticlesTable.pubDate, ArticlesTable.status
-                )
-                .where {
-                    (ArticlesTable.category eq category) and
-                        (ArticlesTable.pubDate greaterEq cutoff)
-                }
-                .orderBy(ArticlesTable.pubDate, SortOrder.DESC)
-                .limit(limit)
-                .map {
-                    EmbeddingRow(
-                        articleId = it[ArticleEmbeddingsTable.articleId],
-                        link = it[ArticlesTable.link],
-                        title = it[ArticlesTable.title],
-                        category = it[ArticlesTable.category],
-                        model = it[ArticleEmbeddingsTable.model],
-                        vector = it[ArticleEmbeddingsTable.vector].bytes,
-                        pubDate = it[ArticlesTable.pubDate],
-                        status = it[ArticlesTable.status]
-                    )
-                }
         }
     }
 
@@ -554,99 +374,6 @@ class NewsDatabase(dbPath: String) :
                 it[duplicateOf] = duplicateOfId
                 it[processingStartedAt] = null
             }
-        }
-    }
-
-    /** Deletes embedding rows older than [retentionDays] (by `created_at`). */
-    fun pruneOldEmbeddings(retentionDays: Long) {
-        val cutoff = LocalDateTime.now().minusDays(retentionDays)
-        transaction {
-            ArticleEmbeddingsTable.deleteWhere { createdAt less cutoff }
-        }
-    }
-
-    // ── Event embeddings (log-only event-level analyzer) ─────────────────────
-
-    /**
-     * Persists a single event embedding, upserted by `(category, event_key)`. Idempotent:
-     * if a row already exists for the pair it is replaced with the new model/dim/vector and
-     * `created_at` is refreshed (so recency reflects the latest sighting of the event).
-     */
-    fun saveEventEmbedding(
-        category: String,
-        eventKey: String,
-        subject: String,
-        franchise: String,
-        model: String,
-        vector: ByteArray
-    ) {
-        val dim = vector.size / 4
-        transaction {
-            val updated = EventEmbeddingsTable.update(
-                { (EventEmbeddingsTable.category eq category) and (EventEmbeddingsTable.eventKey eq eventKey) }
-            ) {
-                it[EventEmbeddingsTable.subject] = subject
-                it[EventEmbeddingsTable.franchise] = franchise
-                it[EventEmbeddingsTable.model] = model
-                it[EventEmbeddingsTable.dim] = dim
-                it[EventEmbeddingsTable.vector] = org.jetbrains.exposed.sql.statements.api.ExposedBlob(vector)
-                it[createdAt] = LocalDateTime.now()
-            }
-            if (updated == 0) {
-                EventEmbeddingsTable.insertIgnore {
-                    it[EventEmbeddingsTable.category] = category
-                    it[EventEmbeddingsTable.eventKey] = eventKey
-                    it[EventEmbeddingsTable.subject] = subject
-                    it[EventEmbeddingsTable.franchise] = franchise
-                    it[EventEmbeddingsTable.model] = model
-                    it[EventEmbeddingsTable.dim] = dim
-                    it[EventEmbeddingsTable.vector] = org.jetbrains.exposed.sql.statements.api.ExposedBlob(vector)
-                    it[createdAt] = LocalDateTime.now()
-                }
-            }
-        }
-    }
-
-    /**
-     * Returns up to [limit] event embeddings in [category] whose `created_at` is within
-     * [sinceDays] days, newest-first. Candidate set for the event-level analyzer's
-     * brute-force cosine scan against previously-covered events.
-     */
-    fun fetchRecentEventEmbeddings(category: String, sinceDays: Long, limit: Int): List<EventEmbeddingRow> {
-        if (limit <= 0) return emptyList()
-        val cutoff = LocalDateTime.now().minusDays(sinceDays)
-        return transaction {
-            EventEmbeddingsTable
-                .select(
-                    EventEmbeddingsTable.category, EventEmbeddingsTable.eventKey,
-                    EventEmbeddingsTable.subject, EventEmbeddingsTable.franchise,
-                    EventEmbeddingsTable.model, EventEmbeddingsTable.vector, EventEmbeddingsTable.createdAt
-                )
-                .where {
-                    (EventEmbeddingsTable.category eq category) and
-                        (EventEmbeddingsTable.createdAt greaterEq cutoff)
-                }
-                .orderBy(EventEmbeddingsTable.createdAt, SortOrder.DESC)
-                .limit(limit)
-                .map {
-                    EventEmbeddingRow(
-                        category = it[EventEmbeddingsTable.category],
-                        eventKey = it[EventEmbeddingsTable.eventKey],
-                        subject = it[EventEmbeddingsTable.subject],
-                        franchise = it[EventEmbeddingsTable.franchise],
-                        model = it[EventEmbeddingsTable.model],
-                        vector = it[EventEmbeddingsTable.vector].bytes,
-                        createdAt = it[EventEmbeddingsTable.createdAt]
-                    )
-                }
-        }
-    }
-
-    /** Deletes event embedding rows older than [retentionDays] (by `created_at`). */
-    fun pruneOldEventEmbeddings(retentionDays: Long) {
-        val cutoff = LocalDateTime.now().minusDays(retentionDays)
-        transaction {
-            EventEmbeddingsTable.deleteWhere { createdAt less cutoff }
         }
     }
 
