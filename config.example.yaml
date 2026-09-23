@@ -483,11 +483,14 @@ categories:
       #            events as steam; no line when the game has no Ukrainian, see badges.ukLocalizationShowMissing)
       #   deck   — 🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти) (Valve's Deck report +
       #            ProtonDB summary, both undocumented; game events as steam plus patch)
+      #   critic — 🏆 Metacritic: 90 (the PC Metascore in Steam's appdetails; release / review events of a
+      #            game that is out — Steam fills it some days after release)
       # The Steam-based badges share one store search + appdetails per game (cached in the DB).
       badges:
         steam: true
         ukLocalization: false
         deck: false
+        critic: false
         hn: false
         github: false
         trailer: false

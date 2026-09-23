@@ -1329,7 +1329,9 @@ data class IntroConfig(
  *   the article embeds a YouTube video whose title (YouTube oEmbed) names the subject / franchise;
  * - [ukLocalization] (id `uk_lang`): `🇺🇦 Українська: інтерфейс, субтитри, озвучка` for a Steam game
  *   (Steam's GetItems; no line without Ukrainian unless `badges.ukLocalizationShowMissing`);
- * - [deck]: `🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти)` for a Steam game (also on `patch`).
+ * - [deck]: `🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти)` for a Steam game (also on `patch`);
+ * - [critic]: `🏆 Metacritic: 90` on release / review events of a released Steam game (the Metascore in
+ *   Steam's appdetails).
  */
 data class BadgesConfig(
     val steam: Boolean = false,
@@ -1337,7 +1339,8 @@ data class BadgesConfig(
     val github: Boolean = false,
     val trailer: Boolean = false,
     val ukLocalization: Boolean = false,
-    val deck: Boolean = false
+    val deck: Boolean = false,
+    val critic: Boolean = false
 ) {
     /** Provider ids to run for this category, matching [metifikys.enrich.BadgeProvider.id]. */
     val enabledIds: Set<String>
@@ -1345,6 +1348,7 @@ data class BadgesConfig(
             if (steam) add("steam")
             if (ukLocalization) add("uk_lang")
             if (deck) add("deck")
+            if (critic) add("critic")
             if (hn) add("hn")
             if (github) add("github")
             if (trailer) add("trailer")

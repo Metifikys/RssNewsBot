@@ -28,6 +28,7 @@ object BadgeProviders {
             if (UkLocalizationBadgeProvider.ID in needed) {
                 add(UkLocalizationBadgeProvider(http, cache, steamApps, settings.ukLocalizationShowMissing, settings.steamCountry))
             }
+            if (CriticBadgeProvider.ID in needed) add(CriticBadgeProvider(steamApps))
             if (DeckBadgeProvider.ID in needed) add(DeckBadgeProvider(http, cache, steamApps))
             if (HackerNewsBadgeProvider.ID in needed) add(HackerNewsBadgeProvider(http, cache))
             if (GitHubBadgeProvider.ID in needed) add(GitHubBadgeProvider(http, cache, token = settings.githubToken))

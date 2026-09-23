@@ -59,6 +59,7 @@ object ConfigChangelog {
         Entry("categories.*.post.persona", "2026-09-23", "💬 editor-persona remark under the top event, A/B persona / control (needs your own promptFile; /status 🧪 Variants)"),
         Entry("categories.*.post.badges.ukLocalization", "2026-09-23", "🇺🇦 Ukrainian interface / subtitles / voice-over of a Steam game (Steam GetItems; badges.ukLocalizationShowMissing)"),
         Entry("categories.*.post.badges.deck", "2026-09-23", "🕹 Steam Deck verified / playable + ProtonDB tier of a Steam game (undocumented public endpoints)"),
+        Entry("categories.*.post.badges.critic", "2026-09-23", "🏆 Metacritic score of a released Steam game on release / review events (from Steam appdetails)"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */
