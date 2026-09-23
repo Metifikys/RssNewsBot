@@ -63,6 +63,21 @@ the first arg.
 - `quality2.mjs` — markup share of the prompt budget per host, empty-desc hosts,
   site-chrome boilerplate counts, teaser-host length percentiles, t.me service-noise
   (mute candidates).
+- `cache-audit.mjs [db] [--days 30] [--prompts prompts] [--price-in 2.0]` — would Anthropic
+  prompt caching of the static system prompt pay? Per (category, use case, provider, model):
+  calls/day, gap between neighbouring calls (p50 / p90, share ≤ 5 / 10 / 60 min = the ceiling
+  of the hit rate for that TTL), static prefix vs whole prompt (chars/4 from the local prompt
+  files), and the monthly net saving at `--price-in` $/M for TTL 5 min and 1 h; ends with the
+  go / no-go of the plan (paid Anthropic API for EXTRACT/RENDER ≥ 2 weeks AND ≥ $5/month and
+  ≥ 20% of that bill).
+
+  **Decision 2026-09-23: no-go, no `cache_control` code.** On the prod snapshot (30 days) no
+  EXTRACT/RENDER call went to the paid Anthropic API — Step 1 and render run on the `claude` /
+  `codex` subscriptions, per token $0. The static system prompt is only 5–17% of the input
+  (tech Step 1: ≈2.3K of ≈20K tokens), calls of one prompt are 30–60 min apart (≤ 5 min:
+  0–1%, ≤ 60 min: 44–89%), so even priced as if on the API at $2/M the whole EXTRACT/RENDER
+  traffic would save at most ≈ $2.8/month with a 1 h TTL, and lose money with the 5 min one.
+  Re-run the audit when a category moves to the paid Anthropic API.
 
 These audits produced the 2026-08 fixes: HTML strip at ingestion (`HtmlText`), site-chrome
 scrubbing + meta-description fallback in `ArticleFetcher`, politics mute keys, and the
