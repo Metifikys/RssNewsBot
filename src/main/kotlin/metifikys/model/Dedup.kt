@@ -73,7 +73,14 @@ data class ShortlistItem(
      * events (see `post.longForm`), null for the usual short bullet. Travels with the shortlist
      * through a pending batch, so delivery knows which bullets are long.
      */
-    val depth: String? = null
+    val depth: String? = null,
+    /**
+     * Set by code in Step 1 post-processing, never by the model: links of the batch articles this
+     * event was built from — its `articleIndices` plus the in-batch copies Step 1 folded into it —
+     * resolved while the article list is still the prompt's (see `metifikys.story.EventMembership`).
+     * Travels with the shortlist through a pending batch; empty on rows saved before it existed.
+     */
+    val sourceLinks: List<String> = emptyList()
 ) {
     val isLongForm: Boolean get() = depth == DEPTH_LONG
 

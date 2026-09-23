@@ -38,6 +38,7 @@ class NewsDatabase(dbPath: String) :
     AdminFeedbackStore by AdminFeedbackRepository(),
     FeedStore by FeedRepository(),
     FeedCandidateStore by FeedCandidateRepository(),
+    EventArticleStore by EventArticleRepository(),
     BotStateStore by BotStateRepository() {
 
     /** Canonical path of the DB file; side jobs (e.g. [RetentionArchiver]) place their files next to it. */

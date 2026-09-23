@@ -60,6 +60,9 @@ object DropReason {
     const val MUTE = "mute"
 }
 
+/** An article row's identity and clocks: `pub_date` (the feed's claim) and `fetched_at` (ours; null on old rows). */
+data class ArticleStamp(val id: Int, val pubDate: LocalDateTime, val fetchedAt: LocalDateTime?)
+
 /** Ingested articles and their UNPROCESSED → PROCESSING → PROCESSED / DUPLICATE lifecycle. */
 interface ArticleStore {
     /**
@@ -130,6 +133,9 @@ interface ArticleStore {
      * inserted articles to the embeddings it generated for them.
      */
     fun fetchArticleIdsByLinks(links: List<String>): Map<String, Int>
+
+    /** Id, feed date and first-ingest time for each known link in [links]; the story-cluster rows' timing. */
+    fun fetchArticleStamps(links: Collection<String>): Map<String, ArticleStamp>
 
     /**
      * Marks [articleId] as [ArticleStatus.DUPLICATE] and sets its `duplicate_of`
@@ -359,6 +365,18 @@ internal class ArticleRepository : ArticleStore {
                 .select(ArticlesTable.id, ArticlesTable.link)
                 .where { ArticlesTable.link inList links }
                 .associate { it[ArticlesTable.link] to it[ArticlesTable.id] }
+        }
+    }
+
+    override fun fetchArticleStamps(links: Collection<String>): Map<String, ArticleStamp> {
+        if (links.isEmpty()) return emptyMap()
+        return transaction {
+            ArticlesTable
+                .select(ArticlesTable.id, ArticlesTable.link, ArticlesTable.pubDate, ArticlesTable.fetchedAt)
+                .where { ArticlesTable.link inList links.distinct() }
+                .associate {
+                    it[ArticlesTable.link] to ArticleStamp(it[ArticlesTable.id], it[ArticlesTable.pubDate], it[ArticlesTable.fetchedAt])
+                }
         }
     }
 

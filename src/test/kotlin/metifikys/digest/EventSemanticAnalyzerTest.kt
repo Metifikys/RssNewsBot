@@ -338,4 +338,31 @@ class EventSemanticAnalyzerTest {
         assertEquals(input, result)  // a transient error must never empty a digest
         verify(exactly = 0) { db.saveEventEmbedding(any(), any(), any(), any(), any(), any()) }
     }
+
+    @Test
+    fun `storyIntel - a hard-rejected event's articles move under the covered key`() {
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        every { db.fetchRecentEventEmbeddings(any(), any(), any()) } returns
+            listOf(pastEvent("covered", floatArrayOf(1f, 0f, 0f)))
+        val cfg = hardCfg().copy(storyIntel = metifikys.config.StoryIntelConfig(enabled = true))
+
+        EventSemanticAnalyzer(cfg, db, embedder).analyzeAndFilter("tech", listOf(item("new-dup", status = "new")))
+
+        verify(exactly = 1) { db.reassignEventArticles("tech", "new-dup", "covered", metifikys.db.EventArticleRole.LAYER35) }
+    }
+
+    @Test
+    fun `storyIntel off - a hard reject moves nothing`() {
+        val db: NewsDatabase = mockk(relaxed = true)
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        every { db.fetchRecentEventEmbeddings(any(), any(), any()) } returns
+            listOf(pastEvent("covered", floatArrayOf(1f, 0f, 0f)))
+
+        EventSemanticAnalyzer(hardCfg(), db, embedder).analyzeAndFilter("tech", listOf(item("new-dup", status = "new")))
+
+        verify(exactly = 0) { db.reassignEventArticles(any(), any(), any(), any()) }
+    }
 }

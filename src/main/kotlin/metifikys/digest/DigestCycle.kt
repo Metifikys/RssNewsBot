@@ -412,6 +412,8 @@ class DigestCycle(
         db.deleteOldBadgeCache()
         db.deleteOldEntityIntros()
         db.deleteOldTrackerEntries()
+        // Unconditional: rows recorded while storyIntel was on still age out after it is switched off.
+        db.deleteOldEventArticles(config.storyIntel.retentionDays)
     }
 
     /**
@@ -556,7 +558,8 @@ class DigestCycle(
         val extractor = EventExtractor(
             openAI = primaryClient,
             promptLoader = promptLoader,
-            db = db
+            db = db,
+            storyIntel = config.storyIntel
         )
 
         RunContext.carry(primaryClient.resumeExtractBatch(record.batchId))

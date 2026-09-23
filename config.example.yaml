@@ -129,6 +129,18 @@ anthropic:
 #     recheckDays: 30
 #     ignoreDomains: [youtube.com, x.com, twitter.com, reddit.com, t.me, wikipedia.org, github.com]
 
+# Optional: story clusters (off by default). Records which articles the dedup folded into which
+# event — Step 1 extractions (every status), Layer 2 late reprints (semanticDedup.hardThreshold)
+# and Layer 3.5 merges — into `event_articles`, with each article's domain, pub_date and our own
+# fetched_at. Recording only: nothing in the channel changes. The story footer lines
+# (`post.storyLines`), `weekly.showOutlets` and `weekly.sourceLeaderboard` read these rows, so
+# switch this on weeks before them.
+# storyIntel:
+#   enabled: true
+#   retentionDays: 180        # must be >= weekly.lookbackDays
+#   domainAliases:            # sister sites / mirrors counted as one outlet
+#     eurogamer.de: eurogamer.net
+
 database:
   path: "news.db"
 

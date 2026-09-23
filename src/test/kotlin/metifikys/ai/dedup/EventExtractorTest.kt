@@ -654,4 +654,71 @@ class EventExtractorTest {
         assertEquals(1, ready.result.shortlist.size)
         verify(exactly = 0) { db.fetchCoveredEventsByKeys(any(), any(), any()) }
     }
+
+    // ── Story clusters (storyIntel) and shortlist sourceLinks ────────────────
+
+    private val clusterJson = """
+    {
+      "extractions": [
+        { "articleIndex": 0, "eventKey": "story", "coreFact": "f", "url": "https://a.com/1", "status": "new" },
+        { "articleIndex": 1, "eventKey": "story", "coreFact": "f", "url": "https://b.com/2", "status": "duplicate" },
+        { "articleIndex": 2, "eventKey": "story", "coreFact": "f", "url": "https://hallucinated.com/x", "status": "duplicate" },
+        { "articleIndex": 2, "eventKey": "junk", "coreFact": "f", "url": "https://c.com/3", "status": "rejected" }
+      ],
+      "shortlist": [
+        { "eventKey": "story", "coreFact": "f", "url": "https://a.com/1", "status": "new", "articleIndices": [0] }
+      ]
+    }
+    """.trimIndent()
+
+    private val clusterArticles = listOf(article("https://a.com/1"), article("https://b.com/2"), article("https://c.com/3"))
+
+    private fun stubClusterRun() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { openAI.completeJson(any(), any(), any()) } returns clusterJson
+        every { db.fetchArticleStamps(any()) } answers {
+            firstArg<Collection<String>>().withIndex().associate { (i, link) ->
+                link to metifikys.db.ArticleStamp(100 + i, LocalDateTime.of(2026, 9, 1, 10, i), LocalDateTime.of(2026, 9, 1, 11, 0))
+            }
+        }
+    }
+
+    @Test
+    fun `shortlist items carry their source links, in-batch copies included`() {
+        stubClusterRun()
+        val ready = assertIs<ExtractOutcome.Ready>(extractor.extract("games", cat(), clusterArticles))
+        assertEquals(listOf("https://a.com/1", "https://b.com/2"), ready.result.shortlist.single().sourceLinks)
+        verify(exactly = 0) { db.upsertEventArticles(any()) }
+    }
+
+    @Test
+    fun `storyIntel records every in-batch extraction, never one with a url outside the batch`() {
+        stubClusterRun()
+        val rows = slot<List<metifikys.db.EventArticleRow>>()
+        every { db.upsertEventArticles(capture(rows)) } just Runs
+        extractor = EventExtractor(openAI, promptLoader, db, storyIntel = metifikys.config.StoryIntelConfig(enabled = true))
+
+        extractor.extract("games", cat(), clusterArticles)
+
+        val byLink = rows.captured.associateBy { it.link }
+        assertEquals(setOf("https://a.com/1", "https://b.com/2", "https://c.com/3"), byLink.keys)
+        assertEquals("story", byLink.getValue("https://b.com/2").eventKey)
+        assertEquals("duplicate", byLink.getValue("https://b.com/2").step1Status)
+        assertEquals("junk", byLink.getValue("https://c.com/3").eventKey)
+        assertEquals("b.com", byLink.getValue("https://b.com/2").domain)
+        assertEquals(LocalDateTime.of(2026, 9, 1, 11, 0), byLink.getValue("https://a.com/1").seenAt)
+        assertTrue(rows.captured.all { it.role == metifikys.db.EventArticleRole.STEP1 && it.category == "games" })
+    }
+
+    @Test
+    fun `storyIntel - a failing write never costs the digest`() {
+        stubClusterRun()
+        every { db.upsertEventArticles(any()) } throws RuntimeException("locked")
+        extractor = EventExtractor(openAI, promptLoader, db, storyIntel = metifikys.config.StoryIntelConfig(enabled = true))
+
+        val ready = assertIs<ExtractOutcome.Ready>(extractor.extract("games", cat(), clusterArticles))
+        assertEquals(1, ready.result.shortlist.size)
+    }
 }

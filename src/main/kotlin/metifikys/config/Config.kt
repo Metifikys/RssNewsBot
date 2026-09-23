@@ -368,6 +368,24 @@ data class FeedHealthThresholds(
     val primaryMinFirstPct: Double = 50.0
 )
 
+/**
+ * Story intelligence (`.claude/plans/2026-09-ideas-story-intelligence.md`): with [enabled] the
+ * dedup layers record which articles they folded into which event (`event_articles`: Step 1
+ * extractions, Layer 2 late reprints, Layer 3.5 merges). Recording only — nothing visible changes;
+ * the footer lines that read the clusters (`categories.<name>.post.storyLines`), the weekly outlet
+ * count and the "who writes first" leaderboard are switched on separately and need this.
+ */
+data class StoryIntelConfig(
+    val enabled: Boolean = false,
+    /** How long `event_articles` rows are kept; must cover `weekly.lookbackDays` and the leaderboard window. */
+    val retentionDays: Long = 180,
+    /**
+     * Domain → the domain it counts as, for sister sites and mirrors that should be one outlet
+     * (`eurogamer.de: eurogamer.net`). Applied when clusters are read, so it works on old rows too.
+     */
+    val domainAliases: Map<String, String> = emptyMap()
+)
+
 data class AppConfig(
     val telegram: TelegramConfig,
     val openai: OpenAIConfig,
@@ -393,6 +411,8 @@ data class AppConfig(
     val health: HealthConfig = HealthConfig(),
     /** Per-feed quality metrics and fetch health; see [FeedHealthConfig]. */
     val feedHealth: FeedHealthConfig = FeedHealthConfig(),
+    /** Story clusters (`event_articles`) and the features that read them; see [StoryIntelConfig]. */
+    val storyIntel: StoryIntelConfig = StoryIntelConfig(),
     /**
      * Per-(provider, model) prices used by `/status` cost stats. Costs are in USD per
      * 1,000,000 tokens (matches how OpenAI / Anthropic publish their pricing pages).
@@ -1505,6 +1525,7 @@ object ConfigLoader {
         validateAdmin(config)
         validateHealth(config)
         validateFeedHealth(config)
+        validateStoryIntel(config)
 
         val badges = config.badges.copy(
             githubToken = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() } ?: config.badges.githubToken
@@ -1813,6 +1834,20 @@ object ConfigLoader {
             "feedHealth.candidates.maxRequestsPerRun must be within 1..200 (got ${c.maxRequestsPerRun})"
         }
         require(c.minPublished >= 1) { "feedHealth.candidates.minPublished must be >= 1 (got ${c.minPublished})" }
+    }
+
+    /** `storyIntel:` block — a retention that still covers every window reading the clusters. */
+    private fun validateStoryIntel(config: AppConfig) {
+        val s = config.storyIntel
+        require(s.retentionDays >= 1) { "storyIntel.retentionDays must be >= 1 (got ${s.retentionDays})" }
+        config.weekly?.takeIf { it.enabled && s.enabled }?.let { w ->
+            require(s.retentionDays >= w.lookbackDays) {
+                "storyIntel.retentionDays (${s.retentionDays}) must be >= weekly.lookbackDays (${w.lookbackDays})"
+            }
+        }
+        for ((from, to) in s.domainAliases) {
+            require(from.isNotBlank() && to.isNotBlank()) { "storyIntel.domainAliases: blank domain in '$from: $to'" }
+        }
     }
 
     /** `admin:` block — the admin-command features need the poller and at least one admin. */

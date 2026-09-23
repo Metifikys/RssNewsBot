@@ -5,7 +5,10 @@ import metifikys.ai.BillingException
 import metifikys.ai.Embedder
 import metifikys.config.AppConfig
 import metifikys.config.SemanticDedupConfig
+import metifikys.db.EventArticleRole
+import metifikys.db.EventArticleRow
 import metifikys.db.NewsDatabase
+import metifikys.feedback.AffinityMath
 import metifikys.model.Article
 import metifikys.model.ArticleStatus
 
@@ -137,6 +140,7 @@ class SemanticDedupDetector(
             return
         }
 
+        val rejects = mutableListOf<LateReprint>()
         for ((articleId, link, vec) in newVectors) {
             val sortedAll = recent
                 .map { (row, candidateVec) -> row to VectorMath.cosine(vec, candidateVec) }
@@ -163,6 +167,7 @@ class SemanticDedupDetector(
             } else null
             val rejected = anchor != null
             if (anchor != null) {
+                rejects += LateReprint(articleId, link, anchor.first.articleId, anchor.second)
                 try {
                     db.markDuplicate(articleId, anchor.first.articleId)
                 } catch (e: Exception) {
@@ -194,6 +199,48 @@ class SemanticDedupDetector(
                 }
                 logger.debug { "[SemanticDedup] cat=$categoryName new=$link other_candidates: $rest" }
             }
+        }
+        if (config.storyIntel.enabled) recordLateReprints(categoryName, rejects)
+    }
+
+    /** A hard-rejected article, the PROCESSED article it was rejected against, and their cosine. */
+    private data class LateReprint(val articleId: Int, val link: String, val anchorId: Int, val sim: Double)
+
+    /**
+     * `storyIntel`: a late reprint joins the event of its anchor article (`role = layer2`, with the
+     * cosine). An anchor without an `event_articles` row — older than the feature, or a legacy
+     * category — leaves the reprint unattached. A failure only logs.
+     */
+    private fun recordLateReprints(categoryName: String, rejects: List<LateReprint>) {
+        if (rejects.isEmpty()) return
+        try {
+            val keys = db.fetchEventKeysByArticleIds(categoryName, rejects.map { it.anchorId })
+            val stamps = db.fetchArticleStamps(rejects.map { it.link })
+            val now = java.time.LocalDateTime.now()
+            val rows = rejects.mapNotNull { r ->
+                val key = keys[r.anchorId]
+                val stamp = stamps[r.link]
+                if (key == null || stamp == null) {
+                    logger.debug { "[SemanticDedup][StoryIntel] cat=$categoryName ${r.link}: anchor id=${r.anchorId} has no event — not attached" }
+                    return@mapNotNull null
+                }
+                EventArticleRow(
+                    category = categoryName,
+                    articleId = r.articleId,
+                    eventKey = key,
+                    link = r.link,
+                    domain = AffinityMath.sourceDomain(r.link),
+                    pubDate = stamp.pubDate,
+                    seenAt = stamp.fetchedAt,
+                    role = EventArticleRole.LAYER2,
+                    sim = r.sim,
+                    recordedAt = now
+                )
+            }
+            db.upsertEventArticles(rows)
+            if (rows.isNotEmpty()) logger.debug { "[SemanticDedup][StoryIntel] cat=$categoryName attached ${rows.size} late reprint(s) to their events" }
+        } catch (e: Exception) {
+            logger.warn(e) { "[SemanticDedup][StoryIntel] cat=$categoryName recording late reprints failed" }
         }
     }
 

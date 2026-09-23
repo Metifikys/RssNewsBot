@@ -431,4 +431,71 @@ class SemanticDedupDetectorTest {
         assertEquals(v.size, back.size)
         assertTrue(VectorMath.cosine(v, back) > 0.999)
     }
+
+    // ── storyIntel: late reprints join their anchor's event ──────────────────
+
+    private fun rejectingDb(): NewsDatabase {
+        val db: NewsDatabase = mockk(relaxed = true)
+        every { db.fetchArticleIdsByLinks(any()) } returns mapOf("https://b.com/new" to 99)
+        every { db.saveEmbedding(any(), any(), any()) } just Runs
+        every { db.fetchRecentEmbeddings(any(), any(), any()) } returns listOf(
+            pastRow(7, floatArrayOf(1f, 0f, 0f), status = ArticleStatus.PROCESSED)
+        )
+        every { db.fetchArticleStamps(any()) } returns mapOf(
+            "https://b.com/new" to metifikys.db.ArticleStamp(99, LocalDateTime.of(2026, 9, 1, 10, 0), LocalDateTime.of(2026, 9, 1, 10, 5))
+        )
+        return db
+    }
+
+    private fun storyConfig(enabled: Boolean) = appConfig(
+        "tech", SemanticDedupConfig(enabled = true, threshold = 0.7, hardThreshold = 0.85)
+    ).copy(storyIntel = metifikys.config.StoryIntelConfig(enabled = enabled))
+
+    @Test
+    fun `storyIntel - a REJECT is recorded as a layer2 member of the anchor's event`() {
+        val db = rejectingDb()
+        every { db.fetchEventKeysByArticleIds("tech", listOf(7)) } returns mapOf(7 to "doom|crunch")
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        val rows = slot<List<metifikys.db.EventArticleRow>>()
+        every { db.upsertEventArticles(capture(rows)) } just Runs
+
+        SemanticDedupDetector(storyConfig(true), db, embedder).detectAndLog(listOf(article("https://b.com/new")))
+
+        val row = rows.captured.single()
+        assertEquals("doom|crunch", row.eventKey)
+        assertEquals(99, row.articleId)
+        assertEquals(metifikys.db.EventArticleRole.LAYER2, row.role)
+        assertEquals("b.com", row.domain)
+        assertEquals(LocalDateTime.of(2026, 9, 1, 10, 5), row.seenAt)
+        assertTrue((row.sim ?: 0.0) > 0.99)
+    }
+
+    @Test
+    fun `storyIntel - an anchor without an event attaches nothing`() {
+        val db = rejectingDb()
+        every { db.fetchEventKeysByArticleIds(any(), any()) } returns emptyMap()
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+        val rows = slot<List<metifikys.db.EventArticleRow>>()
+        every { db.upsertEventArticles(capture(rows)) } just Runs
+
+        SemanticDedupDetector(storyConfig(true), db, embedder).detectAndLog(listOf(article("https://b.com/new")))
+
+        verify(exactly = 1) { db.markDuplicate(99, 7) }
+        assertTrue(rows.captured.isEmpty())
+    }
+
+    @Test
+    fun `storyIntel off - a REJECT records nothing`() {
+        val db = rejectingDb()
+        val embedder: Embedder = mockk()
+        every { embedder.embed(any(), any()) } returns listOf(floatArrayOf(1f, 0f, 0f))
+
+        SemanticDedupDetector(storyConfig(false), db, embedder).detectAndLog(listOf(article("https://b.com/new")))
+
+        verify(exactly = 1) { db.markDuplicate(99, 7) }
+        verify(exactly = 0) { db.fetchEventKeysByArticleIds(any(), any()) }
+        verify(exactly = 0) { db.upsertEventArticles(any()) }
+    }
 }

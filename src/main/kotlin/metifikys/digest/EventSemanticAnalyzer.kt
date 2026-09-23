@@ -5,6 +5,7 @@ import metifikys.ai.BillingException
 import metifikys.ai.Embedder
 import metifikys.config.AppConfig
 import metifikys.config.SemanticDedupConfig
+import metifikys.db.EventArticleRole
 import metifikys.db.NewsDatabase
 import metifikys.model.ShortlistItem
 
@@ -107,6 +108,8 @@ class EventSemanticAnalyzer(
             }
 
         val rejectedKeys = mutableSetOf<String>()
+        // Dropped event key → the covered event it copies (storyIntel moves the cluster there).
+        val aliases = LinkedHashMap<String, String>()
         for ((item, vec) in normalized) {
             if (recent.isEmpty()) {
                 logger.info {
@@ -124,7 +127,10 @@ class EventSemanticAnalyzer(
                 // intentional re-coverage and are never dropped). No subject gate — see config KDoc.
                 val hard = sd.eventHardThreshold
                 val rejected = hard != null && item.status == "new" && topSim >= hard
-                if (rejected) rejectedKeys += item.eventKey
+                if (rejected) {
+                    rejectedKeys += item.eventKey
+                    aliases[item.eventKey] = topRow.eventKey
+                }
 
                 val marker = when {
                     rejected -> "[EventSemanticDedup][REJECT]"
@@ -164,6 +170,7 @@ class EventSemanticAnalyzer(
             }
         }
 
+        if (config.storyIntel.enabled) moveClusters(category, aliases)
         if (rejectedKeys.isEmpty()) return shortlist
         val kept = shortlist.filterNot { it.eventKey in rejectedKeys }
         logger.info {
@@ -171,6 +178,21 @@ class EventSemanticAnalyzer(
                 "${rejectedKeys.joinToString()} — shortlist ${shortlist.size} -> ${kept.size}"
         }
         return kept
+    }
+
+    /**
+     * `storyIntel`: the articles Step 1 filed under a hard-rejected event belong to the covered
+     * event it copies, so their `event_articles` rows move there (`role = layer35`). Fail-open.
+     */
+    private fun moveClusters(category: String, aliases: Map<String, String>) {
+        for ((dropped, covered) in aliases) {
+            try {
+                val moved = db.reassignEventArticles(category, dropped, covered, EventArticleRole.LAYER35)
+                if (moved > 0) logger.debug { "[EventSemanticDedup][StoryIntel] cat=$category moved $moved article(s) $dropped -> $covered" }
+            } catch (e: Exception) {
+                logger.warn(e) { "[EventSemanticDedup][StoryIntel] cat=$category moving the cluster of $dropped failed" }
+            }
+        }
     }
 
     /**

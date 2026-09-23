@@ -249,7 +249,8 @@ open class CategoryProcessor(
                     promptLoader = promptLoader,
                     db = db,
                     alternateOpenAI = alternate,
-                    requestCounter = extractorCounters.getOrPut(name) { AtomicLong(0) }
+                    requestCounter = extractorCounters.getOrPut(name) { AtomicLong(0) },
+                    storyIntel = config.storyIntel
                 )
             }
             val outcome = try {

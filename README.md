@@ -234,6 +234,14 @@ via a `/status` admin snapshot.
   then `/feed`, `/rss`, …; public hosts only, redirects re-validated, per-run request cap). Results
   land in `feed_candidates` and the log, and the static report lists them under "Кандидати" with
   how many of the found feed's links other feeds already bring. Log-only: `feeds:` is never changed.
+- **Story clusters** (opt-in, `storyIntel.enabled`) — the dedup layers record which articles they
+  folded into which event in `event_articles`: Step 1 (every extraction, joined to its article by
+  `url` — a url outside the batch is dropped — and the shortlist's `articleIndices`), Layer 2 (a
+  hard-rejected late reprint joins its anchor article's event, with the cosine) and Layer 3.5 (a
+  dropped copy's articles move under the covered event). The article → event mapping is resolved
+  once in [`EventMembership`](src/main/kotlin/metifikys/story/EventMembership.kt), which also fills
+  the shortlist's in-memory `sourceLinks`; [`EventCluster`](src/main/kotlin/metifikys/story/EventCluster.kt)
+  derives outlets (distinct domains) and publish times. Recording only; the story lines read it.
 - **Per-LLM-call cost ledger** — `llm_calls` table records `(provider, model, category,
   useCase, promptTokens, completionTokens, estCostUsd, ts)` for every call, including the
   Batch API auto-halving.
@@ -853,6 +861,7 @@ first cycle.
 | `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`) |
 | `health`          | no       | `claude` / `codex` login + usage-limit alerts in the admin chat, idle probe, `setup-token` expiry (off by default) |
 | `feedHealth`      | no       | Per-feed fetch health + the `/status` 📡 Feeds anomalies: `enabled`, `windowDays` (14, max 30), `statusSection`, `thresholds`; `candidates` (candidate feeds + autodiscovery, own `enabled`) (off by default) |
+| `storyIntel`      | no       | Record story clusters in `event_articles`: `enabled`, `retentionDays` (180, ≥ `weekly.lookbackDays`), `domainAliases` (off by default; the story lines need it) |
 | `pricing`         | no       | USD/1M tokens per (provider, model)                          |
 | `categories`      | yes      | Map of category name → `CategoryConfig`                     |
 
@@ -993,6 +1002,7 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 | `feed_sightings`     | `(link, feed_url, seen_at)`: a link a second feed brought after another feed already had it — the unique-link insert otherwise hides the echo. A feed re-reading its own links is not recorded |
 | `feed_stats`         | Fetch health per feed url (`feedHealth.enabled`): last attempt / success, `fail_streak` (failed passes since the last success; 304 = success), totals, last error and entry count |
 | `feed_candidates`    | Candidate source domains (`feedHealth.candidates`): published links in the window, discovery status (`unchecked` / `found` / `none` / `error`; `dismissed` by hand), found feed URL, entries, items per day, overlap with existing feeds |
+| `event_articles`     | Story clusters (`storyIntel.enabled`): one row per `(category, article_id)` — the event key the dedup put the article in, link, domain, `pub_date`, `seen_at` (= `fetched_at`), `role` (`step1` / `layer2` / `layer35`), Step 1 status, Layer 2 cosine. Latest decision wins; kept `storyIntel.retentionDays` |
 | `pending_batches`    | In-flight batch jobs (`kind`, `category_names`, `article_links`, `shortlist_json`) for restart-safe resume |
 | `summaries`          | Delivered digest text + article count; injected as context next cycle and used for previous-URL filtering |
 | `covered_events`     | Step 1 dedup memory: one row per `(category, event_key)`; upsert keeps subject/franchise/eventType stable |

@@ -10,12 +10,17 @@ import metifikys.ai.BillingException
 import metifikys.ai.LlmClient
 import metifikys.config.CategoryConfig
 import metifikys.config.DigestConfig
+import metifikys.config.StoryIntelConfig
 import metifikys.db.NewsDatabase
 import metifikys.db.CoveredEventRow
+import metifikys.db.EventArticleRole
+import metifikys.db.EventArticleRow
 import metifikys.db.RejectedEventRow
 import metifikys.digest.TrackerDates
 import metifikys.feedback.AffinityImpact
+import metifikys.feedback.AffinityMath
 import metifikys.feedback.AffinityScores
+import metifikys.story.EventMembership
 import metifikys.model.Article
 import metifikys.model.CoveredEvent
 import metifikys.model.ExtractionResult
@@ -64,7 +69,9 @@ class EventExtractor(
     private val db: NewsDatabase,
     private val json: Json = defaultJson,
     private val alternateOpenAI: LlmClient? = null,
-    private val requestCounter: AtomicLong = AtomicLong(0)
+    private val requestCounter: AtomicLong = AtomicLong(0),
+    /** With `enabled`, every Step 1 result is also recorded as story clusters (`event_articles`). */
+    private val storyIntel: StoryIntelConfig = StoryIntelConfig()
 ) {
 
     companion object {
@@ -288,6 +295,13 @@ class EventExtractor(
             }
             ok
         }.map { item -> guardEventDate(category, item, articles) }
+            .let { list ->
+                // Article → event, resolved once while `articles` is still the prompt's list: the
+                // shortlist carries its sources to delivery, and (storyIntel) the clusters are stored.
+                val members = EventMembership.resolve(parsed.extractions, list, articles)
+                if (storyIntel.enabled) recordEventArticles(category, members, now)
+                list.map { it.copy(sourceLinks = EventMembership.sourceLinks(it, members, articles)) }
+            }
 
         val effectiveCoveredRows = coveredRows
             ?: db.fetchRecentEvents(category, 7, 200)  // fallback for batch-resume path
@@ -402,6 +416,37 @@ class EventExtractor(
         } catch (e: Exception) {
             logger.warn(e) { "[Category:$category][AffinityRank] failed — using baseline ranking" }
             baseline.kept
+        }
+    }
+
+    /**
+     * `storyIntel`: stores [members] as `event_articles` rows (`role = step1`), timed by the
+     * articles' own `pub_date` / `fetched_at`. A failure only logs — the clusters are analytics and
+     * must never cost a digest.
+     */
+    private fun recordEventArticles(category: String, members: List<EventMembership.Member>, now: LocalDateTime) {
+        if (members.isEmpty()) return
+        try {
+            val stamps = db.fetchArticleStamps(members.map { it.link })
+            val rows = members.mapNotNull { m ->
+                val stamp = stamps[m.link] ?: return@mapNotNull null
+                EventArticleRow(
+                    category = category,
+                    articleId = stamp.id,
+                    eventKey = m.eventKey,
+                    link = m.link,
+                    domain = AffinityMath.sourceDomain(m.link),
+                    pubDate = stamp.pubDate,
+                    seenAt = stamp.fetchedAt,
+                    role = EventArticleRole.STEP1,
+                    step1Status = m.step1Status,
+                    recordedAt = now
+                )
+            }
+            db.upsertEventArticles(rows)
+            logger.debug { "[Category:$category][StoryIntel] recorded ${rows.size} article(s) in ${rows.map { it.eventKey }.distinct().size} event(s)" }
+        } catch (e: Exception) {
+            logger.warn(e) { "[Category:$category][StoryIntel] recording event_articles failed — digest unaffected" }
         }
     }
 
