@@ -21,6 +21,7 @@ import metifikys.db.RetentionArchiver
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.RssFetcher
+import metifikys.fetch.UrlGuard
 import metifikys.model.Article
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -80,7 +81,7 @@ class DigestCycleTest {
         fetcher: RssFetcher,
         processor: CategoryProcessor,
         errorLog: CycleErrorLog = CycleErrorLog(),
-        articleFetcher: ArticleFetcher = ArticleFetcher(RssFetcher(enforceUrlValidation = false)),
+        articleFetcher: ArticleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false),
         statusPoster: StatusPoster? = null,
         retentionArchiver: RetentionArchiver? = null,
         pauseStore: PauseStore? = null

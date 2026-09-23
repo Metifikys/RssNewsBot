@@ -43,6 +43,7 @@ import metifikys.fetch.FeedHealthRecorder
 import metifikys.fetch.HostThrottle
 import metifikys.fetch.RssFetcher
 import metifikys.fetch.TextScrubRules
+import metifikys.fetch.UrlGuard
 import metifikys.log.RunContext
 import metifikys.telegram.AdminAlerts
 import metifikys.telegram.AdminAuth
@@ -82,7 +83,7 @@ private val SHARED_HOST_THROTTLE = HostThrottle()
 class NewsBot(
     private val config: AppConfig,
     private val fetcher: RssFetcher = RssFetcher(
-        allowPrivateHosts = true,
+        urlGuard = UrlGuard.forConfig(config),
         maxAttempts = config.fetcher.maxAttempts,
         retryDelayMs = config.fetcher.retryDelaySeconds * 1000,
         maxConcurrentFetches = config.fetcher.maxConcurrentFetches,
@@ -91,9 +92,10 @@ class NewsBot(
         healthRecorder = if (config.feedHealth.enabled) FeedHealthRecorder() else null,
         pathScopedThrottleHosts = config.fetcher.pathScopedThrottleHosts
     ),
-    // Validation-only RssFetcher (validateFeedUrl); its lazy fetch pool never starts.
+    // Same guard rule as the feed fetcher: private addresses only for the configured feed hosts
+    // (and fetcher.privateHostAllowlist) — never for a link that merely came out of a feed.
     articleFetcher: ArticleFetcher = ArticleFetcher(
-        RssFetcher(allowPrivateHosts = true),
+        UrlGuard.forConfig(config),
         hostThrottle = SHARED_HOST_THROTTLE,
         scrubRules = TextScrubRules.load(config.fetcher.scrubRulesFile)
     ),

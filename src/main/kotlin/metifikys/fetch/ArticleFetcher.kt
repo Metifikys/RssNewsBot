@@ -20,7 +20,9 @@ private val logger = KotlinLogging.logger {}
  * Used to enrich RSS feed items that have empty or very short descriptions by fetching
  * the linked article URL and extracting the main text body via jsoup.
  *
- * SSRF protection: reuses [RssFetcher.validateFeedUrl] before any network call.
+ * SSRF protection: every URL is checked by the [UrlGuard] before any network call, and both
+ * OkHttp clients carry its network interceptor, so each redirect hop (a public page 302-ing into
+ * the LAN, or markdown.new doing so) is re-judged by the address it actually connects to.
  * All failures are silent — the original article is always returned unchanged on any error.
  *
  * Rate limiting: every outbound request passes through the SAME [HostThrottle] instance the RSS
@@ -30,8 +32,10 @@ private val logger = KotlinLogging.logger {}
  * just absorbed.
  */
 class ArticleFetcher(
-    private val rssFetcher: RssFetcher,
-    private val enforceUrlValidation: Boolean = true,
+    /** Production passes [UrlGuard.forConfig]: only the configured feed hosts may be private. */
+    urlGuard: UrlGuard,
+    /** False only in tests against a local server: no pre-check, no interceptor. */
+    enforceUrlValidation: Boolean = true,
     /** Articles with descriptions shorter than this are eligible for content fetching. */
     private val minDescriptionLength: Int = 50,
     /** Maximum characters of extracted text to store as the enriched description. */
@@ -102,17 +106,20 @@ class ArticleFetcher(
         private const val MAX_HOST_WAIT_MILLIS = 30_000L
     }
 
-    private val client = OkHttpClient.Builder()
+    private val guard: UrlGuard = if (enforceUrlValidation) urlGuard else UrlGuard.OFF
+
+    private val client = guard.install(OkHttpClient.Builder())
         .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .callTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        // Article pages legitimately redirect (http→https, www→non-www); no token leakage risk here
+        // Article pages legitimately redirect (http→https, www→non-www); no token leakage risk here,
+        // and the guard's network interceptor re-checks every hop.
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
 
     /** Separate client for markdown.new — longer timeouts since it proxies and processes the page. */
-    private val markdownNewClient = OkHttpClient.Builder()
+    private val markdownNewClient = guard.install(OkHttpClient.Builder())
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .callTimeout(20, TimeUnit.SECONDS)
@@ -301,9 +308,8 @@ class ArticleFetcher(
 
     /** SSRF guard shared by every fetch path. Returns false (and logs) when the URL is rejected. */
     private fun passesUrlValidation(url: String): Boolean {
-        if (!enforceUrlValidation) return true
         return try {
-            rssFetcher.validateFeedUrl(url)
+            guard.check(url)
             true
         } catch (e: IllegalArgumentException) {
             logger.warn { "[ArticleFetcher] Rejected article URL '$url': ${e.message}" }
@@ -318,6 +324,8 @@ class ArticleFetcher(
     private fun logFetchFailure(url: String, what: String, e: Exception) {
         if (Thread.currentThread().isInterrupted) {
             logger.debug { "[ArticleFetcher] $what fetch cancelled for '$url'" }
+        } else if (e is UrlGuard.RejectedUrlException) {
+            logger.warn { "[ArticleFetcher] $what fetch for '$url' refused by the SSRF guard: ${e.message}" }
         } else {
             logger.error(e) { "[ArticleFetcher] Failed to fetch $what for '$url'" }
         }
@@ -403,6 +411,8 @@ class ArticleFetcher(
         } catch (e: Exception) {
             if (Thread.currentThread().isInterrupted()) {
                 logger.debug { "[ArticleFetcher] markdown.new cancelled for $url" }
+            } else if (e is UrlGuard.RejectedUrlException) {
+                logger.warn { "[ArticleFetcher] markdown.new for $url refused by the SSRF guard: ${e.message}" }
             } else {
                 logger.error(e) { "[ArticleFetcher] markdown.new failed for $url" }
             }

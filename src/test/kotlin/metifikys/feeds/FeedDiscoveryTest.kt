@@ -1,8 +1,9 @@
 package metifikys.feeds
 
 import com.sun.net.httpserver.HttpServer
-import metifikys.fetch.RssFetcher
+import metifikys.fetch.UrlGuard
 import org.junit.jupiter.api.Test
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
@@ -48,7 +49,7 @@ class FeedDiscoveryTest {
         }
     }
 
-    private fun discovery() = FeedDiscovery(validator = RssFetcher(allowPrivateHosts = true), scheme = "http")
+    private fun discovery() = FeedDiscovery(guard = UrlGuard.OFF, scheme = "http")
 
     @Test
     fun `link rel alternate with a relative href is followed and validated`() {
@@ -108,7 +109,12 @@ class FeedDiscoveryTest {
     @Test
     fun `a redirect into the LAN is refused`() {
         val requested = mutableListOf<String>()
-        val d = FeedDiscovery(http = { url ->
+        // public.example "resolves" to a public address, so only the redirect target is judged.
+        val publicDns = UrlGuard(resolve = { h ->
+            if (h == "public.example") arrayOf(InetAddress.getByAddress(h, byteArrayOf(93, 184.toByte(), 216.toByte(), 34)))
+            else InetAddress.getAllByName(h)
+        })
+        val d = FeedDiscovery(guard = publicDns, http = { url ->
             requested += url
             FeedDiscovery.Response(302, "text/html", "http://192.168.1.1/admin", ByteArray(0))
         })

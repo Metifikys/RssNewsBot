@@ -49,10 +49,10 @@ class RssFetcher(
     /** Fallback delay before a retryable feed re-enters the queue; a server Retry-After wins. */
     private val retryDelayMs: Long = 15_000L,
     /**
-     * When true, RFC-1918 / loopback / link-local hosts are accepted. Intended for
-     * operators who self-host RSS sources on their LAN (e.g. an RSSHub instance).
+     * SSRF guard for feed URLs and every redirect hop. The default trusts no private host;
+     * production passes [UrlGuard.forConfig], which trusts the configured feed hosts (a LAN RSSHub).
      */
-    private val allowPrivateHosts: Boolean = false,
+    private val urlGuard: UrlGuard = UrlGuard(),
     /** Max simultaneous HTTP requests across ALL categories (feeds usually share one RSSHub host). */
     private val maxConcurrentFetches: Int = 3,
     /** Wall-clock budget for one fetch stage started via [fetchAll]/[fetchFeed]/[newFetchDeadline]. */
@@ -74,8 +74,10 @@ class RssFetcher(
     private val pathScopedHosts: Set<String> = pathScopedThrottleHosts.map { it.trim().lowercase() }.toSet()
 
     companion object {
-        /** Allowed URL schemes for RSS feeds. */
-        private val ALLOWED_SCHEMES = setOf("http", "https")
+        /** Redirect hops a feed may take; each target is re-checked by the [UrlGuard]. */
+        private const val MAX_REDIRECTS = 5
+
+        private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 
         /** Upper bound on a server-supplied `Retry-After` wait, so a broken/hostile header can't stall a cycle. */
         private const val MAX_RETRY_AFTER_MS = 300_000L
@@ -107,21 +109,6 @@ class RssFetcher(
             val delay = (retryAfterMs ?: fallbackDelayMs).coerceAtMost(MAX_RETRY_AFTER_MS)
             return if (delay >= remainingMs) null else delay
         }
-
-        /**
-         * Regex matching loopback, link-local, and RFC-1918 private IP ranges.
-         * Blocks SSRF attempts pointing at internal services.
-         */
-        private val PRIVATE_HOST_REGEX = Regex(
-            "^(localhost" +
-            "|127\\..*" +
-            "|10\\..*" +
-            "|192\\.168\\..*" +
-            "|172\\.(1[6-9]|2[0-9]|3[01])\\..*" +
-            "|169\\.254\\..*" +
-            ")$",
-            RegexOption.IGNORE_CASE
-        )
     }
 
     /**
@@ -151,7 +138,7 @@ class RssFetcher(
         data class Fatal(val reason: String) : FetchOutcome
     }
 
-    // Lazy so the validation-only instance embedded in ArticleFetcher never spins threads.
+    // Lazy so an instance that never fetches (tests, validation only) never spins threads.
     private val fetchPoolDelegate = lazy {
         ScheduledThreadPoolExecutor(maxConcurrentFetches) { r ->
             Thread(r, "rss-fetch").apply { isDaemon = true }
@@ -345,7 +332,7 @@ class RssFetcher(
         var connection: HttpURLConnection? = null
         try {
             val cached = feedValidators[url]
-            connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connection = openFollowingRedirects(url) {
                 connectTimeout = 15_000
                 readTimeout = 15_000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; RssNewsBot/1.0)")
@@ -389,6 +376,9 @@ class RssFetcher(
             // a response we failed to turn into articles.
             rememberValidators(url, connection)
             return FetchOutcome.Success(toArticles(feed, feedConfig, category))
+        } catch (e: RejectedRedirectException) {
+            logger.warn { "[RSS] $url: ${e.message}" }
+            return FetchOutcome.Fatal("rejected redirect: ${e.message}")
         } catch (e: Exception) {
             return FetchOutcome.Retryable(
                 reason = "Failed to fetch feed (${e.javaClass.simpleName}: ${e.message})",
@@ -594,24 +584,45 @@ class RssFetcher(
      * Validates that a feed URL is safe to fetch:
      * - Must be parseable as a URL
      * - Scheme must be http or https (blocks file://, ftp://, etc.)
-     * - Host must not be a private/loopback address (blocks SSRF)
+     * - Host must not resolve to a private/loopback address unless the [urlGuard] trusts it (blocks SSRF)
      *
      * @throws IllegalArgumentException if validation fails
      */
-    internal fun validateFeedUrl(url: String) {
-        val parsed = try {
-            URL(url)
-        } catch (e: Exception) {
-            throw IllegalArgumentException("Malformed URL: $url")
-        }
-        require(parsed.protocol in ALLOWED_SCHEMES) {
-            "Only http/https feeds are allowed (got '${parsed.protocol}'): $url"
-        }
-        val host = parsed.host?.lowercase() ?: throw IllegalArgumentException("URL has no host: $url")
-        if (!allowPrivateHosts) {
-            require(!host.matches(PRIVATE_HOST_REGEX)) {
-                "Private or loopback hosts are not allowed: $host"
+    internal fun validateFeedUrl(url: String) = urlGuard.check(url)
+
+    /** A redirect hop the [urlGuard] refused, or one hop too many — not worth a retry. */
+    private class RejectedRedirectException(message: String) : Exception(message)
+
+    /**
+     * Opens [url] following redirects BY HAND (at most [MAX_REDIRECTS]): `HttpURLConnection`'s own
+     * following would take a public feed's 302 straight into the LAN. Each hop is re-validated when
+     * [enforceUrlValidation] is on, and sends the same headers (conditional-GET validators included).
+     */
+    private fun openFollowingRedirects(url: String, configure: HttpURLConnection.() -> Unit): HttpURLConnection {
+        var current = url
+        var hops = 0
+        while (true) {
+            val connection = (URL(current).openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
+                configure()
             }
+            val location = connection.getHeaderField("Location")
+            if (connection.responseCode !in REDIRECT_CODES || location.isNullOrBlank()) return connection
+            connection.disconnect()
+            if (++hops > MAX_REDIRECTS) throw RejectedRedirectException("more than $MAX_REDIRECTS redirects")
+            val next = try {
+                URL(URL(current), location).toString()
+            } catch (e: Exception) {
+                throw RejectedRedirectException("malformed redirect target '$location'")
+            }
+            if (enforceUrlValidation) {
+                try {
+                    validateFeedUrl(next)
+                } catch (e: IllegalArgumentException) {
+                    throw RejectedRedirectException("redirect to $next refused: ${e.message}")
+                }
+            }
+            current = next
         }
     }
 }

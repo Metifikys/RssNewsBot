@@ -1,5 +1,6 @@
 package metifikys.enrich
 
+import metifikys.fetch.UrlGuard
 import metifikys.model.Article
 import metifikys.model.ArticleMeta
 import metifikys.model.HnMeta
@@ -14,7 +15,7 @@ class HackerNewsBadgeProviderTest {
     )
 
     private fun provider(api: FakeApi, cache: BadgeCache = MemoryBadgeCache()) =
-        HackerNewsBadgeProvider(BadgeHttp(timeoutSeconds = 3), cache, apiBaseUrl = api.baseUrl)
+        HackerNewsBadgeProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), cache, apiBaseUrl = api.baseUrl)
 
     @Test
     fun `live score and comment count from the item endpoint`() {

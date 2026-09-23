@@ -156,6 +156,12 @@ scheduler:
 #   pathScopedThrottleHosts: ["192.168.77.7:1200"]  # a feed converter (RSSHub): throttle each
 #                             # route (/telegram/channel, /twitter/user) on its own, so a 429 from
 #                             # one upstream does not cool down every converted feed. Default: [].
+#   privateHostAllowlist: ["nas.lan", "192.168.77.7:1201"]  # SSRF guard: extra hosts (`host` =
+#                             # any port, `host:port`, or a URL) allowed to resolve to a private /
+#                             # loopback / link-local address. The host:port of every feed URL
+#                             # above is trusted automatically (a LAN RSSHub needs nothing here);
+#                             # every other fetch — article links, repoints, redirects, discovery,
+#                             # badges — is refused on a non-public address. Default: [].
 
 # Optional: per-cycle processing knobs.
 processing:

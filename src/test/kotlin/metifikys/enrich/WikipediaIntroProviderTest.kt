@@ -1,5 +1,6 @@
 package metifikys.enrich
 
+import metifikys.fetch.UrlGuard
 import metifikys.config.IntroConfig
 import metifikys.db.EntityIntroRow
 import metifikys.model.ShortlistItem
@@ -21,7 +22,7 @@ class WikipediaIntroProviderTest {
         "content_urls":{"desktop":{"page":"https://uk.wikipedia.org/wiki/Team_Cherry"}}}"""
 
     private fun provider(api: FakeApi, store: IntroStore = MemoryIntroStore()) =
-        WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3), store, baseUrlFor = { api.baseUrl })
+        WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), store, baseUrlFor = { api.baseUrl })
 
     @Test
     fun `first mention yields the article's opening sentence, second mention nothing`() {
@@ -72,7 +73,7 @@ class WikipediaIntroProviderTest {
         }
         val api = FakeApi().start()
         try {
-            val p = WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3), store, baseUrlFor = { api.baseUrl })
+            val p = WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), store, baseUrlFor = { api.baseUrl })
             // No routes → 404 → getJson null → miss for every candidate.
             assertNull(p.intro("gaming", item(franchise = "Silksong 2 / Team Cherry"), IntroConfig()))
             assertNull(store.get("gaming", "silksong_2")!!.extract)
@@ -84,7 +85,7 @@ class WikipediaIntroProviderTest {
         }
         // Now the studio has an article: a known-miss game falls through to the studio.
         FakeApi().route("/w/api.php", search).route("/api/rest_v1/page/summary/", summary).start().use { api2 ->
-            val p = WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3), store, baseUrlFor = { api2.baseUrl })
+            val p = WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), store, baseUrlFor = { api2.baseUrl })
             store.put(store.get("gaming", "team_cherry")!!.copy(introducedAt = LocalDateTime.now().minusDays(40)))
             val line = p.intro("gaming", item(franchise = "Silksong 2 / Team Cherry"), IntroConfig())
             assertTrue(line!!.startsWith("📚 Team Cherry"), line)
@@ -152,7 +153,7 @@ class WikipediaIntroProviderTest {
         val disambiguation = """{"type":"disambiguation","title":"Team Cherry","extract":"may refer to"}"""
         val calls = mutableListOf<String>()
         FakeApi().route("/w/api.php", search).route("/api/rest_v1/page/summary/", disambiguation).start().use { api ->
-            val p = WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3), MemoryIntroStore(), baseUrlFor = { lang -> calls += lang; api.baseUrl })
+            val p = WikipediaIntroProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), MemoryIntroStore(), baseUrlFor = { lang -> calls += lang; api.baseUrl })
             assertNull(p.intro("gaming", item(franchise = "Team Cherry"), IntroConfig(languages = listOf("uk", "en"))))
             assertEquals(listOf("uk", "en"), calls)
         }

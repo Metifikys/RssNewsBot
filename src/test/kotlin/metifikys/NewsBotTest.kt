@@ -19,6 +19,7 @@ import metifikys.db.PendingBatch
 import metifikys.db.SummaryRecord
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.RssFetcher
+import metifikys.fetch.UrlGuard
 import metifikys.model.Article
 import metifikys.model.CategoryInput
 import metifikys.model.ExtractionResult
@@ -91,7 +92,7 @@ class NewsBotTest {
             db.fetchReadyForDigestByCategory(secondArg())[firstArg<String>()] ?: emptyList()
         }
 
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         bot = NewsBot(config, fetcher, articleFetcher, db, sender, llmClientsFactory = llmClientsFactory)
     }
 
@@ -171,7 +172,7 @@ class NewsBotTest {
         val configWithMin = config.copy(
             processing = config.processing.copy(minArticles = 8)
         )
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         val botWithMin = NewsBot(configWithMin, fetcher, articleFetcher, db, sender, llmClientsFactory = llmClientsFactory)
 
         val articles = (1..5).map { article("https://a.com/$it") }
@@ -262,7 +263,7 @@ class NewsBotTest {
             ),
             processing = ProcessingConfig(minArticles = 0)
         )
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         val botWithChannels = NewsBot(configWithChannels, fetcher, articleFetcher, db, sender, llmClientsFactory = llmClientsFactory)
 
         every { fetcher.fetchAll(any()) } returns techArticles + gamingArticles
@@ -426,7 +427,7 @@ class NewsBotTest {
         // Constructing OpenAIBatch with the config model must not throw
         OpenAIBatch(cfg.openai.apiKey, mockk(relaxed = true), cfg.openai.batchModel)
         // Verify NewsBot default constructor wires batchModel correctly
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         val botWithCustomModel = NewsBot(cfg, fetcher, articleFetcher, db, sender, llmClientsFactory = llmClientsFactory)
         // If construction succeeded with the custom model, the wiring is correct
         assertTrue(botWithCustomModel != null)
@@ -523,7 +524,7 @@ class NewsBotTest {
                 )
             )
         )
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         val botWithFallback = NewsBot(
             configWithFallback, fetcher, articleFetcher, db, sender,
             llmClientsFactory = llmClientsFactory
@@ -570,7 +571,7 @@ class NewsBotTest {
                 )
             )
         )
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         val botWithFallback = NewsBot(
             configWithFallback, fetcher, articleFetcher, db, sender,
             llmClientsFactory = llmClientsFactory
@@ -609,7 +610,7 @@ class NewsBotTest {
                 )
             )
         )
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         val botWithFallback = NewsBot(
             configWithFallback, fetcher, articleFetcher, db, sender,
             llmClientsFactory = llmClientsFactory
@@ -654,7 +655,7 @@ class NewsBotTest {
                 )
             )
         )
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         val botWithCustom = NewsBot(
             customConfig, fetcher, articleFetcher, db, sender,
             llmClientsFactory = llmClientsFactory
@@ -739,7 +740,7 @@ class NewsBotTest {
             every { noopFetcher.newFetchDeadline() } returns Long.MAX_VALUE
             every { noopFetcher.fetchCategory(any(), any(), any()) } returns emptyList()
 
-            val realArticleFetcher = ArticleFetcher(noopFetcher, enforceUrlValidation = false)
+            val realArticleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
             val realLlmClientsFactory = LlmClientsFactory(itConfig, realDb)
             val realSender = TelegramSender(itConfig.telegram.botToken)
 
@@ -831,7 +832,7 @@ class NewsBotTest {
                 )
             )
         )
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         return NewsBot(cfg, fetcher, articleFetcher, db, sender, llmClientsFactory = llmClientsFactory)
     }
 
@@ -1627,7 +1628,7 @@ class NewsBotTest {
         val pl = mockk<PromptLoader>()
         every { pl.resolve(any()) } returns resolvedPrompts
         val ee = mockk<EventExtractor>()
-        val articleFetcher = ArticleFetcher(fetcher, enforceUrlValidation = false)
+        val articleFetcher = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false)
         val b = NewsBot(
             cfg, fetcher, articleFetcher, db, sender,
             promptLoader = pl,
@@ -1649,7 +1650,7 @@ class NewsBotTest {
                 )
             )
         )
-        val b = NewsBot(cfg, fetcher, ArticleFetcher(fetcher, enforceUrlValidation = false), db, sender, llmClientsFactory = llmClientsFactory)
+        val b = NewsBot(cfg, fetcher, ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false), db, sender, llmClientsFactory = llmClientsFactory)
         val e = assertFailsWith<IllegalStateException> { b.checkPrompts() }
         assertTrue("tech/promptFile" in e.message!!, e.message)
         assertTrue("legacy" in e.message!!, e.message)
@@ -1657,7 +1658,7 @@ class NewsBotTest {
 
     @Test
     fun `startup prompt check passes a config without dedup blocks`() {
-        NewsBot(config, fetcher, ArticleFetcher(fetcher, enforceUrlValidation = false), db, sender, llmClientsFactory = llmClientsFactory)
+        NewsBot(config, fetcher, ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false), db, sender, llmClientsFactory = llmClientsFactory)
             .checkPrompts()
     }
 
@@ -1959,7 +1960,7 @@ class NewsBotTest {
         assertEquals(metifikys.telegram.RunQueued.NOT_STARTED, bot.enqueueManualRun("tech", false, listener))
         val cycleBot = NewsBot(
             config.copy(scheduler = config.scheduler.copy(perCategory = false)),
-            fetcher, ArticleFetcher(fetcher, enforceUrlValidation = false), db, sender, llmClientsFactory = llmClientsFactory
+            fetcher, ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false), db, sender, llmClientsFactory = llmClientsFactory
         )
         assertEquals(metifikys.telegram.RunQueued.NOT_PER_CATEGORY, cycleBot.enqueueManualRun("tech", false, listener))
     }

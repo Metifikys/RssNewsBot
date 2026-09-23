@@ -36,7 +36,7 @@ object SocialLinkExtractor {
         "store.playstation.com", "xbox.com", "nintendo.com", "gog.com", "amazon.com", "patreon.com", "boosty.to"
     )
 
-    /** Same ranges as the fetcher's SSRF guard: a post must never point the article fetcher at the LAN. */
+    /** Literal LAN hosts: never a repoint target (the fetcher's [UrlGuard] refuses them by resolved address anyway). */
     private val PRIVATE_HOST = Regex(
         "^(localhost|127\\..*|10\\..*|192\\.168\\..*|172\\.(1[6-9]|2[0-9]|3[01])\\..*|169\\.254\\..*|\\[?::1]?|0\\.0\\.0\\.0)$",
         RegexOption.IGNORE_CASE

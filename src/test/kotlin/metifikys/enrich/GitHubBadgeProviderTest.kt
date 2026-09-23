@@ -1,5 +1,6 @@
 package metifikys.enrich
 
+import metifikys.fetch.UrlGuard
 import metifikys.model.Article
 import metifikys.model.ShortlistItem
 import java.time.Duration
@@ -12,7 +13,7 @@ class GitHubBadgeProviderTest {
     private fun article(link: String) = Article(category = "tech", title = "t", link = link, description = "d")
 
     private fun provider(api: FakeApi, cache: BadgeCache = MemoryBadgeCache(), token: String? = null) =
-        GitHubBadgeProvider(BadgeHttp(timeoutSeconds = 3), cache, token = token, apiBaseUrl = api.baseUrl)
+        GitHubBadgeProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), cache, token = token, apiBaseUrl = api.baseUrl)
 
     private val repoJson = """{"full_name":"asg017/sqlite-vec","stargazers_count":12345,"language":"C","pushed_at":"2026-09-03T10:15:00Z"}"""
 

@@ -10,7 +10,7 @@ import metifikys.config.FeedHealthConfig
 import metifikys.db.DigestMessageRow
 import metifikys.db.FeedCandidateStatus
 import metifikys.db.NewsDatabase
-import metifikys.fetch.RssFetcher
+import metifikys.fetch.UrlGuard
 import metifikys.model.Article
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -84,7 +84,7 @@ class FeedCandidateFinderTest {
         } + (1..3).map { i -> DigestMessageRow(-1, 10L + i, "tech", "s$i", "https://nofeed.io/$i", now.minusDays(1)) })
         db.insertArticles(listOf(Article("tech", "t", "https://lab.example.org/1", "d")))
         val requested = mutableListOf<String>()
-        val discovery = FeedDiscovery(validator = RssFetcher(allowPrivateHosts = true), http = { url ->
+        val discovery = FeedDiscovery(guard = UrlGuard.OFF, http = { url ->
             requested += url
             when (url) {
                 "https://lab.example.org/" -> FeedDiscovery.Response(200, "text/html", null,
@@ -116,7 +116,7 @@ class FeedCandidateFinderTest {
     fun `a checked candidate is not probed again before recheckDays, a dismissed one never`() {
         db.insertDigestMessages((1..3).map { i -> DigestMessageRow(-1, i.toLong(), "tech", "e$i", "https://a.dev/$i", now.minusDays(1)) })
         val requests = mutableListOf<String>()
-        val discovery = FeedDiscovery(http = { url -> requests += url; FeedDiscovery.Response(404, "text/html", null, ByteArray(0)) })
+        val discovery = FeedDiscovery(guard = UrlGuard.OFF, http = { url -> requests += url; FeedDiscovery.Response(404, "text/html", null, ByteArray(0)) })
         val finder = FeedCandidateFinder(config(FeedCandidatesConfig(enabled = true, maxRequestsPerRun = 2)), db, discovery) { now }
 
         finder.run(now)

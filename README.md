@@ -56,9 +56,14 @@ via a `/status` admin snapshot.
   `fetcher.pathScopedThrottleHosts` gives each converter route its own 429 throttle.
 - **Keyword mute** (`preferences.mute` + per-category `mute:`, plus `/mute` from the admin
   chat) — whole-word blocklist applied before Step 1; matching articles never reach an LLM.
-- **SSRF guard** — only `http`/`https` schemes are allowed; RFC-1918 / loopback / link-local
-  hosts are rejected unless the fetcher is built with `allowPrivateHosts` — which `NewsBot` does
-  for the feed AND the article fetcher, so a LAN RSSHub works (there is no per-host allowlist).
+- **SSRF guard** ([`UrlGuard`](src/main/kotlin/metifikys/fetch/UrlGuard.kt)) — only `http`/`https`;
+  a host that RESOLVES to a loopback / RFC-1918 / link-local / CGNAT / unique-local / multicast
+  address (IPv4 or IPv6, IPv4-mapped / NAT64 / 6to4 forms included) is refused. The only
+  exceptions are the `host:port` of every configured feed URL (so a LAN RSSHub works with no extra
+  config) and `fetcher.privateHostAllowlist`. Article links, reddit / converter repoints, the
+  long-form refetch, feed discovery and the badge / intro APIs get no other exception, and every
+  redirect hop is re-checked — by hand for feeds and discovery, by an OkHttp network interceptor
+  (judging the address actually connected to) for article pages, markdown.new and badges.
 - **No-redirect HTTP** — Telegram client refuses redirects so the bot token cannot leak to a
   third-party host.
 - **Image extraction from RSS** — falls back across `<enclosure>`, Media RSS module
@@ -744,7 +749,7 @@ been posted.
 
 | Hardening                       | Where                                                          |
 |---------------------------------|----------------------------------------------------------------|
-| SSRF guard on RSS URLs          | `RssFetcher.validateFeedUrl`                                   |
+| SSRF guard on every fetched URL + each redirect hop | `UrlGuard` (feeds, article pages, markdown.new, discovery, badges); private hosts only for configured feed hosts + `fetcher.privateHostAllowlist` |
 | No-redirect HTTP to Telegram    | `TelegramSender` OkHttpClient builder                          |
 | Path-traversal block on DB path | `ConfigLoader.applyEnvOverrides` (`..` rejected)               |
 | `isAllowDoctypes = false`       | `RssFetcher` SyndFeedInput — blocks XXE                        |
@@ -838,7 +843,7 @@ first cycle.
 | `codexCli`        | no       | `codex exec` provider: same shape                           |
 | `database`        | yes      | SQLite file path (no `..`, must be readable)                |
 | `scheduler`       | yes      | `intervalMinutes` (default cadence + maintenance tick), `perCategory` (default `true`) |
-| `fetcher`         | no       | `maxConcurrentFetches`, `maxAttempts`, `retryDelaySeconds`, `fetchDeadlineSeconds`, `intervalMinutes` (decoupled ingestion), `scrubRulesFile`, `pathScopedThrottleHosts` (per-route throttle for a converter host) |
+| `fetcher`         | no       | `maxConcurrentFetches`, `maxAttempts`, `retryDelaySeconds`, `fetchDeadlineSeconds`, `intervalMinutes` (decoupled ingestion), `scrubRulesFile`, `pathScopedThrottleHosts` (per-route throttle for a converter host), `privateHostAllowlist` (extra LAN hosts the SSRF guard allows; feed hosts are automatic) |
 | `processing`      | no       | Stale timeout, min articles, batch thresholds, retention    |
 | `archive`         | no       | Copy-before-delete retention into `archive/news-archive-YYYY-MM.db` (off by default) |
 | `summaryHistory`  | no       | How many previous digests to inject as context, retention   |
@@ -1041,7 +1046,7 @@ src/main/kotlin/metifikys/
 ├── digest/         CategoryProcessor, DigestCycle, SemanticDedupDetector,
 │                   DigestDeliverer, VectorMath, CycleErrorLog
 ├── feedback/       Reaction valence, affinity math + aggregator, ranker term
-├── fetch/          RssFetcher (Rome + SSRF + queue), ArticleFetcher (Jsoup),
+├── fetch/          RssFetcher (Rome + queue), UrlGuard (SSRF), ArticleFetcher (Jsoup),
 │                   ArticleSummarizer (per-article LLM), HostThrottle,
 │                   RedditLinkExtractor, LinkNormalizer, HtmlText
 ├── enrich/         Footer badges (Steam / HN / GitHub providers, resolver, cache),

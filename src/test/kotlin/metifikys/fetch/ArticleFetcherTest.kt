@@ -10,7 +10,7 @@ class ArticleFetcherTest {
 
     // Validation OFF — these tests exercise pure HTML parsing, no network calls.
     private val fetcher = ArticleFetcher(
-        RssFetcher(enforceUrlValidation = false),
+        UrlGuard.OFF,
         enforceUrlValidation = false
     )
 

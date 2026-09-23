@@ -1,5 +1,6 @@
 package metifikys.enrich
 
+import metifikys.fetch.UrlGuard
 import metifikys.model.ShortlistItem
 import java.time.Duration
 import kotlin.test.Test
@@ -23,7 +24,7 @@ class SteamBadgeProviderTest {
     private val reviews = """{"success":1,"query_summary":{"num_reviews":0,"total_positive":11423,"total_negative":922,"total_reviews":12345}}"""
 
     private fun provider(api: FakeApi, cache: BadgeCache = MemoryBadgeCache()) =
-        SteamBadgeProvider(BadgeHttp(timeoutSeconds = 3), cache, storeBaseUrl = api.baseUrl)
+        SteamBadgeProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), cache, storeBaseUrl = api.baseUrl)
 
     @Test
     fun `renders price, discount, reviews and release date for a matched title`() {

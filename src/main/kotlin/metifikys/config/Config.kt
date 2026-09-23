@@ -648,7 +648,14 @@ data class FetcherConfig(
      * limited on its own: a 429 from the Twitter route no longer cools down every converted feed.
      * Empty (default) = one throttle per host, as before.
      */
-    val pathScopedThrottleHosts: List<String> = emptyList()
+    val pathScopedThrottleHosts: List<String> = emptyList(),
+    /**
+     * Extra hosts (`host`, `host:port` or a URL) the SSRF guard lets resolve to a private / loopback
+     * address, on top of the hosts of every configured feed URL (trusted automatically, per
+     * `host:port`). Every other fetch — article pages, repoint targets, redirects, discovery,
+     * badges — is refused on a non-public address. Empty (default) = only the feed hosts.
+     */
+    val privateHostAllowlist: List<String> = emptyList()
 )
 
 /**
@@ -1403,6 +1410,13 @@ object ConfigLoader {
                 "fetcher.maxConcurrentFetches must be >= 1 (got ${f.maxConcurrentFetches})"
             }
             require(f.maxAttempts >= 1) { "fetcher.maxAttempts must be >= 1 (got ${f.maxAttempts})" }
+            for (entry in f.privateHostAllowlist) {
+                try {
+                    metifikys.fetch.UrlGuard.parseTrustEntry(entry)
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException("fetcher.privateHostAllowlist: ${e.message}")
+                }
+            }
             require(f.retryDelaySeconds >= 0) {
                 "fetcher.retryDelaySeconds must be >= 0 (got ${f.retryDelaySeconds})"
             }

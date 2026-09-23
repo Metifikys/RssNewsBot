@@ -5,7 +5,7 @@ import com.rometools.rome.io.XmlReader
 import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.fetch.HostThrottle
 import metifikys.fetch.LinkNormalizer
-import metifikys.fetch.RssFetcher
+import metifikys.fetch.UrlGuard
 import org.jsoup.Jsoup
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
@@ -22,16 +22,16 @@ private val logger = KotlinLogging.logger {}
  * when Rome parses it into at least one entry.
  *
  * Network hygiene, since the hosts come from article links (untrusted): every URL — redirect
- * targets included — goes through the fetcher's SSRF check with private hosts REJECTED (unlike the
- * feed fetcher, which allows the LAN converter), redirects are followed by hand (at most
+ * targets included — goes through the [UrlGuard] with private addresses REJECTED (unlike the
+ * feed fetcher, which trusts the configured LAN converter), redirects are followed by hand (at most
  * [MAX_REDIRECTS]), bodies are capped at [MAX_BODY_BYTES], a host the shared [HostThrottle] has
  * cooling down is skipped rather than waited for, and each call spends from a [Budget].
  */
 class FeedDiscovery(
     private val hostThrottle: HostThrottle = HostThrottle(),
     private val http: Http = UrlConnectionHttp(),
-    /** Strict validator: never private hosts. Tests pass a lenient one for a local server. */
-    private val validator: RssFetcher = RssFetcher(allowPrivateHosts = false),
+    /** Strict guard: trusts no private host, not even a feed host. Tests pass [UrlGuard.OFF] for a local server. */
+    private val guard: UrlGuard = UrlGuard(),
     /** Scheme of the homepage probe; `http` only for tests against a local server. */
     private val scheme: String = "https"
 ) {
@@ -92,7 +92,7 @@ class FeedDiscovery(
     private fun get(start: String, budget: Budget): Final? {
         var url = start
         repeat(MAX_REDIRECTS + 1) {
-            validator.validateFeedUrl(url)
+            guard.check(url)
             if (budget.requests <= 0) return null
             val host = HostThrottle.hostKey(url)
             if (hostThrottle.acquireDelayMs(host) > 0) return null
