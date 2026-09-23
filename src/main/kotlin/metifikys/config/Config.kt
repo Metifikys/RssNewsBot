@@ -315,7 +315,10 @@ data class BarometerConfig(
                     "job cuts", "studio closure"
                 )
             ),
-            BarometerSeriesConfig(id = "releases", label = "Релізи", eventTypes = listOf("release_date", "delay"), byEventDate = true)
+            // By the week the news was posted: counted by their own date (byEventDate) releases
+            // stay near zero — covered_events has no dates to warm up from, and Step 1 gives a
+            // day-precise eventDate for about one release story in five.
+            BarometerSeriesConfig(id = "releases", label = "Новини про релізи", eventTypes = listOf("release_date", "delay"))
         )
     }
 }
@@ -326,7 +329,8 @@ data class BarometerConfig(
  * is one of [keywordEventTypes] and its subject contains one of [keywords] (case-insensitive
  * substrings; the core fact is not searched — it mentions layoffs and closures in passing). Counted by the week the event reached the channel, or with
  * [byEventDate] by the week of its own day-precise `eventDate` (the latest one known per entity, so
- * a delay moves the release).
+ * a delay moves the release). That is sparse: only events with a day date count, and Step 1 gives
+ * one for a minority of release stories.
  */
 data class BarometerSeriesConfig(
     val id: String,

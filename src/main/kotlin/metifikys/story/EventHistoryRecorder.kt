@@ -30,19 +30,25 @@ class EventHistoryRecorder(private val config: AppConfig, private val db: NewsDa
     /**
      * One-off warm-up when `event_history` is still empty: the delivered events `covered_events`
      * remembers (14–90 days) plus the later `duplicate` sightings in `rejected_events`, oldest
-     * first, so the counters do not start from zero. Returns the rows offered (insert-ignore, so
+     * first, so the counters do not start from zero. `covered_events` has no event date, so a
+     * covered event takes the one its living tracker row holds (same event key), if any — a known
+     * date must stop the vaporware count. Returns the rows offered (insert-ignore, so
      * a rerun adds nothing). Never throws.
      */
     fun backfillIfEmpty(): Int {
         if (!config.storyIntel.enabled) return 0
         return try {
             if (!db.isEventHistoryEmpty()) return 0
-            val rows = config.categories.filterValues { it.dedup != null }.keys.flatMap { category ->
+            val rows = config.categories.filterValues { it.dedup != null }.flatMap { (category, cat) ->
+                // covered_events keeps no eventDate; the living trackers remember one per event key.
+                val trackerDates = cat.trackers.flatMap { db.fetchTrackerEntries(category, it.id) }
+                    .mapNotNull { e -> TrackerDates.normalize(e.eventDate)?.let { e.eventKey to it } }
+                    .toMap()
                 val covered = db.fetchRecentEvents(category, BACKFILL_DAYS, BACKFILL_LIMIT).map {
-                    row(category, it.eventKey, it.subject, it.franchise, it.eventType, it.coreFact, null, it.newsworthiness, it.coveredAt)
+                    row(category, it.eventKey, it.subject, it.franchise, it.eventType, it.coreFact, trackerDates[it.eventKey], it.newsworthiness, it.coveredAt)
                 }
                 val duplicates = db.fetchRecentRejectedEvents(category, BACKFILL_DAYS, BACKFILL_LIMIT).map {
-                    row(category, it.eventKey, it.subject, it.franchise, it.eventType, it.coreFact, null, it.newsworthiness, it.extractedAt)
+                    row(category, it.eventKey, it.subject, it.franchise, it.eventType, it.coreFact, trackerDates[it.eventKey], it.newsworthiness, it.extractedAt)
                 }
                 covered + duplicates
             }.sortedBy { it.coveredAt }

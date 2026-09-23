@@ -19,8 +19,9 @@ import kotlin.math.max
 private val logger = KotlinLogging.logger {}
 
 /**
- * Draws a [Barometer.Result] as a 1200×675 PNG: grouped bars per ISO week, zero baseline, a few
- * recessive gridlines, week labels, a legend and direct value labels. JDK only (java.awt, ImageIO)
+ * Draws a [Barometer.Result] as a 1200×675 PNG: one panel per series (small multiples, each with its
+ * own y-scale), bars per ISO week, zero baseline, a few recessive gridlines, shared week labels, a
+ * header naming each series with this week's number, and direct value labels. JDK only (java.awt, ImageIO)
  * and headless; the Cyrillic text uses the bundled DejaVu Sans (`/fonts`, see LICENSE-DejaVu.txt),
  * so the server's fontconfig does not matter. At most two series, colour-blind-safe blue / orange.
  */
@@ -73,94 +74,101 @@ object BarometerChart {
     private fun draw(g: Graphics2D, r: Barometer.Result, title: String, subtitle: String) {
         val left = 96
         val right = WIDTH - 48
-        val top = 176
-        val bottom = HEIGHT - 72
 
         // Heading and subtitle.
         g.font = bold.deriveFont(38f)
         g.color = TEXT
-        g.drawString(title, 48, 72)
+        g.drawString(title, 48, 64)
         g.font = regular.deriveFont(24f)
         g.color = TEXT_SECONDARY
-        g.drawString(subtitle, 48, 112)
+        g.drawString(subtitle, 48, 102)
 
-        // Legend: one row under the subtitle, a swatch before each label (identity never by colour alone:
-        // the value labels sit on the bars too).
-        g.font = regular.deriveFont(24f)
-        var x = 48
-        for ((i, s) in r.series.withIndex()) {
-            g.color = SERIES[i % SERIES.size]
-            g.fill(RoundRectangle2D.Double(x.toDouble(), 128.0, 22.0, 22.0, 6.0, 6.0))
-            g.color = TEXT
-            val label = "${s.label}: ${s.current} цього тижня"
-            g.drawString(label, x + 32, 147)
-            x += 32 + g.fontMetrics.stringWidth(label) + 40
-        }
-
-        // Y scale: a "nice" step so there are at most five gridlines above zero.
-        val maxValue = max(1, r.series.maxOfOrNull { it.counts.maxOrNull() ?: 0 } ?: 0)
-        val step = niceStep(maxValue)
-        val yMax = step * ceil(maxValue.toDouble() / step).toInt()
-        val plotH = (bottom - top).toDouble()
-        fun y(v: Int): Double = bottom - plotH * v / yMax
-
-        g.font = regular.deriveFont(20f)
-        val fm = g.fontMetrics
-        var tick = 0
-        while (tick <= yMax) {
-            val ty = y(tick)
-            if (tick > 0) {
-                g.color = GRID
-                g.stroke = BasicStroke(1f)
-                g.drawLine(left, ty.toInt(), right, ty.toInt())
-            }
-            g.color = TEXT_SECONDARY
-            val label = tick.toString()
-            g.drawString(label, left - 14 - fm.stringWidth(label), (ty + fm.ascent / 2.5).toInt())
-            tick += step
-        }
-
-        // Bars: per week a group of one bar per series, 2px surface gap between neighbours,
-        // 4px rounded tops anchored on the baseline.
+        // Small multiples: one panel per series, each with its own y-scale. Layoffs (a handful a
+        // week) and release news (dozens) on one axis would flatten the smaller series.
+        val panels = max(1, r.series.size)
+        val areaTop = 128
+        val areaBottom = HEIGHT - 64
+        val panelGap = 22
+        val headerH = 34
+        val panelH = (areaBottom - areaTop - panelGap * (panels - 1)) / panels
         val weeks = r.weekStarts.size
         val groupW = (right - left).toDouble() / weeks
-        val nSeries = max(1, r.series.size)
-        val barGap = 2.0
-        val barW = (groupW * 0.72 - barGap * (nSeries - 1)) / nSeries
-        val labelFont = regular.deriveFont(19f)
-        for (w in 0 until weeks) {
-            val gx = left + groupW * w + groupW * 0.14
-            for ((i, s) in r.series.withIndex()) {
-                val v = s.counts[w]
-                val bx = gx + i * (barW + barGap)
-                if (v > 0) {
-                    val by = y(v)
-                    g.color = SERIES[i % SERIES.size]
-                    g.fill(topRounded(bx, by, barW, bottom - by, 4.0))
-                    g.font = labelFont
-                    g.color = TEXT
-                    val s2 = v.toString()
-                    val lw = g.fontMetrics.stringWidth(s2)
-                    g.drawString(s2, (bx + (barW - lw) / 2).toFloat(), (by - 6).toFloat())
+        val barW = groupW * 0.62
+
+        for ((i, s) in r.series.withIndex()) {
+            val pTop = areaTop + i * (panelH + panelGap)
+            val plotTop = pTop + headerH + 22 // room for the value labels above the tallest bar
+            val plotBottom = pTop + panelH
+            val colour = SERIES[i % SERIES.size]
+
+            // Panel header: swatch + label + this week's number (the series is named in text, not by colour alone).
+            g.color = colour
+            g.fill(RoundRectangle2D.Double(48.0, pTop + 6.0, 20.0, 20.0, 6.0, 6.0))
+            g.font = bold.deriveFont(24f)
+            g.color = TEXT
+            g.drawString(s.label, 78, pTop + 25)
+            val labelW = g.fontMetrics.stringWidth(s.label)
+            g.font = regular.deriveFont(22f)
+            g.color = TEXT_SECONDARY
+            g.drawString("  ·  цього тижня ${s.current}, у середньому ${Barometer.decimal(s.mean)}", 78 + labelW, pTop + 25)
+
+            // Y scale: at most three gridlines above zero in a panel this short.
+            val maxValue = max(1, s.counts.maxOrNull() ?: 0)
+            val step = niceStep(maxValue, maxTicks = 3)
+            val yMax = step * ceil(maxValue.toDouble() / step).toInt()
+            val plotH = (plotBottom - plotTop).toDouble()
+            fun y(v: Int): Double = plotBottom - plotH * v / yMax
+
+            g.font = regular.deriveFont(18f)
+            val fm = g.fontMetrics
+            var tick = 0
+            while (tick <= yMax) {
+                val ty = y(tick)
+                if (tick > 0) {
+                    g.color = GRID
+                    g.stroke = BasicStroke(1f)
+                    g.drawLine(left, ty.toInt(), right, ty.toInt())
                 }
+                g.color = TEXT_SECONDARY
+                val label = tick.toString()
+                g.drawString(label, left - 14 - fm.stringWidth(label), (ty + fm.ascent / 2.5).toInt())
+                tick += step
             }
-            // Week label: the Monday; the current week in bold.
+
+            // Bars: 4px rounded tops anchored on the baseline, value label above each non-zero bar.
+            g.font = regular.deriveFont(18f)
+            for (w in 0 until weeks) {
+                val v = s.counts[w]
+                if (v <= 0) continue
+                val bx = left + groupW * w + (groupW - barW) / 2
+                val by = y(v)
+                g.color = colour
+                g.fill(topRounded(bx, by, barW, plotBottom - by, 4.0))
+                g.color = TEXT
+                val sv = v.toString()
+                val lw = g.fontMetrics.stringWidth(sv)
+                g.drawString(sv, (bx + (barW - lw) / 2).toFloat(), (by - 5).toFloat())
+            }
+
+            // Zero baseline over the bar feet.
+            g.color = BASELINE
+            g.stroke = BasicStroke(2f)
+            g.drawLine(left, plotBottom, right, plotBottom)
+        }
+
+        // Week labels once, under the last panel: the Monday; the current week in bold.
+        for (w in 0 until weeks) {
             val isCurrent = w == weeks - 1
             g.font = if (isCurrent) bold.deriveFont(19f) else regular.deriveFont(19f)
             g.color = if (isCurrent) TEXT else TEXT_SECONDARY
             val wl = r.weekStarts[w].format(WEEK_LABEL)
             val ww = g.fontMetrics.stringWidth(wl)
-            g.drawString(wl, (left + groupW * w + (groupW - ww) / 2).toFloat(), (bottom + 32).toFloat())
+            g.drawString(wl, (left + groupW * w + (groupW - ww) / 2).toFloat(), (areaBottom + 28).toFloat())
         }
 
-        // Zero baseline over the bar feet.
-        g.color = BASELINE
-        g.stroke = BasicStroke(2f)
-        g.drawLine(left, bottom, right, bottom)
-
-        g.font = regular.deriveFont(17f)
+        g.font = regular.deriveFont(16f)
         g.color = TEXT_SECONDARY
-        g.drawString("Тиждень з понеділка; остання колонка — поточний тиждень", 48, HEIGHT - 12)
+        g.drawString("Тиждень з понеділка; остання колонка — поточний тиждень; у кожної панелі своя шкала", 48, HEIGHT - 10)
     }
 
     /** A rectangle whose two top corners are rounded by [radius] and whose base is square. */
@@ -171,13 +179,13 @@ object BarometerChart {
         return shape
     }
 
-    /** 1, 2, 5, 10, 20, 50, … — the smallest step giving at most five ticks up to [maxValue]. */
-    internal fun niceStep(maxValue: Int): Int {
+    /** 1, 2, 5, 10, 20, 50, … — the smallest step giving at most [maxTicks] ticks up to [maxValue]. */
+    internal fun niceStep(maxValue: Int, maxTicks: Int = 5): Int {
         var magnitude = 1
         while (true) {
             for (m in intArrayOf(1, 2, 5)) {
                 val step = m * magnitude
-                if (ceil(maxValue.toDouble() / step) <= 5) return step
+                if (ceil(maxValue.toDouble() / step) <= maxTicks) return step
             }
             magnitude *= 10
         }

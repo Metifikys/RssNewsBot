@@ -62,7 +62,23 @@ class BarometerTest {
     }
 
     @Test
+    fun `release news counts by the week it was posted, one per subject`() {
+        val r = Barometer.weekly(
+            listOf(
+                row("r1", "silksong", "release_date", LocalDateTime.of(2026, 9, 22, 10, 0)),
+                row("r2", "silksong", "delay", LocalDateTime.of(2026, 9, 23, 10, 0), date = "2026-12"),
+                row("r3", "hades_2", "release_date", LocalDateTime.of(2026, 9, 15, 10, 0)),
+                row("r4", "gta_6", "major_announcement", LocalDateTime.of(2026, 9, 15, 10, 0))
+            ),
+            series, weeks = 2, today = today
+        )
+        assertEquals("Новини про релізи", r.series[1].label)
+        assertEquals(listOf(1, 1), r.series[1].counts)
+    }
+
+    @Test
     fun `releases count by their own day date, the latest one known per entity`() {
+        val byDate = listOf(metifikys.config.BarometerSeriesConfig("releases", "Релізи", listOf("release_date", "delay"), byEventDate = true))
         val r = Barometer.weekly(
             listOf(
                 row("r1", "silksong", "release_date", LocalDateTime.of(2026, 6, 1, 10, 0), date = "2026-09-08"),
@@ -72,10 +88,9 @@ class BarometerTest {
                 row("r4", "gta_6", "release_date", LocalDateTime.of(2026, 7, 1, 10, 0), date = "2026-11"),
                 row("r5", "future", "release_date", LocalDateTime.of(2026, 7, 1, 10, 0), date = "2026-12-01")
             ),
-            series, weeks = 3, today = today
+            byDate, weeks = 3, today = today
         )
-        assertEquals(listOf(0, 1, 1), r.series[1].counts)
-        assertEquals("Релізи", r.series[1].label)
+        assertEquals(listOf(0, 1, 1), r.series[0].counts)
     }
 
     @Test
@@ -112,5 +127,6 @@ class BarometerTest {
     @Test
     fun `nice y steps give at most five gridlines`() {
         assertEquals(listOf(1, 1, 2, 5, 10, 20), listOf(1, 5, 7, 22, 45, 81).map { BarometerChart.niceStep(it) })
+        assertEquals(listOf(1, 2, 5, 20), listOf(3, 5, 14, 53).map { BarometerChart.niceStep(it, maxTicks = 3) })
     }
 }

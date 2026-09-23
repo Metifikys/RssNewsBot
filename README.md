@@ -184,8 +184,9 @@ via a `/status` admin snapshot.
     `softDatesStop`).
 - **Industry barometer** (opt-in, `weekly.barometer`, needs `storyIntel`) — after the weekly
   roundup, a 1200×675 PNG of distinct subjects per ISO week over the last 12 weeks from
-  `event_history`: layoffs / closures (by type, or a keyword in an `industry_news` subject)
-  against releases (by their own day date). Drawn with java.awt headless and a bundled DejaVu Sans
+  `event_history`, one panel per series with its own scale: layoffs / closures (by type, or a
+  keyword in an `industry_news` subject) and release news (`release_date` / `delay`, by the week it
+  was posted; `byEventDate` counts by the release day instead, sparse). Drawn with java.awt headless and a bundled DejaVu Sans
   subset (`src/main/resources/fonts`, Bitstream Vera / public-domain licence, ~160 KB), posted as a
   multipart photo through the same pacer / 429 handling. `format: text` — and a chart that cannot
   be drawn — puts a `▁▂▅█` sparkline block into the roundup instead; nothing before `minWeeks`.

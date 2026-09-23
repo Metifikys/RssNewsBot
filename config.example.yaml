@@ -256,12 +256,14 @@ weekly:
   # sourceLeaderboard: { enabled: false, lookbackDays: 30, minEvents: 10, top: 3, showCopiers: false }
   # Industry barometer (needs storyIntel — it counts event_history): distinct subjects per ISO
   # week (Mon–Sun, the last bar is the current week) per series over the last `weeks` weeks.
-  # format png: a 1200×675 bar chart posted as its own photo right after the roundup (bundled
-  # DejaVu font, java.awt headless); if it cannot be drawn, the sparkline text goes into the
+  # format png: a 1200×675 chart (one panel per series, each with its own scale) posted as its
+  # own photo right after the roundup (bundled DejaVu font, java.awt headless); if it cannot be
+  # drawn, the sparkline text goes into the
   # roundup instead. format text: only the sparkline block, before the hashtag. Nothing until the
   # history spans minWeeks. At most two series. A series matches by eventTypes, or by keywords in
   # the subject of a keywordEventTypes event (default [industry_news]); byEventDate counts a
-  # release in the week of its own day date (the latest known per subject). Prod prompts may
+  # release in the week of its own day date (the latest known per subject) — sparse, since only
+  # a minority of release stories carry a day-precise eventDate. Prod prompts may
   # add a `layoffs` event type; the keywords cover rows filed as industry_news.
   # barometer:
   #   enabled: false
@@ -272,7 +274,7 @@ weekly:
   #   series:
   #     - { id: layoffs, label: "Звільнення і закриття", eventTypes: [layoffs, studio_closure],
   #         keywords: [звільн, скорочення штату, скорочення співробітників, закриття студії, layoff, laid off, job cuts, studio closure] }
-  #     - { id: releases, label: "Релізи", eventTypes: [release_date, delay], byEventDate: true }
+  #     - { id: releases, label: "Новини про релізи", eventTypes: [release_date, delay] }
   hashtag: "#головне"      # optional: appended on its own line at the end of the post (omit = none)
   # Which categories participate. Omit/empty = every category that has a `dedup:` block.
   # categories:

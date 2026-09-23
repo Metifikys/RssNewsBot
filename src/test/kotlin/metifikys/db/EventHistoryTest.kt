@@ -46,7 +46,12 @@ class EventHistoryTest {
         openai = OpenAIConfig(apiKey = "sk"),
         database = DatabaseConfig(path = ":memory:"),
         scheduler = SchedulerConfig(intervalMinutes = 60),
-        categories = mapOf("gaming" to CategoryConfig(emoji = "🎮", feeds = listOf(FeedConfig("https://e.com/rss")), channelId = "@g", dedup = DedupConfig())),
+        categories = mapOf(
+            "gaming" to CategoryConfig(
+                emoji = "🎮", feeds = listOf(FeedConfig("https://e.com/rss")), channelId = "@g", dedup = DedupConfig(),
+                trackers = listOf(metifikys.config.TrackerConfig(id = "releases", title = "📅", eventTypes = listOf("release_date")))
+            )
+        ),
         storyIntel = StoryIntelConfig(enabled = enabled)
     )
 
@@ -90,9 +95,12 @@ class EventHistoryTest {
             RejectedEventRow(category = "gaming", eventKey = "silksong-rumor", subject = "Hollow Knight: Silksong", eventType = "rumor", coreFact = "dup", status = "duplicate", extractedAt = now.minusDays(5)),
             RejectedEventRow(category = "gaming", eventKey = "junk", coreFact = "x", status = "rejected", extractedAt = now.minusDays(5))
         ))
+        db.upsertTrackerEntry(TrackerEntryRow("gaming", "releases", "hollow_knight_silksong", "Silksong", "2026-09-04", null, "scheduled", "silksong-date", null, null, now))
         val rec = EventHistoryRecorder(config(true), db)
 
         assertEquals(2 + 1, rec.backfillIfEmpty())
+        // covered_events has no date; the tracker row of the same event key supplies it.
+        assertEquals("2026-09-04", db.fetchEventHistorySince("gaming", now.minusDays(100)).first { it.eventKey == "silksong-date" }.eventDate)
         val rows = db.fetchEventHistorySince("gaming", now.minusDays(100))
         assertEquals(listOf("silksong-date" to now.minusDays(20), "silksong-rumor" to now.minusDays(5)), rows.map { it.eventKey to it.coveredAt })
         assertEquals(setOf("hollow_knight_silksong"), rows.map { it.entityKey }.toSet())

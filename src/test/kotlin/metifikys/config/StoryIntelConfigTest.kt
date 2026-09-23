@@ -147,7 +147,7 @@ class StoryIntelConfigTest {
         assertEquals(BarometerConfig.FORMAT_TEXT, b.format)
         assertEquals(8, b.weeks)
         assertEquals(listOf("layoffs", "releases"), b.series.map { it.id })
-        assertTrue(b.series[1].byEventDate)
+        assertFalse(b.series[1].byEventDate) // release news by the week it was posted
 
         val custom = load(yaml(top = "storyIntel:\n  enabled: true\nweekly:\n  enabled: true\n  barometer:\n    enabled: true\n    series:\n      - { id: closures, label: Закриття, eventTypes: [studio_closure] }"))
         assertEquals(listOf("closures"), custom.weekly!!.barometer.series.map { it.id })
