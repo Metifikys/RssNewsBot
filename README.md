@@ -158,7 +158,10 @@ via a `/status` admin snapshot.
     ([`SteamAppResolver`](src/main/kotlin/metifikys/enrich/SteamAppResolver.kt), appid cached 7 days):
     `ukLocalization` — `🇺🇦 Українська: інтерфейс і субтитри, без озвучки` from Steam's
     `IStoreBrowseService/GetItems` (Ukrainian = language 26; the `appdetails` language list as the
-    fallback), no line without Ukrainian unless `badges.ukLocalizationShowMissing`.
+    fallback), no line without Ukrainian unless `badges.ukLocalizationShowMissing`;
+    `deck` — `🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти)` from Valve's Deck
+    compatibility report and ProtonDB's summary (both undocumented, keyless; ProtonDB from 5
+    reports; also on `patch` events), cached 24 h.
   - **intro** — the first time a franchise appears in the category, one Wikipedia line
     (`📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`), remembered in `entity_intros`.
   - **longForm** — the top-ranked events of a digest (composite ≥ `minComposite`, at most

@@ -1328,20 +1328,23 @@ data class IntroConfig(
  * - [trailer]: `▶️ [Трейлер](https://youtu.be/…)` for the event types in `badges.trailerEventTypes` when
  *   the article embeds a YouTube video whose title (YouTube oEmbed) names the subject / franchise;
  * - [ukLocalization] (id `uk_lang`): `🇺🇦 Українська: інтерфейс, субтитри, озвучка` for a Steam game
- *   (Steam's GetItems; no line without Ukrainian unless `badges.ukLocalizationShowMissing`).
+ *   (Steam's GetItems; no line without Ukrainian unless `badges.ukLocalizationShowMissing`);
+ * - [deck]: `🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти)` for a Steam game (also on `patch`).
  */
 data class BadgesConfig(
     val steam: Boolean = false,
     val hn: Boolean = false,
     val github: Boolean = false,
     val trailer: Boolean = false,
-    val ukLocalization: Boolean = false
+    val ukLocalization: Boolean = false,
+    val deck: Boolean = false
 ) {
     /** Provider ids to run for this category, matching [metifikys.enrich.BadgeProvider.id]. */
     val enabledIds: Set<String>
         get() = buildSet {
             if (steam) add("steam")
             if (ukLocalization) add("uk_lang")
+            if (deck) add("deck")
             if (hn) add("hn")
             if (github) add("github")
             if (trailer) add("trailer")

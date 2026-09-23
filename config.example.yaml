@@ -481,10 +481,13 @@ categories:
       #            subject / franchise — a site's promo clip gets nothing. Event types: badges.trailerEventTypes.
       #   ukLocalization — 🇺🇦 Українська: інтерфейс і субтитри, без озвучки (Steam GetItems, same game
       #            events as steam; no line when the game has no Ukrainian, see badges.ukLocalizationShowMissing)
+      #   deck   — 🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти) (Valve's Deck report +
+      #            ProtonDB summary, both undocumented; game events as steam plus patch)
       # The Steam-based badges share one store search + appdetails per game (cached in the DB).
       badges:
         steam: true
         ukLocalization: false
+        deck: false
         hn: false
         github: false
         trailer: false
