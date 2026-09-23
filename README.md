@@ -190,6 +190,15 @@ via a `/status` admin snapshot.
 - **Schema validation at load time** — invalid `hardThreshold` ranges, missing provider
   blocks for `summarize: anthropic`, unsupported `provider: openrouter` on the Batch API,
   path-traversal in `database.path`, etc. all fail fast with explicit messages.
+- **Strict config keys + `--check-config`** — an unknown key anywhere (feed entries included)
+  fails the load with its full path and the keys accepted there (`Unknown config key
+  'categories.gaming.post.hashtag' — keys accepted here: badges, hashtags, … (did you mean
+  'hashtags'?)`). At startup one INFO line per option registered in
+  [`ConfigChangelog`](src/main/kotlin/metifikys/config/ConfigChangelog.kt) that the file does not
+  set yet (`[Config] new option since 2026-09-23 not set: categories.*.post.longForm — …`).
+  `java -jar RssNewsBot.jar --check-config config.yaml [--against config.example.yaml]` runs the
+  full load, validation and prompt check without starting, prints the key-path diff (never
+  values) and exits 0/1; `deploy/restart.sh` runs it before installing a new jar.
 - **Prompt validation at startup** —
   [`PromptValidator`](src/main/kotlin/metifikys/ai/dedup/PromptValidator.kt) checks every prompt
   the config will use. The bot refuses to start (listing every finding) when a `dedup.promptFile`
@@ -756,6 +765,8 @@ Produces `build/libs/RssNewsBot-1.0-SNAPSHOT.jar` (fat JAR with all dependencies
 java -jar build/libs/RssNewsBot-1.0-SNAPSHOT.jar
 # or with a custom config path:
 java -jar build/libs/RssNewsBot-1.0-SNAPSHOT.jar /path/to/config.yaml
+# check a config (and its prompt files) without starting; exit 0 = would start:
+java -jar build/libs/RssNewsBot-1.0-SNAPSHOT.jar --check-config /path/to/config.yaml [--against config.example.yaml]
 ```
 
 The first cycle runs immediately on startup; subsequent cycles fire every

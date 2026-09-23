@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.DeserializationContext
 import com.fasterxml.jackson.databind.JsonDeserializer
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException
 import com.fasterxml.jackson.databind.node.TextNode
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
@@ -555,6 +556,10 @@ class FeedConfigDeserializer : JsonDeserializer<FeedConfig>() {
             require(!url.isNullOrBlank()) { "Empty feed URL in config" }
             FeedConfig(url = url)
         } else {
+            // Strict like the data classes: a typo (`fetchFullcontent: true`) used to vanish without a trace.
+            node.fieldNames().asSequence().firstOrNull { it !in FeedConfig.KEYS }?.let { name ->
+                throw UnrecognizedPropertyException.from(p, FeedConfig::class.java, name, FeedConfig.KEYS.toList())
+            }
             val summarize = node.get("summarize")?.asText()?.takeIf { it.isNotBlank() }
             require(summarize == null || summarize in FeedConfig.SUMMARIZE_PROVIDERS) {
                 "Invalid 'summarize' value '$summarize' — must be one of ${FeedConfig.SUMMARIZE_PROVIDERS}"
@@ -582,6 +587,9 @@ data class FeedConfig(
 ) {
     companion object {
         val SUMMARIZE_PROVIDERS = setOf("openai", "openrouter", "anthropic", "claudecli", "codexcli")
+
+        /** The keys the object form accepts ([FeedConfigDeserializer] rejects any other). */
+        val KEYS: Set<String> = linkedSetOf("url", "fetchFullContent", "summarize")
     }
 }
 
@@ -1066,8 +1074,47 @@ object ConfigLoader {
     fun load(path: String): AppConfig {
         val file = File(path)
         require(file.exists() && file.isFile && file.canRead()) { "Config file not found or not readable: $path" }
-        val config = mapper.readValue(file, AppConfig::class.java)
+        val config = try {
+            mapper.readValue(file, AppConfig::class.java)
+        } catch (e: UnrecognizedPropertyException) {
+            throw IllegalArgumentException(unknownKeyMessage(e), e)
+        }
         return applyEnvOverrides(config)
+    }
+
+    /**
+     * Human form of Jackson's unknown-property error: the full key path and the keys that ARE
+     * accepted there, e.g. `unknown config key categories.gaming.post.hashtag — keys here: badges,
+     * hashtags, intro, longForm, threads (did you mean hashtags?)`.
+     */
+    internal fun unknownKeyMessage(e: UnrecognizedPropertyException): String {
+        val path = e.path.joinToString("") { ref ->
+            when {
+                ref.fieldName != null -> ".${ref.fieldName}"
+                ref.index >= 0 -> "[${ref.index}]"
+                else -> ".?"
+            }
+        }.removePrefix(".").let { if (it.endsWith(e.propertyName)) it else if (it.isEmpty()) e.propertyName else "$it.${e.propertyName}" }
+        val known = e.knownPropertyIds.orEmpty().map { it.toString() }.sorted()
+        val name = e.propertyName
+        val guess = known.minByOrNull { editDistance(it.lowercase(), name.lowercase()) }
+            ?.takeIf { editDistance(it.lowercase(), name.lowercase()) <= maxOf(2, name.length / 3) }
+        return "Unknown config key '$path'" +
+            (if (known.isNotEmpty()) " — keys accepted here: ${known.joinToString()}" else "") +
+            (guess?.let { " (did you mean '$it'?)" } ?: "")
+    }
+
+    private fun editDistance(a: String, b: String): Int {
+        var prev = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            val cur = IntArray(b.length + 1)
+            cur[0] = i
+            for (j in 1..b.length) {
+                cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+            }
+            prev = cur
+        }
+        return prev[b.length]
     }
 
     /**

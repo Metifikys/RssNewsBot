@@ -1512,4 +1512,47 @@ class ConfigLoaderBranchesTest {
         assertTrue(ex.message!!.contains("at most"))
     }
 
+
+    // ─── Strictness: unknown keys fail the load with a readable message ───
+
+    private val strictBase = """
+        telegram:
+          botToken: "test-token"
+        openai:
+          apiKey: "sk-test"
+        database:
+          path: "/tmp/test.db"
+        scheduler:
+          intervalMinutes: 60
+        categories:
+          sports:
+            emoji: "⚽"
+            channelId: "@sports"
+            feeds:
+              - https://example.com/rss
+    """.trimIndent()
+
+    @Test
+    fun `unknown top-level key fails the load`() {
+        val e = assertThrows<IllegalArgumentException> { load(strictBase + "\nschedular:\n  intervalMinutes: 5\n") }
+        assertTrue("Unknown config key 'schedular'" in e.message!!, e.message)
+        assertTrue("did you mean 'scheduler'" in e.message!!, e.message)
+    }
+
+    @Test
+    fun `unknown key inside a category names the full path and the keys accepted there`() {
+        val e = assertThrows<IllegalArgumentException> {
+            load(strictBase + "\n    post:\n      hashtag:\n        enabled: true\n")
+        }
+        assertTrue("'categories.sports.post.hashtag'" in e.message!!, e.message)
+        assertTrue("hashtags" in e.message!! && "longForm" in e.message!!, e.message)
+    }
+
+    @Test
+    fun `unknown field in a feed entry fails the load`() {
+        val e = assertThrows<IllegalArgumentException> {
+            load(strictBase.replace("- https://example.com/rss", "- url: https://example.com/rss\n        fetchFullcontent: true"))
+        }
+        assertTrue("categories.sports.feeds[0].fetchFullcontent" in e.message!!, e.message)
+    }
 }

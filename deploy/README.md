@@ -46,6 +46,22 @@ cd /opt/rssbot/src && git pull
 deploy/restart.sh                # builds the shadow jar and restarts the service
 ```
 
+`restart.sh` first runs the new jar's config check against `/opt/rssbot/config.yaml`; if the
+prod config (or a prompt file it points at) would not start with the new code, nothing is
+deployed and the old version keeps running. `RSSBOT_SKIP_CHECK=1` bypasses it.
+
+## Checking the prod config by hand
+
+```bash
+cd /opt/rssbot
+sudo -u rssbot bash -c 'set -a; . ./rssbot.env; set +a; java -jar RssNewsBot.jar --check-config config.yaml --against src/config.example.yaml'
+```
+
+Prints `ERROR` lines (unknown or misspelled keys with the keys accepted there, config
+validation, broken prompt files), `WARN` / `INFO` prompt findings, registered options newer than
+the file (`new option since … not set: …`) and, with `--against`, the key paths each file has
+and the other lacks. Paths only, never values. Exit code 0 = would start, 1 = would not.
+
 ## Backups (there were none before)
 
 ```bash
