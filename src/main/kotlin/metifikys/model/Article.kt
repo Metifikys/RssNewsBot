@@ -18,6 +18,8 @@ data class Article(
     val summarize: String? = null,
     /** Persisted. Source-specific signals captured at ingestion, see [ArticleMeta]. Null for most feeds. */
     val metaJson: String? = null,
+    /** Persisted as `articles.feed_url`: the configured feed `url` this entry came from (null on older rows). */
+    val feedUrl: String? = null,
     /**
      * Ephemeral — not persisted. Article page text refetched right before render for a
      * long-form event (`post.longForm`); the renderer uses it instead of [promptText].

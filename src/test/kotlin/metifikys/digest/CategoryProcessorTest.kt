@@ -273,7 +273,7 @@ class CategoryProcessorTest {
             titled(2, "Elden Ring DLC review")
         )))
 
-        verify { db.markProcessed(listOf("https://example.com/1")) }
+        verify { db.markMuted(listOf("https://example.com/1")) }
         verify(exactly = 0) { factory.forBatch(any()) }
     }
 
@@ -291,7 +291,7 @@ class CategoryProcessorTest {
             titled(3, "How to write clean code") // 'cod' must NOT match 'code'
         )))
 
-        verify { db.markProcessed(listOf("https://example.com/1", "https://example.com/2")) }
+        verify { db.markMuted(listOf("https://example.com/1", "https://example.com/2")) }
         verify(exactly = 0) { factory.forBatch(any()) }
     }
 

@@ -8,6 +8,7 @@ import metifikys.ai.dedup.EventExtractor
 import metifikys.ai.dedup.PromptLoader
 import metifikys.config.AppConfig
 import metifikys.db.NewsDatabase
+import metifikys.feeds.IngestSightings
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.RssFetcher
@@ -298,10 +299,20 @@ class DigestCycle(
             return false
         }
 
-        // Dedup BEFORE enrichment: skip articles whose links are already in DB
-        val existingLinks = db.findExistingLinks(rawArticles.map { it.link })
-        val newRawArticles = rawArticles.filter { it.link !in existingLinks }
+        // Dedup BEFORE enrichment: skip articles whose links are already in DB (and a second copy
+        // of a link within this pass). A link that a DIFFERENT feed brought is kept as a feed
+        // sighting — the "echo" side of the feed-quality metrics.
+        val existingLinks = db.findExistingLinkFeeds(rawArticles.map { it.link })
+        val split = IngestSightings.split(rawArticles, existingLinks)
+        val newRawArticles = split.fresh
         logger.info { "[Cycle:$name] After dedup: ${newRawArticles.size} new article(s) (${existingLinks.size} already in DB)." }
+        if (split.sightings.isNotEmpty()) {
+            try {
+                db.insertFeedSightings(split.sightings)
+            } catch (e: Exception) {
+                logger.warn(e) { "[Cycle:$name] recording ${split.sightings.size} feed sighting(s) failed — metrics only, ingest continues" }
+            }
+        }
 
         // Enrichment and preview-image lookup share one pass: both want the article's HTML,
         // so an article needing text AND an og:image is fetched once instead of twice. The
@@ -368,6 +379,7 @@ class DigestCycle(
             return
         }
         db.deleteOlderThan(config.processing.articleRetentionDays)
+        db.deleteOldFeedSightings(config.processing.articleRetentionDays)
         // Embeddings go before the event tables: `archive.embeddings: labelled` keeps only vectors
         // whose article still has a covered/rejected row in the main DB.
         retain("article_embeddings", config.processing.embeddingRetentionDays) { db.pruneOldEmbeddings(it) }

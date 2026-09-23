@@ -76,7 +76,7 @@ class NewsBotTest {
         // resumePendingBatches() runs on every start(); return empty by default
         every { db.fetchPendingBatches() } returns emptyList()
         // Default: treat all articles as new (no existing links in DB)
-        every { db.findExistingLinks(any()) } returns emptySet()
+        every { db.findExistingLinkFeeds(any()) } returns emptyMap()
 
         // The per-category pipeline fetches via fetchCategory(); bridge it to the fetchAll
         // stub each test defines, filtered to the asked category, so tests keep stubbing
@@ -780,7 +780,7 @@ class NewsBotTest {
         val oldArticle = article("https://a.com/old")
         val newArticle = article("https://a.com/new")
         every { fetcher.fetchAll(any()) } returns listOf(oldArticle, newArticle)
-        every { db.findExistingLinks(listOf("https://a.com/old", "https://a.com/new")) } returns setOf("https://a.com/old")
+        every { db.findExistingLinkFeeds(listOf("https://a.com/old", "https://a.com/new")) } returns mapOf("https://a.com/old" to null)
         every { db.insertArticles(any()) } returns 1
         every { db.fetchReadyForDigestByCategory(config.processing.staleTimeoutHours) } returns emptyMap()
 

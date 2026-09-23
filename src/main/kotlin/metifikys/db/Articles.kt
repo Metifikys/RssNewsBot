@@ -32,8 +32,32 @@ object ArticlesTable : Table("articles") {
     val duplicateOf = integer("duplicate_of").nullable()
     /** Source-specific signals captured at ingestion (JSON, see [metifikys.model.ArticleMeta]); null for most feeds. */
     val metaJson = text("meta_json").nullable()
+    /**
+     * `url` of the configured feed that first brought this link (null on rows written before the
+     * column existed). The key of the feed-quality metrics: the link host cannot stand in for it
+     * (reddit posts are repointed at the outbound article, every t.me mirror shares `t.me`).
+     */
+    val feedUrl = varchar("feed_url", 2000).nullable()
+    /**
+     * When the row was first ingested (insert time; null on older rows). Unlike [pubDate] — the
+     * feed's own claim, `now()` for undated entries — this is our clock: "which feed brought the
+     * story first" and any later story timeline read it.
+     */
+    val fetchedAt = datetime("fetched_at").nullable().index()
+    /** Why the row left the queue without reaching Step 1 (see [DropReason]); null for every other outcome. */
+    val dropReason = varchar("drop_reason", 20).nullable()
 
     override val primaryKey = PrimaryKey(id)
+
+    init {
+        index("idx_articles_category_feed_url", false, category, feedUrl)
+    }
+}
+
+/** [ArticlesTable.dropReason] values. */
+object DropReason {
+    /** Step 0 keyword mute (`preferences.mute`, category mutes, `/mute`). */
+    const val MUTE = "mute"
 }
 
 /** Ingested articles and their UNPROCESSED → PROCESSING → PROCESSED / DUPLICATE lifecycle. */
@@ -43,6 +67,12 @@ interface ArticleStore {
      * Used to skip enrichment for articles we already have.
      */
     fun findExistingLinks(links: List<String>): Set<String>
+
+    /**
+     * [findExistingLinks] plus the stored `feed_url` of each existing link (null for rows older
+     * than the column), so ingestion can notice that a second feed brought a link we already have.
+     */
+    fun findExistingLinkFeeds(links: List<String>): Map<String, String?>
 
     fun insertArticles(articles: List<Article>): Int
 
@@ -74,6 +104,9 @@ interface ArticleStore {
     fun fetchRecentArticles(category: String, sinceDays: Long, limit: Int): List<Article>
 
     fun markProcessed(links: List<String>)
+
+    /** [markProcessed] for Step 0 keyword-muted rows, recording `drop_reason = 'mute'`. */
+    fun markMuted(links: List<String>)
 
     fun markProcessing(links: List<String>)
 
@@ -120,8 +153,19 @@ internal class ArticleRepository : ArticleStore {
         }
     }
 
+    override fun findExistingLinkFeeds(links: List<String>): Map<String, String?> {
+        if (links.isEmpty()) return emptyMap()
+        return transaction {
+            ArticlesTable
+                .select(ArticlesTable.link, ArticlesTable.feedUrl)
+                .where { ArticlesTable.link inList links }
+                .associate { it[ArticlesTable.link] to it[ArticlesTable.feedUrl] }
+        }
+    }
+
     override fun insertArticles(articles: List<Article>): Int {
         var inserted = 0
+        val now = LocalDateTime.now()
         transaction {
             for (article in articles) {
                 val result = ArticlesTable.insertIgnore {
@@ -135,6 +179,8 @@ internal class ArticleRepository : ArticleStore {
                     it[imageUrl] = article.imageUrl
                     it[summary] = article.summary
                     it[metaJson] = article.metaJson
+                    it[feedUrl] = article.feedUrl
+                    it[fetchedAt] = now
                 }
                 if (result.insertedCount > 0) inserted++
             }
@@ -151,7 +197,8 @@ internal class ArticleRepository : ArticleStore {
         pubDate = this[ArticlesTable.pubDate],
         imageUrl = this[ArticlesTable.imageUrl],
         summary = this[ArticlesTable.summary],
-        metaJson = this[ArticlesTable.metaJson]
+        metaJson = this[ArticlesTable.metaJson],
+        feedUrl = this[ArticlesTable.feedUrl]
     )
 
     override fun fetchReadyForDigestByCategory(staleTimeoutHours: Long): Map<String, List<Article>> {
@@ -239,6 +286,17 @@ internal class ArticleRepository : ArticleStore {
             ArticlesTable.update({ ArticlesTable.link inList links }) {
                 it[status] = ArticleStatus.PROCESSED.name
                 it[processingStartedAt] = null
+            }
+        }
+    }
+
+    override fun markMuted(links: List<String>) {
+        if (links.isEmpty()) return
+        transaction {
+            ArticlesTable.update({ ArticlesTable.link inList links }) {
+                it[status] = ArticleStatus.PROCESSED.name
+                it[processingStartedAt] = null
+                it[dropReason] = DropReason.MUTE
             }
         }
     }

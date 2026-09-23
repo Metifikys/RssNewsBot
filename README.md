@@ -942,7 +942,8 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 
 | Table                | Purpose                                                                  |
 |----------------------|---------------------------------------------------------------------------|
-| `articles`           | Canonical article rows + status (`UNPROCESSED`/`PROCESSING`/`PROCESSED`/`DUPLICATE`) + `duplicate_of` pointer + image/summary cache |
+| `articles`           | Canonical article rows + status (`UNPROCESSED`/`PROCESSING`/`PROCESSED`/`DUPLICATE`) + `duplicate_of` pointer + image/summary cache; `feed_url` (the configured feed that first brought the link), `fetched_at` (first-ingest time, our clock — unlike `pub_date`) and `drop_reason` (`mute` for Step 0 keyword drops) are null on rows older than the columns |
+| `feed_sightings`     | `(link, feed_url, seen_at)`: a link a second feed brought after another feed already had it — the unique-link insert otherwise hides the echo. A feed re-reading its own links is not recorded |
 | `pending_batches`    | In-flight batch jobs (`kind`, `category_names`, `article_links`, `shortlist_json`) for restart-safe resume |
 | `summaries`          | Delivered digest text + article count; injected as context next cycle and used for previous-URL filtering |
 | `covered_events`     | Step 1 dedup memory: one row per `(category, event_key)`; upsert keeps subject/franchise/eventType stable |
@@ -965,7 +966,7 @@ Pruning runs on the maintenance tick (or at the start of a legacy cycle), skippe
 batch is pending:
 
 - `deleteOlderThan(processing.articleRetentionDays)` — article rows (default 1500 days, long
-  retention for dedup pointers).
+  retention for dedup pointers); `feed_sightings` by `seen_at` on the same window.
 - `deleteOldSummaries(retentionDays)` — `summaryHistory.retentionDays`;
   `pruneOldCoveredEvents` keeps `max(summaryHistory.retentionDays, feedback.lookbackDays)`.
 - `deleteOldRejectedEvents(30)` — rejected events log.

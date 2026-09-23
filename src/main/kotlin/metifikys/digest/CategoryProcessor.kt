@@ -173,7 +173,7 @@ open class CategoryProcessor(
         val articles = if (muteFilter.isEmpty()) allArticles else {
             val (muted, kept) = allArticles.partition { muteFilter.matches(it) }
             if (muted.isNotEmpty()) {
-                db.markProcessed(muted.map { it.link })
+                db.markMuted(muted.map { it.link })
                 logger.info { "[Category:$name] Muted ${muted.size} article(s) via the mute lists; ${kept.size} remain." }
             }
             kept

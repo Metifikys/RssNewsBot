@@ -441,7 +441,8 @@ class RssFetcher(
                         summarize = feedConfig.summarize,
                         // hnrss items carry the HN id, points and comment count in the raw
                         // description; keep them for the footer badge before strip/enrich lose them.
-                        metaJson = HackerNewsMeta.fromDescription(description)?.let { ArticleMeta(hn = it).toJson() }
+                        metaJson = HackerNewsMeta.fromDescription(description)?.let { ArticleMeta(hn = it).toJson() },
+                        feedUrl = url
                     )
                 } catch (e: Exception) {
                     logger.warn { "Skipping malformed entry in $url: ${e.message}" }
