@@ -1,22 +1,24 @@
 package metifikys.db
 
-import io.github.oshai.kotlinlogging.KotlinLogging
-import metifikys.model.Article
-import metifikys.model.ArticleStatus
-import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.isNull
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.neq
-import org.jetbrains.exposed.sql.javatime.datetime
-import org.jetbrains.exposed.sql.transactions.transaction
-import java.sql.DriverManager
-import java.time.LocalDateTime
-import kotlin.math.ceil
+import org.jetbrains.exposed.sql.Database
 
-private val logger = KotlinLogging.logger {}
-
+/**
+ * Facade over the bot's SQLite DB: connects, creates the schema, runs the migrations, and exposes
+ * every table's queries by delegating to one repository per table (group). Consumers and test
+ * mocks (`mockk<NewsDatabase>()`) use this class; the code lives in the per-table files.
+ *
+ * Where new code goes:
+ * - New table: its own file in this package (see `BotState.kt` for the smallest example) with
+ *   `object FooTable : Table("foo")`, its row DTOs, a public `interface FooStore` (default
+ *   arguments go on the interface, never on the override) and a stateless
+ *   `internal class FooRepository : FooStore` using the global `transaction { }`. Then register
+ *   `FooTable` in [Schema.ALL_TABLES] and add `FooStore by FooRepository()` below.
+ * - New query on an existing table: that table's repository. A join lives with its main table;
+ *   read-only cross-table aggregates for `/status` go to `StatusQueries.kt`.
+ * - New column: add it to the table object — `createMissingTablesAndColumns` adds it on start
+ *   (NOT NULL needs a `.default(…)` for existing rows). Data rewrites / hand-made indexes go
+ *   into [SchemaMigrations.run] and must be idempotent.
+ */
 class NewsDatabase(dbPath: String) :
     ArticleStore by ArticleRepository(),
     BatchStore by BatchRepository(),
@@ -60,74 +62,10 @@ class NewsDatabase(dbPath: String) :
             "?journal_mode=WAL" +
             "&synchronous=NORMAL" +
             "&busy_timeout=15000"
+        // The repositories are stateless and share this global connection; their constructors
+        // (run as the delegates above, before this block) never touch the DB.
         Database.connect(jdbcUrl, driver = "org.sqlite.JDBC")
-        transaction {
-            SchemaUtils.createMissingTablesAndColumns(
-                ArticlesTable, PendingBatchesTable, SummariesTable, CoveredEventsTable, RejectedEventsTable,
-                LlmCallsTable, ArticleEmbeddingsTable, EventEmbeddingsTable,
-                DigestMessagesTable, ReactionCountsTable, AudienceAffinityTable, BotStateTable,
-                BadgeCacheTable, EntityIntrosTable, TrackerEntriesTable
-            )
-        }
-        migrateArticleStatuses(jdbcUrl)
-    }
-
-    private fun migrateArticleStatuses(jdbcUrl: String) {
-        DriverManager.getConnection(jdbcUrl).use { connection ->
-            connection.createStatement().use { statement ->
-                // Confirm WAL actually engaged. SQLite silently falls back to a rollback journal
-                // when the db file is on a network share; production is local disk, so expect "wal".
-                statement.executeQuery("PRAGMA journal_mode=WAL").use { rs ->
-                    val mode = if (rs.next()) rs.getString(1) else "?"
-                    logger.info { "SQLite journal_mode=$mode" }
-                }
-
-                val hasProcessedColumn = statement.executeQuery("PRAGMA table_info(articles)").use { rs ->
-                    var exists = false
-                    while (rs.next()) {
-                        if (rs.getString("name").equals("processed", ignoreCase = true)) {
-                            exists = true
-                            break
-                        }
-                    }
-                    exists
-                }
-
-                if (hasProcessedColumn) {
-                    statement.executeUpdate(
-                        """
-                        UPDATE articles
-                        SET status = '${ArticleStatus.PROCESSED.name}'
-                        WHERE processed = 1
-                          AND status = '${ArticleStatus.UNPROCESSED.name}'
-                        """.trimIndent()
-                    )
-                }
-
-                // BUG-025: only touch rows that actually carry a stray timestamp, so the returned
-                // count means "rows that violated the invariant" rather than "all non-PROCESSING
-                // rows". A non-zero count signals a state-transition that failed to clear it at the
-                // source (markProcessed/markUnprocessed both null it now) — worth surfacing.
-                val fixed = statement.executeUpdate(
-                    """
-                    UPDATE articles
-                    SET processing_started_at = NULL
-                    WHERE status != '${ArticleStatus.PROCESSING.name}'
-                      AND processing_started_at IS NOT NULL
-                    """.trimIndent()
-                )
-                if (fixed > 0) {
-                    logger.warn {
-                        "[Migrate] Cleared a stray processing_started_at on $fixed non-PROCESSING row(s) — " +
-                            "a state transition left the invariant broken (safety net caught it)."
-                    }
-                }
-
-                statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status)")
-                statement.executeUpdate(
-                    "CREATE INDEX IF NOT EXISTS idx_articles_processing_started_at ON articles(processing_started_at)"
-                )
-            }
-        }
+        Schema.create()
+        SchemaMigrations.run(jdbcUrl)
     }
 }
