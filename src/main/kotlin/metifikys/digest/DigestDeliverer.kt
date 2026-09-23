@@ -17,6 +17,7 @@ import metifikys.format.TopicFormatter
 import metifikys.model.Article
 import metifikys.model.ShortlistItem
 import metifikys.story.ConflictDetector
+import metifikys.story.EventHistoryRecorder
 import metifikys.story.Genealogy
 import metifikys.story.Hype
 import metifikys.story.StoryClusterLoader
@@ -330,6 +331,7 @@ class DigestDeliverer(
     private class IntroBudget(var remaining: Int)
 
     private val storyClusters = StoryClusterLoader(config, db)
+    private val historyRecorder = EventHistoryRecorder(config, db)
 
     /**
      * `post.storyLines`: eventKey → the story footer lines, from one `event_articles` lookup per
@@ -491,6 +493,8 @@ class DigestDeliverer(
             )
         }
         db.insertCoveredEvents(rows)
+        // storyIntel: the long-lived first-appearance history (🌀 vaporware, weekly barometer).
+        historyRecorder.record(categoryName, shortlist, now)
         logger.info { "[Category:$categoryName][Dedup] persisted ${rows.size} events" }
     }
 }

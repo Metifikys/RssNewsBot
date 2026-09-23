@@ -153,6 +153,25 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `event history gets exactly the sent events, and only with storyIntel on`() {
+        for (on in listOf(true, false)) {
+            val db = mockk<NewsDatabase>(relaxed = true)
+            val sender = mockk<TelegramSender>(relaxed = true)
+            every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+            every { sender.sendToChannel(any(), match { it.contains("/1") }, any()) } returns listOf(SentRef(-100L, 11L))
+            every { sender.sendToChannel(any(), match { it.contains("/2") }, any()) } returns emptyList()
+            val shortlist = listOf(shortlistItem("evt-1", article(1).link), shortlistItem("evt-2", article(2).link))
+            val summary = "• **First.**\n\n[Title 1](https://example.com/1)\n• **Second.**\n\n[Title 2](https://example.com/2)"
+
+            DigestDeliverer(config().copy(storyIntel = metifikys.config.StoryIntelConfig(enabled = on)), db, sender)
+                .deliver("tech", summary, listOf(article(1), article(2)), shortlist)
+
+            if (on) verify { db.insertEventHistory(match { rows -> rows.map { it.eventKey } == listOf("evt-1") }) }
+            else verify(exactly = 0) { db.insertEventHistory(any()) }
+        }
+    }
+
+    @Test
     fun `all topics duplicates of a prior digest marks articles PROCESSED`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

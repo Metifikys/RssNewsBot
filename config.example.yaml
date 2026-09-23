@@ -138,6 +138,8 @@ anthropic:
 # storyIntel:
 #   enabled: true
 #   retentionDays: 180        # must be >= weekly.lookbackDays
+#   historyRetentionDays: 1095 # event_history: one row per delivered event (first appearance),
+#                              # read by the 🌀 vaporware line and the weekly barometer
 #   domainAliases:            # sister sites / mirrors counted as one outlet
 #     eurogamer.de: eurogamer.net
 

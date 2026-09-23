@@ -41,6 +41,7 @@ import metifikys.feeds.FeedCandidateFinder
 import metifikys.feeds.FeedDiscovery
 import metifikys.fetch.FeedHealthRecorder
 import metifikys.fetch.HostThrottle
+import metifikys.story.EventHistoryRecorder
 import metifikys.fetch.RssFetcher
 import metifikys.fetch.TextScrubRules
 import metifikys.fetch.UrlGuard
@@ -448,6 +449,8 @@ class NewsBot(
         if (!adminCommandsOn) warnIgnoredAdminMutes()
 
         digestCycle.reclaimOrphanedProcessing()
+        // storyIntel: the first start with an empty event_history warms it up from covered_events.
+        EventHistoryRecorder(config, db).backfillIfEmpty()
         digestCycle.resumePendingBatches()
         if (config.scheduler.perCategory) startPerCategorySchedulers() else startCycleScheduler()
 

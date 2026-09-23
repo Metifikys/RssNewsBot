@@ -404,6 +404,11 @@ data class StoryIntelConfig(
     /** How long `event_articles` rows are kept; must cover `weekly.lookbackDays` and the leaderboard window. */
     val retentionDays: Long = 180,
     /**
+     * How long `event_history` rows (one per delivered event, first appearance) are kept — years,
+     * since the vaporware count and the weekly barometer read long histories.
+     */
+    val historyRetentionDays: Long = 1095,
+    /**
      * Domain → the domain it counts as, for sister sites and mirrors that should be one outlet
      * (`eurogamer.de: eurogamer.net`). Applied when clusters are read, so it works on old rows too.
      */
@@ -1964,6 +1969,7 @@ object ConfigLoader {
     private fun validateStoryIntel(config: AppConfig) {
         val s = config.storyIntel
         require(s.retentionDays >= 1) { "storyIntel.retentionDays must be >= 1 (got ${s.retentionDays})" }
+        require(s.historyRetentionDays >= 1) { "storyIntel.historyRetentionDays must be >= 1 (got ${s.historyRetentionDays})" }
         config.weekly?.takeIf { it.enabled && s.enabled }?.let { w ->
             require(s.retentionDays >= w.lookbackDays) {
                 "storyIntel.retentionDays (${s.retentionDays}) must be >= weekly.lookbackDays (${w.lookbackDays})"

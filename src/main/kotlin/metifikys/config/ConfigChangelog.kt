@@ -41,6 +41,7 @@ object ConfigChangelog {
         Entry("feedHealth.candidates", "2026-09-23", "candidate new feeds + autodiscovery, shown in the static report"),
         Entry("fetcher.privateHostAllowlist", "2026-09-23", "extra LAN hosts the SSRF guard allows (feed hosts are trusted automatically)"),
         Entry("storyIntel", "2026-09-23", "record story clusters (event_articles); enable early, the story lines need weeks of data"),
+        Entry("storyIntel.historyRetentionDays", "2026-09-23", "event_history (delivered events, first appearance) retention; default 1095 days"),
         Entry("categories.*.post.storyLines", "2026-09-23", "story footer lines: 📢 outlets / original sources (needs storyIntel)"),
         Entry("weekly.showOutlets", "2026-09-23", "weekly badge 📢 N видань · M першоджерел instead of 🔁 N (needs storyIntel)"),
         Entry("weekly.sourceLeaderboard", "2026-09-23", "weekly 🥇 who-writes-first block (needs storyIntel; /status shows it anyway)"),
