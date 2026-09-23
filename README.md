@@ -154,6 +154,11 @@ via a `/status` admin snapshot.
     ingest, else the post page at delivery with `trailerFetchOnDelivery`; article body only, no
     sidebars / related blocks), shown only when YouTube's oEmbed knows it and its title names the
     subject or franchise, so a site's promo clip gets no line; cached 7 days.
+    Steam-based badges, each its own flag, share one store search + `appdetails` per game
+    ([`SteamAppResolver`](src/main/kotlin/metifikys/enrich/SteamAppResolver.kt), appid cached 7 days):
+    `ukLocalization` — `🇺🇦 Українська: інтерфейс і субтитри, без озвучки` from Steam's
+    `IStoreBrowseService/GetItems` (Ukrainian = language 26; the `appdetails` language list as the
+    fallback), no line without Ukrainian unless `badges.ukLocalizationShowMissing`.
   - **intro** — the first time a franchise appears in the category, one Wikipedia line
     (`📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`), remembered in `entity_intros`.
   - **longForm** — the top-ranked events of a digest (composite ≥ `minComposite`, at most
@@ -1138,7 +1143,7 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 | `reaction_counts`    | Current aggregated reaction counts per `(chat_id, message_id, emoji)` from `message_reaction_count` updates (replace-all per message) |
 | `bot_state`          | Key/value store for restart-surviving runtime state (the Telegram `getUpdates` offset, tracker message ids + body hashes, `/pause` state as `pause:<category>`) |
 | `audience_affinity`  | Reaction-feedback scores per `(category, dimension, key)` with `n_tone` evidence counts, rebuilt on the maintenance tick |
-| `badge_cache`        | Rendered footer badges per `(provider, key)` with a per-provider TTL; `""` caches a negative lookup; also `ogimage` (a post page's og:image, `post.images`) |
+| `badge_cache`        | Rendered footer badges per `(provider, key)` with a per-provider TTL; `""` caches a negative lookup; also `ogimage` (a post page's og:image, `post.images`) and the shared Steam lookups (`steam_app` title → appid, `steam_appdetails` narrowed card) |
 | `entity_intros`      | First-mention memory for the Wikipedia intro: one row per `(category, entity key)`, hits and misses |
 | `tracker_entries`    | Living-tracker state per `(category, tracker, entity)`: event date, previous date, status, latest post |
 | `admin_mutes`        | Keyword mutes added from Telegram (`/mute`, suggestions, moderation), merged over the YAML mute lists; `category` null = global |

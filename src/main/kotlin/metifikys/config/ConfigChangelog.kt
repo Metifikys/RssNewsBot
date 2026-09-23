@@ -57,6 +57,7 @@ object ConfigChangelog {
         Entry("weekly.album", "2026-09-23", "photo album of the stories' pictures before the weekly roundup text (sendMediaGroup)"),
         Entry("categories.*.dedup.digest.antiBubble", "2026-09-23", "🧭 weekly pick of an important event outside the audience's taste, variant explore (needs feedback.enabled)"),
         Entry("categories.*.post.persona", "2026-09-23", "💬 editor-persona remark under the top event, A/B persona / control (needs your own promptFile; /status 🧪 Variants)"),
+        Entry("categories.*.post.badges.ukLocalization", "2026-09-23", "🇺🇦 Ukrainian interface / subtitles / voice-over of a Steam game (Steam GetItems; badges.ukLocalizationShowMissing)"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */

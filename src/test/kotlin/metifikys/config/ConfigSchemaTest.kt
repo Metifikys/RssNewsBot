@@ -34,7 +34,7 @@ class ConfigSchemaTest {
     @Test
     fun `computed properties are not keys`() {
         assertFalse(schema.contains("categories.*.post.badges.enabledIds"))
-        assertEquals(setOf("steam", "hn", "github", "trailer"), schema.childrenOf("categories.*.post.badges"))
+        assertEquals(setOf("steam", "hn", "github", "trailer", "ukLocalization"), schema.childrenOf("categories.*.post.badges"))
     }
 
     @Test

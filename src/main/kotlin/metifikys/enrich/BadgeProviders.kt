@@ -25,6 +25,9 @@ object BadgeProviders {
             if (SteamBadgeProvider.ID in needed) {
                 add(SteamBadgeProvider(http, cache, settings.steamCountry, settings.steamLanguage, resolver = steamApps))
             }
+            if (UkLocalizationBadgeProvider.ID in needed) {
+                add(UkLocalizationBadgeProvider(http, cache, steamApps, settings.ukLocalizationShowMissing, settings.steamCountry))
+            }
             if (HackerNewsBadgeProvider.ID in needed) add(HackerNewsBadgeProvider(http, cache))
             if (GitHubBadgeProvider.ID in needed) add(GitHubBadgeProvider(http, cache, token = settings.githubToken))
             if (TrailerBadgeProvider.ID in needed) {

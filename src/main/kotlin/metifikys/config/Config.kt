@@ -1326,18 +1326,22 @@ data class IntroConfig(
  * - [hn]: `🔥 HN: 512 · 340 коментарів` for articles that came through an hnrss feed;
  * - [github]: `⭐ GitHub: 12.3k · Rust · оновлено …` when the article link is a repository;
  * - [trailer]: `▶️ [Трейлер](https://youtu.be/…)` for the event types in `badges.trailerEventTypes` when
- *   the article embeds a YouTube video whose title (YouTube oEmbed) names the subject / franchise.
+ *   the article embeds a YouTube video whose title (YouTube oEmbed) names the subject / franchise;
+ * - [ukLocalization] (id `uk_lang`): `🇺🇦 Українська: інтерфейс, субтитри, озвучка` for a Steam game
+ *   (Steam's GetItems; no line without Ukrainian unless `badges.ukLocalizationShowMissing`).
  */
 data class BadgesConfig(
     val steam: Boolean = false,
     val hn: Boolean = false,
     val github: Boolean = false,
-    val trailer: Boolean = false
+    val trailer: Boolean = false,
+    val ukLocalization: Boolean = false
 ) {
     /** Provider ids to run for this category, matching [metifikys.enrich.BadgeProvider.id]. */
     val enabledIds: Set<String>
         get() = buildSet {
             if (steam) add("steam")
+            if (ukLocalization) add("uk_lang")
             if (hn) add("hn")
             if (github) add("github")
             if (trailer) add("trailer")
@@ -1365,7 +1369,9 @@ data class BadgeSettings(
      * When the topic's articles carry no video from ingest, fetch the post article's page at
      * delivery (within the badge budget; the result is cached 7 days) and look for one there.
      */
-    val trailerFetchOnDelivery: Boolean = true
+    val trailerFetchOnDelivery: Boolean = true,
+    /** `post.badges.ukLocalization`: also say `🇺🇦 Без української` when a Steam game has none (noise for most indies). */
+    val ukLocalizationShowMissing: Boolean = false
 )
 
 data class ThreadsConfig(

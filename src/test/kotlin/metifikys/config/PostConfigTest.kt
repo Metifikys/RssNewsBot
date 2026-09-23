@@ -87,6 +87,20 @@ class PostConfigTest {
     }
 
     @Test
+    fun `the newer badges map to their provider ids and are off by default`() {
+        val plain = load(yaml("post:\n  badges:\n    steam: true"))
+        assertEquals(setOf("steam"), plain.categories.getValue("gaming").post!!.badges!!.enabledIds)
+        assertEquals(false, plain.badges.ukLocalizationShowMissing)
+
+        val all = load(
+            "badges:\n  ukLocalizationShowMissing: true\n" +
+                yaml("post:\n  badges:\n    ukLocalization: true")
+        )
+        assertEquals(setOf("uk_lang"), all.categories.getValue("gaming").post!!.badges!!.enabledIds)
+        assertTrue(all.badges.ukLocalizationShowMissing)
+    }
+
+    @Test
     fun `intro block is parsed with defaults and validated`() {
         val config = load(yaml("post:\n  intro:\n    languages: [uk, en]\n    maxPerDigest: 1"))
         val intro = config.categories.getValue("gaming").post!!.intro!!
