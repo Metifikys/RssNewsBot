@@ -99,6 +99,17 @@ class HashtagsTest {
     }
 
     @Test
+    fun `the length cap never keeps half of an astral letter`() {
+        // Found by HashtagsPropertyTest: MAX_LEN cut a surrogate pair (𝐁 = U+1D401), leaving a
+        // lone high surrogate that is not \p{L} — a malformed tag that also re-normalized differently.
+        val raw = "a".repeat(Hashtags.MAX_LEN - 1) + "𝐁𝐨"
+        val tag = Hashtags.normalize(raw)!!
+        assertEquals("#" + "a".repeat(Hashtags.MAX_LEN - 1), tag)
+        assertTrue(Hashtags.isWellFormed(tag))
+        assertEquals(tag, Hashtags.normalize(tag.drop(1)))
+    }
+
+    @Test
     fun `splitStatic tolerates extra whitespace and blanks`() {
         assertEquals(listOf("#a", "#b"), Hashtags.splitStatic("  #a   #b "))
         assertEquals(emptyList(), Hashtags.splitStatic(null))

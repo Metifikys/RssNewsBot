@@ -56,7 +56,9 @@ object Hashtags {
         val folded = buildString(trimmed.length) { for (ch in trimmed) append(foldLatin(ch)) }
         var key = NON_ALNUM.replace(folded.lowercase(), "_").trim('_')
         if (key.length > MAX_LEN) {
-            val cut = key.substring(0, MAX_LEN)
+            // Never keep half of an astral letter (math alphanumerics, CJK Ext. B): a lone surrogate
+            // is not \p{L}, so the tag would fail isWellFormed and change on re-normalization.
+            val cut = key.substring(0, MAX_LEN).let { if (it.last().isHighSurrogate()) it.dropLast(1) else it }
             val boundary = cut.lastIndexOf('_')
             key = (if (boundary > 0) cut.substring(0, boundary) else cut).trim('_')
         }
