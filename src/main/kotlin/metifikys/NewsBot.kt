@@ -9,6 +9,7 @@ import metifikys.ai.dedup.EventExtractor
 import metifikys.ai.dedup.PromptLoader
 import metifikys.config.AppConfig
 import metifikys.db.NewsDatabase
+import metifikys.db.RetentionArchiver
 import metifikys.digest.CategoryProcessor
 import metifikys.digest.CycleErrorLog
 import metifikys.digest.DigestCycle
@@ -178,7 +179,8 @@ class NewsBot(
         statusPoster = statusPoster,
         errorLog = errorLog,
         semanticDedupDetector = semanticDedupDetector,
-        affinityAggregator = affinityAggregator
+        affinityAggregator = affinityAggregator,
+        retentionArchiver = config.archive?.takeIf { it.enabled }?.let { RetentionArchiver.create(it, db) }
     )
 
     /**

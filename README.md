@@ -736,6 +736,7 @@ first cycle.
 | `scheduler`       | yes      | `intervalMinutes` (default cadence + maintenance tick), `perCategory` (default `true`) |
 | `fetcher`         | no       | `maxConcurrentFetches`, `maxAttempts`, `retryDelaySeconds`, `fetchDeadlineSeconds`, `intervalMinutes` (decoupled ingestion), `scrubRulesFile` |
 | `processing`      | no       | Stale timeout, min articles, batch thresholds, retention    |
+| `archive`         | no       | Copy-before-delete retention into `archive/news-archive-YYYY-MM.db` (off by default) |
 | `summaryHistory`  | no       | How many previous digests to inject as context, retention   |
 | `preferences`     | no       | Global `mute:` keyword blocklist                            |
 | `feedback`        | no       | Reaction-feedback aggregation (off by default)              |
@@ -757,6 +758,18 @@ first cycle.
 | `embeddingRetentionDays`  | 30      | Prune `article_embeddings`                       |
 | `maxConcurrentCategories` | 12      | Legacy cycle mode only: fan-out pool size        |
 | `categoryDeadlineMinutes` | 0       | Legacy cycle mode only: `0` waits for every category, `>0` interrupts stragglers |
+
+### `archive` knobs (all optional; the block is absent = plain DELETE)
+
+| Field           | Default     | Purpose |
+|-----------------|-------------|---------|
+| `enabled`       | false       | Master switch |
+| `dir`           | `archive`   | Archive directory; relative = next to the database file (local disk) |
+| `rotation`      | `monthly`   | One file per `monthly` | `quarterly` | `yearly` period of the row's own timestamp |
+| `embeddings`    | `labelled`  | `article_embeddings`: `all`, `labelled` (article reached Step 1), `none` (delete unarchived) |
+| `tables`        | all 8       | `article_embeddings`, `event_embeddings`, `rejected_events`, `covered_events`, `llm_calls`, `summaries`, `digest_messages`, `reaction_counts` |
+| `keepFiles`     | 0           | Keep at most N archive files (oldest removed); `0` = never delete |
+| `minFreeDiskMb` | 2048        | Below this free space: warn and plain DELETE without archiving |
 
 ### `CategoryConfig`
 
@@ -879,6 +892,12 @@ batch is pending:
 - `deleteOldLlmCalls(llmCallRetentionDays)` / `pruneOldEmbeddings(embeddingRetentionDays)`.
 - `deleteOldBadgeCache(7)` / `deleteOldEntityIntros(730)` / `deleteOldTrackerEntries(365)` — footer
   badge cache, first-mention memory, tracker rows not touched by any digest.
+
+With `archive.enabled`, every listed table is copied first: rows are partitioned by the month of
+their timestamp, `INSERT OR IGNORE`-ed into `archive/news-archive-<period>.db` (same ids, plus a
+snapshot of the referenced `articles` rows) and deleted from `news.db` in the same batch. A crash
+between the two commits leaves a row in both files and the rerun skips it by primary key. An
+archiving error keeps the rows in `news.db` until the next tick (and shows in `/status`).
 
 ---
 

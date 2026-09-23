@@ -97,6 +97,42 @@ data class ProcessingConfig(
     val embeddingRetentionDays: Long = 30
 )
 
+/**
+ * Optional retention archive. When [enabled], the retention cleanup copies the rows it is about
+ * to delete from the listed [tables] into per-period SQLite files (`<dir>/news-archive-2026-09.db`)
+ * before deleting them from the main DB, so benchmarks and retrospectives can reach past the
+ * 14–90-day retention windows. Absent / `enabled: false` = plain DELETE, exactly as before.
+ * See [metifikys.db.RetentionArchiver].
+ */
+data class ArchiveConfig(
+    val enabled: Boolean = false,
+    /** Archive directory; a relative path resolves against the directory holding the main DB. Local disk only. */
+    val dir: String = "archive",
+    /** One file per `monthly` | `quarterly` | `yearly` period of the ROW's timestamp. */
+    val rotation: String = "monthly",
+    /**
+     * `article_embeddings` policy: `all` archives every vector (~320 MB/month at 1536 dims),
+     * `labelled` only those whose article reached Step 1 (its link is in covered/rejected
+     * events — what the benches train on), `none` deletes them without archiving.
+     */
+    val embeddings: String = "labelled",
+    /** Tables to archive; any retention table not listed is deleted as before. */
+    val tables: List<String> = ARCHIVABLE_TABLES,
+    /** Keep at most this many archive files (oldest deleted first); `0` = never delete archive files. */
+    val keepFiles: Int = 0,
+    /** Below this much free space in [dir] the cleanup warns and falls back to plain DELETE. */
+    val minFreeDiskMb: Long = 2048
+) {
+    companion object {
+        val ROTATIONS = setOf("monthly", "quarterly", "yearly")
+        val EMBEDDING_MODES = setOf("all", "labelled", "none")
+        val ARCHIVABLE_TABLES = listOf(
+            "article_embeddings", "event_embeddings", "rejected_events", "covered_events",
+            "llm_calls", "summaries", "digest_messages", "reaction_counts"
+        )
+    }
+}
+
 data class AdminConfig(
     /**
      * Chat where the rolling status snapshot is posted at the end of each digest cycle.
@@ -183,6 +219,8 @@ data class AppConfig(
     val categories: Map<String, CategoryConfig>,
     val summaryHistory: SummaryHistoryConfig = SummaryHistoryConfig(),
     val processing: ProcessingConfig = ProcessingConfig(),
+    /** Retention archive (copy-before-delete); null = rows are simply deleted. */
+    val archive: ArchiveConfig? = null,
     val admin: AdminConfig = AdminConfig(),
     val weekly: WeeklyConfig? = null,
     val feedback: FeedbackConfig = FeedbackConfig(),
@@ -1062,6 +1100,23 @@ object ConfigLoader {
         }
         require(config.processing.llmCallRetentionDays >= 1) {
             "processing.llmCallRetentionDays must be >= 1 (got ${config.processing.llmCallRetentionDays})"
+        }
+        config.archive?.let { a ->
+            require(a.rotation in ArchiveConfig.ROTATIONS) {
+                "archive.rotation must be one of ${ArchiveConfig.ROTATIONS} (got '${a.rotation}')"
+            }
+            require(a.embeddings in ArchiveConfig.EMBEDDING_MODES) {
+                "archive.embeddings must be one of ${ArchiveConfig.EMBEDDING_MODES} (got '${a.embeddings}')"
+            }
+            require(a.dir.isNotBlank()) { "archive.dir must not be blank" }
+            require(!a.dir.contains("..")) { "archive.dir must not contain '..' (path traversal): ${a.dir}" }
+            require(a.keepFiles >= 0) { "archive.keepFiles must be >= 0 (got ${a.keepFiles}); 0 keeps every file" }
+            require(a.minFreeDiskMb >= 0) { "archive.minFreeDiskMb must be >= 0 (got ${a.minFreeDiskMb})" }
+            for (t in a.tables) {
+                require(t in ArchiveConfig.ARCHIVABLE_TABLES) {
+                    "archive.tables: '$t' is not archivable — allowed: ${ArchiveConfig.ARCHIVABLE_TABLES}"
+                }
+            }
         }
 
         config.fetcher.let { f ->

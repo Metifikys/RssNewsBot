@@ -10,6 +10,10 @@ archive (`archive.enabled`) under `archive/`. Raw request dumps, per-model `laya
 outputs and `.npz` embeddings under `results/` are gitignored; reports and `results.jsonl`
 are committed.
 
+Longer history: `bench/lib/archive.mjs` merges the archive files into a session (TEMP tables that
+shadow `articles`, `covered_events`, … so the SQL stays unchanged). `jev-prep.mjs` takes it as
+`--archive <dir>`; other scripts call `mergeArchive(db, dir, tables)` right after opening the DB.
+
 First run: 2026-08-28 (frozen inputs + raw outputs in `results/2026-08-28/`, published
 report: "Free-LLM бенчмарк RssNewsBot" artifact). Winners then: `nemotron-3-ultra`
 (summarize), `minimax-m3` (digest render), `dots-3-note-preview`, `minimax-m2.7`.

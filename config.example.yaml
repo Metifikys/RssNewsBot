@@ -137,6 +137,23 @@ summaryHistory:
   maxCount: 3          # number of previous digests to include (default: 3)
   retentionDays: 14    # days to keep old summaries in DB (default: 14)
 
+# Optional: retention archive. Instead of deleting rows past their retention window, the cleanup
+# copies them into per-period SQLite files (archive/news-archive-2026-09.db, partitioned by the
+# ROW's month) and then deletes them from news.db — so benchmarks can train on more than the last
+# 30 days. Archived embedding/event rows carry a snapshot of their `articles` rows, so each file
+# joins on its own. Size at ~1400 articles/day: `embeddings: all` ≈ 450 MB/month (~5.4 GB/year),
+# `labelled` ≈ 250 MB/month. news.db does not shrink by itself: run one manual VACUUM after the
+# first archiving pass. Absent or `enabled: false` = plain DELETE, as before.
+#archive:
+#  enabled: false
+#  dir: "archive"            # relative = next to the database file; keep it on LOCAL disk
+#  rotation: monthly         # monthly | quarterly | yearly
+#  embeddings: labelled      # all | labelled (article reached Step 1) | none (delete without archiving)
+#  tables: [article_embeddings, event_embeddings, rejected_events, covered_events,
+#           llm_calls, summaries, digest_messages, reaction_counts]
+#  keepFiles: 0              # max archive files kept, oldest removed first; 0 = never delete
+#  minFreeDiskMb: 2048       # below this free space: warn and fall back to plain DELETE
+
 # Optional: weekly "top story of the week" roundup. When enabled, a dedicated scheduler fires
 # once per week at dayOfWeek + time (the bot's local zone). For each participating category it
 # ranks the week's covered events by how many times each story was seen — the canonical coverage

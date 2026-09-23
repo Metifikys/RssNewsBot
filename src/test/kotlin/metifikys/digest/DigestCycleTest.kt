@@ -6,6 +6,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import metifikys.telegram.StatusPoster
 import metifikys.config.AppConfig
+import metifikys.config.ArchiveConfig
 import metifikys.config.CategoryConfig
 import metifikys.config.DatabaseConfig
 import metifikys.config.FeedConfig
@@ -16,6 +17,7 @@ import metifikys.config.SchedulerConfig
 import metifikys.config.TelegramConfig
 import metifikys.db.CoveredEventRow
 import metifikys.db.NewsDatabase
+import metifikys.db.RetentionArchiver
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.RssFetcher
@@ -79,9 +81,11 @@ class DigestCycleTest {
         processor: CategoryProcessor,
         errorLog: CycleErrorLog = CycleErrorLog(),
         articleFetcher: ArticleFetcher = ArticleFetcher(RssFetcher(enforceUrlValidation = false)),
-        statusPoster: StatusPoster? = null
+        statusPoster: StatusPoster? = null,
+        retentionArchiver: RetentionArchiver? = null
     ) = DigestCycle(
         statusPoster = statusPoster,
+        retentionArchiver = retentionArchiver,
         config = config,
         fetcher = fetcher,
         articleFetcher = articleFetcher,
@@ -397,6 +401,33 @@ class DigestCycleTest {
             assertEquals(1, survivors(), "a 90-day lookback must outrank the 14-day retention")
         } finally {
             emptyFeed.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `maintenance archives the listed tables and keeps the rows when archiving fails`() {
+        val config = cfg(mapOf("tech" to cat("http://localhost:1/rss")))
+        val fetcher = RssFetcher(enforceUrlValidation = false)
+        fun seedOldCall() = db.insertLlmCall("openai", "m", "tech", "RENDER", 1, 1, 0.0, LocalDateTime.now().minusDays(40))
+        fun calls() = db.fetchLlmCallStats(24 * 365).sumOf { it.callCount }
+        val archiveDir = File(dbFile.parentFile, "archive-" + dbFile.nameWithoutExtension)
+        try {
+            // Archiving fails (unreachable DB file) → nothing deleted, error recorded; next tick retries.
+            seedOldCall()
+            val errorLog = CycleErrorLog()
+            val broken = RetentionArchiver("jdbc:sqlite:/nonexistent-dir/x.db", archiveDir, ArchiveConfig(enabled = true, minFreeDiskMb = 0))
+            cycle(config, fetcher, RecordingCategoryProcessor(config, db), errorLog = errorLog, retentionArchiver = broken).runMaintenance()
+            assertEquals(1L, calls(), "a failed archive must not fall through to the plain delete")
+            assertTrue(errorLog.list().isNotEmpty(), "the failure shows up in /status")
+
+            // Working archiver → the row leaves main and lands in its month's file.
+            val archiver = RetentionArchiver(db.jdbcUrl, archiveDir, ArchiveConfig(enabled = true, minFreeDiskMb = 0))
+            cycle(config, fetcher, RecordingCategoryProcessor(config, db), retentionArchiver = archiver).runMaintenance()
+            assertEquals(0L, calls())
+            assertTrue(archiveDir.listFiles().orEmpty().any { it.name.startsWith("news-archive-") })
+        } finally {
+            archiveDir.deleteRecursively()
             fetcher.shutdown()
         }
     }

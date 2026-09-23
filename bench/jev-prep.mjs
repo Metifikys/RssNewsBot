@@ -2,10 +2,13 @@
 // Ground truth = Step 1 decisions already made by the LLM: `rejected_events.status='rejected'`
 // vs `covered_events` (shortlisted new/meaningful_update). Duplicates are excluded — Jev
 // cannot dedup, the experiment only asks "can a cheap decision model drop junk before Step 1".
-// usage: node bench/jev-prep.mjs <out.json> [db-path] [perClassPerCategory]   (from repo root)
+// usage: node bench/jev-prep.mjs <out.json> [db-path] [perClassPerCategory] [--archive <dir>]   (from repo root)
+//   --archive merges the retention-archive files (archive.enabled) into the history; move SINCE back to use it.
 import { DatabaseSync } from 'node:sqlite';
 import { writeFileSync } from 'node:fs';
+import { mergeArchive, takeArchiveFlag } from './lib/archive.mjs';
 
+const archiveDir = takeArchiveFlag(process.argv);
 const [,, outPath, dbPath = 'logs/news.db', perClassArg = '250'] = process.argv;
 const PER_CLASS = Number(perClassArg);
 const SINCE = '2026-08-03';           // both tables have data from this date in the snapshot
@@ -13,6 +16,10 @@ const CATEGORIES = ['gaming', 'tech', 'science'];
 const MAX_CHARS = 1000;               // Article.promptText() default
 
 const db = new DatabaseSync(dbPath, { readOnly: true });
+if (archiveDir) {
+  const n = mergeArchive(db, archiveDir, ['articles', 'covered_events', 'rejected_events']);
+  console.error(`merged ${n} archive file(s) from ${archiveDir}`);
+}
 
 // mirrors HtmlText.strip well enough for a benchmark: drop tags, decode common entities, squash ws
 function stripHtml(s) {

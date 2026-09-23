@@ -21,6 +21,12 @@ import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
 
+/** `rejected_events` retention (the Step-1 prompt-tuning log). */
+private const val REJECTED_EVENTS_RETENTION_DAYS = 30L
+
+/** `digest_messages` / `reaction_counts` retention (reaction attribution). */
+private const val REACTION_RETENTION_DAYS = 90L
+
 /**
  * The digest pipeline: RSS fetch → link-dedup → enrich → summarize per feed → insert → fetch
  * ready batches → delegate to [CategoryProcessor].
@@ -60,7 +66,13 @@ class DigestCycle(
      * no-ops unless the previous rebuild is older than `feedback.recomputeHours`.
      * Null in tests / when `feedback.enabled=false`.
      */
-    private val affinityAggregator: metifikys.feedback.AffinityAggregator? = null
+    private val affinityAggregator: metifikys.feedback.AffinityAggregator? = null,
+    /**
+     * Optional retention archive (`archive.enabled`). When non-null, the tables it handles are
+     * copied into the archive files before their expired rows are deleted; every other table,
+     * and every table when this is null, is pruned by a plain DELETE as before.
+     */
+    private val retentionArchiver: metifikys.db.RetentionArchiver? = null
 ) {
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -309,8 +321,9 @@ class DigestCycle(
     /**
      * Retention cleanup, run at the start of a cycle. Skipped while any batch is still pending so an
      * in-flight callback never has the summaries/articles it depends on deleted out from under it
-     * (BUG-012). Bounded by the configurable retention windows; the last two lines are the ones that
-     * kept news.db growing to 700+ MB (llm_calls + article embeddings were only pruned from tests).
+     * (BUG-012). Bounded by the configurable retention windows (llm_calls + article embeddings, once
+     * pruned only from tests, are what grew news.db to 700+ MB). With `archive.enabled` the listed
+     * tables are copied to the archive files before their rows are deleted.
      */
     private fun runCleanup() {
         if (db.fetchPendingBatches().isNotEmpty()) {
@@ -318,17 +331,38 @@ class DigestCycle(
             return
         }
         db.deleteOlderThan(config.processing.articleRetentionDays)
-        db.deleteOldSummaries(config.summaryHistory.retentionDays)
-        db.pruneOldCoveredEvents(coveredEventsRetentionDays())
-        db.pruneOldEventEmbeddings(config.summaryHistory.retentionDays)
-        db.deleteOldRejectedEvents()
-        db.deleteOldDigestMessages()
-        db.deleteOldReactionCounts()
-        db.deleteOldLlmCalls(config.processing.llmCallRetentionDays)
-        db.pruneOldEmbeddings(config.processing.embeddingRetentionDays)
+        // Embeddings go before the event tables: `archive.embeddings: labelled` keeps only vectors
+        // whose article still has a covered/rejected row in the main DB.
+        retain("article_embeddings", config.processing.embeddingRetentionDays) { db.pruneOldEmbeddings(it) }
+        retain("summaries", config.summaryHistory.retentionDays) { db.deleteOldSummaries(it) }
+        retain("covered_events", coveredEventsRetentionDays()) { db.pruneOldCoveredEvents(it) }
+        retain("event_embeddings", config.summaryHistory.retentionDays) { db.pruneOldEventEmbeddings(it) }
+        retain("rejected_events", REJECTED_EVENTS_RETENTION_DAYS) { db.deleteOldRejectedEvents(it) }
+        retain("digest_messages", REACTION_RETENTION_DAYS) { db.deleteOldDigestMessages(it) }
+        retain("reaction_counts", REACTION_RETENTION_DAYS) { db.deleteOldReactionCounts(it) }
+        retain("llm_calls", config.processing.llmCallRetentionDays) { db.deleteOldLlmCalls(it) }
         db.deleteOldBadgeCache()
         db.deleteOldEntityIntros()
         db.deleteOldTrackerEntries()
+    }
+
+    /**
+     * Prunes [table] to [days]: through the retention archive when it handles the table, otherwise
+     * (or when the archive disk is short) with the plain [delete]. An archiving failure leaves the
+     * rows in place — the next cleanup retries — instead of deleting what was not archived.
+     */
+    private fun retain(table: String, days: Long, delete: (Long) -> Unit) {
+        val archiver = retentionArchiver
+        if (archiver != null && archiver.handles(table)) {
+            try {
+                if (archiver.archiveAndDelete(table, LocalDateTime.now().minusDays(days))) return
+            } catch (e: Exception) {
+                errorLog.recordError(null, "[Archive]", e)
+                logger.error(e) { "[Archive] $table: archiving failed — rows kept in the main DB until the next cleanup" }
+                return
+            }
+        }
+        delete(days)
     }
 
     /**

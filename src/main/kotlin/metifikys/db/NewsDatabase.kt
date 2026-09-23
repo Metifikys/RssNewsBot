@@ -536,11 +536,17 @@ data class CoveredEventRow(
 
 class NewsDatabase(dbPath: String) {
 
+    /** Canonical path of the DB file; side jobs (e.g. [RetentionArchiver]) place their files next to it. */
+    val canonicalPath: String
+
+    /** JDBC URL of the main DB (WAL + busy_timeout), for raw-JDBC side jobs such as [RetentionArchiver]. */
+    val jdbcUrl: String
+
     init {
         // Security: reject path traversal and resolve to a canonical absolute path
         require(dbPath.isNotBlank()) { "Database path must not be blank" }
         require(!dbPath.contains("..")) { "Database path must not contain '..' (path traversal): $dbPath" }
-        val canonicalPath = java.io.File(dbPath).canonicalPath
+        canonicalPath = java.io.File(dbPath).canonicalPath
 
         // Concurrency hardening for the multi-writer workload (category workers, reaction poller,
         // batch callbacks, weekly digest). Xerial parses these query params into SQLiteConfig and
@@ -553,7 +559,7 @@ class NewsDatabase(dbPath: String) {
         //                        crash (not on a normal app crash) — fine for a news bot.
         //   busy_timeout=15000 — a writer that still hits a held write lock waits-and-retries up
         //                        to 15s instead of failing fast with SQLITE_BUSY.
-        val jdbcUrl = "jdbc:sqlite:$canonicalPath" +
+        jdbcUrl = "jdbc:sqlite:$canonicalPath" +
             "?journal_mode=WAL" +
             "&synchronous=NORMAL" +
             "&busy_timeout=15000"
