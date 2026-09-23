@@ -102,6 +102,32 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `plain-text fallback after a 400 shows the URL with its real quotes`() {
+        val bodies = mutableListOf<String>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { ex ->
+            bodies += ex.requestBody.readBytes().toString(Charsets.UTF_8)
+            val (code, resp) = if (bodies.size == 1) {
+                400 to """{"ok":false,"error_code":400,"description":"Bad Request: can't parse entities"}"""
+            } else {
+                200 to """{"ok":true,"result":{"message_id":42,"chat":{"id":-100123}}}"""
+            }
+            val bytes = resp.toByteArray()
+            ex.sendResponseHeaders(code, bytes.size.toLong())
+            ex.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}")
+            s.sendToChannel("@ch", "[Foo](https://x.com/s?q=\"a\")")
+            assertEquals(2, bodies.size)
+            assertTrue("""Foo: https://x.com/s?q=\"a\"""" in bodies[1], bodies[1])
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun `photo posts reply too`() = withFakeApi { s, bodies ->
         val ref = s.sendPhotoToChannel("@ch", "https://img.example/1.jpg", caption = "cap", replyToMessageId = 11L)
         assertEquals(SentRef(-100123L, 42L), ref)

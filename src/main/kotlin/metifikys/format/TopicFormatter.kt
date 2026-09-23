@@ -121,6 +121,12 @@ object TopicFormatter {
             .replace(">", "&gt;")
 
     /**
+     * [escapeHtml] plus `"` → `&quot;`, for a double-quoted attribute value (`href`): a raw quote
+     * would end the attribute early and Telegram rejects the message ("can't parse entities").
+     */
+    private fun escapeHtmlAttribute(s: String): String = escapeHtml(s).replace("\"", "&quot;")
+
+    /**
      * Renders inline Markdown into Telegram HTML (`parse_mode=HTML`) in a single pass.
      *
      * Every `[label](url)` link becomes `<a href="url">label</a>` — anywhere in the text, not just
@@ -142,7 +148,7 @@ object TopicFormatter {
                 bold != null -> sb.append("<b>").append(escapeHtml(bold.value)).append("</b>")
                 code != null -> sb.append("<code>").append(escapeHtml(code.value)).append("</code>")
                 linkLabel != null && linkUrl != null ->
-                    sb.append("<a href=\"").append(escapeHtml(linkUrl.value)).append("\">")
+                    sb.append("<a href=\"").append(escapeHtmlAttribute(linkUrl.value)).append("\">")
                         .append(escapeHtml(linkLabel.value)).append("</a>")
             }
             last = m.range.last + 1

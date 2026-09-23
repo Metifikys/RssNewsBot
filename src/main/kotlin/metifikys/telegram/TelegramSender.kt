@@ -451,5 +451,5 @@ class TelegramSender(
             .replace("<b>", "").replace("</b>", "")
             .replace("<i>", "").replace("</i>", "")
             .replace("<code>", "").replace("</code>", "")
-            .replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+            .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
 }

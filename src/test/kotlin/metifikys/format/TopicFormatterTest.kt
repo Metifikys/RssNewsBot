@@ -229,6 +229,13 @@ class TopicFormatterTest {
     }
 
     @Test
+    fun `toHtml escapes a double quote inside the href attribute`() {
+        // A raw `"` would close the attribute early — Telegram 400 "can't parse entities".
+        val out = TopicFormatter.toHtml("[Foo](https://x.com/s?q=\"a\"&b=1)")
+        assertEquals("<a href=\"https://x.com/s?q=&quot;a&quot;&amp;b=1\">Foo</a>", out)
+    }
+
+    @Test
     fun `toHtml converts every link in a multi-bullet message, not just the trailing one`() {
         // The weekly-roundup bug: a single message with several [label](url) links left every
         // link but the last as literal text.
