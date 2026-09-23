@@ -51,7 +51,6 @@ config.yaml
 *.out
 logs/
 *.log
-logs.txt
 *.pid
 rssbot.lock
 
@@ -69,10 +68,20 @@ AGENTS.md
 CLAUDE.md
 
 ### Internal planning & scratch docs ###
-src/stateless-gliding-meteor.md
-smdedup.txt
-tmp.md
+# One-off files (log excerpts, notes) go under scratch/, not the repo root.
+scratch/
 docs/*
+# Windows Explorer copies ("file – копія.yaml") anywhere in the tree
+*– копія*
+
+### Retention archive (archive.enabled): monthly SQLite files next to news.db ###
+archive/
+
+### Bench raw data: request dumps, embeddings and per-model outputs stay local;
+### the reports and results.jsonl are the published result ###
+bench/results/**/*.npz
+bench/results/**/requests*.jsonl
+bench/results/**/laya-*.jsonl
 
 ### Operator data: personal preferences and the sites actually read ###
 mute-suggestions.yaml

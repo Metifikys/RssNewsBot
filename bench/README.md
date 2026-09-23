@@ -5,6 +5,11 @@ for comparing OpenRouter models on the bot's REAL tasks, plus SQL audits of extr
 quality. Everything runs from the **repo root** and reads the OpenRouter key from
 `config.yaml` at runtime — no secrets live in this directory.
 
+Data locations: prod DB snapshot at `logs/news.db` (the default in every script), retention
+archive (`archive.enabled`) under `archive/`. Raw request dumps, per-model `laya-*.jsonl`
+outputs and `.npz` embeddings under `results/` are gitignored; reports and `results.jsonl`
+are committed.
+
 First run: 2026-08-28 (frozen inputs + raw outputs in `results/2026-08-28/`, published
 report: "Free-LLM бенчмарк RssNewsBot" artifact). Winners then: `nemotron-3-ultra`
 (summarize), `minimax-m3` (digest render), `dots-3-note-preview`, `minimax-m2.7`.
