@@ -781,4 +781,92 @@ class EventExtractorTest {
         val due = extractAntiBubble(metifikys.config.AntiBubbleConfig(), LocalDateTime.now().minusDays(8).toString())
         assertEquals(listOf("top", "outside"), due.map { it.eventKey })
     }
+
+    // ── llm.shadow.extract ─────────────────────────────────────────────────
+
+    private fun step1Json(shortlistUrl: String, rejectedKey: String) = """
+        {
+          "extractions": [
+            {"articleIndex": 0, "eventKey": "ev|$shortlistUrl", "coreFact": "f", "url": "$shortlistUrl", "status": "new"},
+            {"articleIndex": 1, "eventKey": "$rejectedKey", "coreFact": "r", "url": "https://a.com/2", "status": "rejected"}
+          ],
+          "shortlist": [
+            {"eventKey": "ev|$shortlistUrl", "coreFact": "f", "url": "$shortlistUrl", "status": "new", "articleIndices": [0]}
+          ]
+        }
+    """.trimIndent()
+
+    private class ShadowStore : metifikys.db.ShadowRunStore {
+        val rows = java.util.concurrent.CopyOnWriteArrayList<metifikys.db.ShadowRunRow>()
+        override fun insertShadowRun(row: metifikys.db.ShadowRunRow) { rows += row }
+        override fun fetchShadowRuns(since: LocalDateTime) = rows.toList()
+        override fun deleteOldShadowRuns(days: Long) {}
+    }
+
+    private fun awaitRow(store: ShadowStore): metifikys.db.ShadowRunRow {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (store.rows.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        return store.rows.single()
+    }
+
+    @Test
+    fun `shadow B runs on its own prompt, A is published unchanged and only A's rejects are saved`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { openAI.completeJson(any(), any(), any()) } returns step1Json("https://a.com/1", "a-rejected")
+        val bClient = mockk<metifikys.ai.LlmClient>()
+        every { bClient.endpoint } returns metifikys.ai.LlmEndpoint("https://openrouter.ai/api/v1", "", "model-b")
+        every { openAI.endpoint } returns metifikys.ai.LlmEndpoint("https://api.openai.com/v1", "", "model-a")
+        every { bClient.completeJson(any(), any(), any()) } returns step1Json("https://a.com/3", "b-rejected")
+        val store = ShadowStore()
+        val runner = metifikys.digest.ShadowRunner(store)
+        val bPrompts = okResolved.copy(extractSystem = "B-SYS", extractUser = "B-USER {{CURRENT_BATCH_JSON}}")
+        val shadowed = EventExtractor(
+            openAI, promptLoader, db,
+            shadow = Step1Shadow(runner, metifikys.config.ShadowConfig(extract = metifikys.config.LlmOverride("openrouter", "model-b")), bClient, bPrompts)
+        )
+        val saved = mutableListOf<List<metifikys.db.RejectedEventRow>>()
+        every { db.saveRejectedEvents(capture(saved)) } just Runs
+        val articles = listOf(article("https://a.com/1"), article("https://a.com/2"), article("https://a.com/3"))
+
+        try {
+            val ready = assertIs<ExtractOutcome.Ready>(shadowed.extract("games", cat(), articles))
+
+            assertEquals(listOf("https://a.com/1"), ready.result.shortlist.map { it.url })
+            val row = awaitRow(store)
+            assertEquals(listOf("https://a.com/1"), row.aUrls)
+            assertEquals(listOf("https://a.com/3"), row.bUrls)
+            assertEquals("model-b", row.bModel)
+            verify(exactly = 1) { bClient.completeJson("B-SYS", "B-USER {{CURRENT_BATCH_JSON}}", 1) }
+            assertEquals(listOf("a-rejected"), saved.flatten().map { it.eventKey }, "B's rejects are never saved")
+        } finally {
+            runner.shutdown()
+        }
+    }
+
+    @Test
+    fun `a failing shadow B leaves A's result untouched`() {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { openAI.completeJson(any(), any(), any()) } returns step1Json("https://a.com/1", "a-rejected")
+        every { openAI.endpoint } returns metifikys.ai.LlmEndpoint("https://api.openai.com/v1", "", "model-a")
+        val bClient = mockk<metifikys.ai.LlmClient>()
+        every { bClient.endpoint } returns metifikys.ai.LlmEndpoint("https://openrouter.ai/api/v1", "", "model-b")
+        every { bClient.completeJson(any(), any(), any()) } throws RuntimeException("B is down")
+        val store = ShadowStore()
+        val runner = metifikys.digest.ShadowRunner(store)
+        val shadowed = EventExtractor(
+            openAI, promptLoader, db,
+            shadow = Step1Shadow(runner, metifikys.config.ShadowConfig(extract = metifikys.config.LlmOverride("openrouter", "b")), bClient, okResolved)
+        )
+        try {
+            val ready = assertIs<ExtractOutcome.Ready>(shadowed.extract("games", cat(), listOf(article("https://a.com/1"), article("https://a.com/2"))))
+            assertEquals(listOf("https://a.com/1"), ready.result.shortlist.map { it.url })
+            assertEquals("B is down", awaitRow(store).bError)
+        } finally {
+            runner.shutdown()
+        }
+    }
 }

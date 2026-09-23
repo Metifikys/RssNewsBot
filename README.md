@@ -94,6 +94,14 @@ via a `/status` admin snapshot.
   (`{{AUDIENCE_SIGNALS}}`), log-only until switched on.
 - **A/B alternation on Step 1** — when both `extract` and `extractAlternate` are set, every
   second extract request goes to the "B" side.
+- **🌓 Shadow mode** (`llm.shadow`) — a "B" model and/or prompt file runs on exactly the input
+  of the live "A" (Step 1: same batch and covered context; render: A's shortlist), in parallel
+  on its own thread; only A is posted. Both outputs pass the same post-processing and land in
+  `shadow_runs`; `node bench/shadow-dump.mjs <db> <outDir>` writes `shadow.md` + `shadow.html`
+  with A | B side by side (shortlist URLs both / only A / only B with statuses and scores, or
+  the topics), Jaccard, B parse-fail rate and latency; `/status` shows
+  `🌓 shadow 24h: N runs · B fail K · Jaccard 0.xx`. B calls are metered as
+  `SHADOW_EXTRACT` / `SHADOW_RENDER`.
 - **On-failure fallback** — any sync slot can carry a nested `fallback` provider+model; when the
   primary call fails (usage limit, expired login, bad model, timeout) the same call is retried
   against the fallback (e.g. Claude CLI → Codex CLI). Distinct from A/B (`extractAlternate`) and
@@ -1014,6 +1022,7 @@ first cycle.
 | `articleRetentionDays`    | 1500    | Delete article rows older than this (validated against weekly lookback / dedup window) |
 | `llmCallRetentionDays`    | 30      | Prune the `llm_calls` ledger                     |
 | `embeddingRetentionDays`  | 30      | Prune `article_embeddings`                       |
+| `shadowRetentionDays`     | 30      | Prune `shadow_runs` (`llm.shadow`)               |
 | `maxConcurrentCategories` | 12      | Legacy cycle mode only: fan-out pool size        |
 | `categoryDeadlineMinutes` | 0       | Legacy cycle mode only: `0` waits for every category, `>0` interrupts stragglers |
 
@@ -1065,6 +1074,7 @@ llm:                      # per-use-case provider+model overrides
   summarize:        { provider: …, model: … }
   batchFallback:    { provider: …, model: … }    # any provider
   persona:          { provider: …, model: … }    # post.persona remark (default: the render route)
+  shadow:           { extract: {…}, render: {…}, promptFile, sampleRate: 1.0, queueSize: 4 }  # 🌓 B next to A, stored only
 
 dedup:                    # two-step pipeline opt-in
   promptFile: prompts/X.yaml
@@ -1178,6 +1188,7 @@ next to the golden one and prints the shortlist Jaccard, status / score changes 
 | `tracker_entries`    | Living-tracker state per `(category, tracker, entity)`: event date, previous date, status, latest post |
 | `admin_mutes`        | Keyword mutes added from Telegram (`/mute`, suggestions, moderation), merged over the YAML mute lists; `category` null = global |
 | `admin_feedback`     | Explicit 👍/👎/🗑 per post from the moderation buttons (last press wins), with the post's category, event and send time; kept apart from `reaction_counts`, which every reaction update replaces |
+| `shadow_runs`        | `llm.shadow` pairs: per Step 1 batch or render, A's and B's provider / model / prompt hash, the post-processed output of each (Step 1 shortlist + drops, or the prepared topics; B's raw answer when it did not parse), their links, B's error and latency; kept `processing.shadowRetentionDays` |
 | `mute_suggestions`   | Mute proposals sent to the admin chat with their evidence, 30-day hit counts, message id and decision (`pending`/`approved`/`rejected`) |
 
 Pruning runs on the maintenance tick (or at the start of a legacy cycle), skipped while any
@@ -1191,6 +1202,7 @@ batch is pending:
 - `deleteOldBatches(2)` — completed/failed batch records.
 - `deleteOldDigestMessages(90)` / `deleteOldReactionCounts(90)` — reaction-tracking retention.
 - `deleteOldLlmCalls(llmCallRetentionDays)` / `pruneOldEmbeddings(embeddingRetentionDays)`.
+- `deleteOldShadowRuns(shadowRetentionDays)` — `llm.shadow` pairs (30 days).
 - `deleteOldBadgeCache(7)` / `deleteOldEntityIntros(730)` / `deleteOldTrackerEntries(365)` — footer
   badge cache, first-mention memory, tracker rows not touched by any digest.
 

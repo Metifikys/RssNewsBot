@@ -719,6 +719,19 @@ categories:
       # persona:        { provider: openrouter, model: … }   # post.persona remark; default: the render route
       # On-failure fallback (nested, sync slots). E.g. primary Claude CLI, fall back to Codex CLI:
       #   render: { provider: claudecli, model: "", fallback: { provider: codexcli, model: "" } }
+      # 🌓 Shadow run (needs dedup:): a "B" model and/or prompt gets exactly the input the live
+      # "A" gets, in parallel; only A is posted, both land in `shadow_runs` (compare with
+      # `node bench/shadow-dump.mjs`, /status shows a 🌓 line). Unlike extractAlternate nothing
+      # of B is published and both see the same batch. B's output goes through the same
+      # post-processing (Step 1: URL filter / cooldown / cap / ranker without the audience term;
+      # render: the URL whitelist); B renders A's shortlist. B runs on its own thread per
+      # category; a full queue drops the run. A CLI B doubles that quota's use — lower sampleRate.
+      # shadow:
+      #   extract: { provider: openrouter, model: "minimax/minimax-m3:free" }   # omit = no Step 1 shadow
+      #   render:  { provider: claudecli, model: claude-sonnet-4-6 }            # omit = no render shadow
+      #   promptFile: "prompts/games-dedup.shadow.yaml"   # omit = A's prompts (only the model differs)
+      #   sampleRate: 1.0                                  # share of A's calls that get a B run
+      #   queueSize: 4                                     # B runs waiting per category; more are dropped
     # Optional: this category's own cadences (per-category scheduler mode).
     # intervalMinutes: 15        # digest run every 15 min (default: scheduler.intervalMinutes)
     # fetchIntervalMinutes: 10   # ingestion every 10 min (default: fetcher.intervalMinutes)

@@ -52,6 +52,22 @@ class LlmClientsFactory(
     }
 
     /**
+     * The B side of `llm.shadow` for Step 1 ([LlmUseCase.SHADOW_EXTRACT]) or the render
+     * ([LlmUseCase.SHADOW_RENDER]); null when the category shadows nothing at that stage. Always a
+     * sync client (config validation rejects `batch: true` there), with its own `fallback` chain.
+     */
+    fun forShadow(category: CategoryConfig?, useCase: LlmUseCase): LlmClient? {
+        val shadow = category?.llm?.shadow ?: return null
+        val ovr = when (useCase) {
+            LlmUseCase.SHADOW_EXTRACT -> shadow.extract
+            LlmUseCase.SHADOW_RENDER -> shadow.render
+            else -> throw IllegalArgumentException("not a shadow use case: $useCase")
+        } ?: return null
+        val primary = meter(client(overrideEndpoint(ovr), batchCapable = false), category, useCase)
+        return withFallback(ovr, primary, category, useCase)
+    }
+
+    /**
      * Client for the global `openrouter:` default, honoring the `models:` priority ladder:
      * the first model is primary and each later one serves as the on-failure fallback for
      * the one before it ([FallbackLlmClient] chain). Free-tier endpoints come and go by

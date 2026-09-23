@@ -855,4 +855,53 @@ class CategoryProcessorTest {
         assertEquals(listOf(0, 2), input.captured.shortlist!!.single().articleIndices)
         assertEquals(officialLink, delivered.captured.single().url)
     }
+
+    // ── llm.shadow.render ─────────────────────────────────────────────────────
+
+    @Test
+    fun `render shadow renders A's shortlist on the same articles and delivery happens once`() {
+        val shadowCfg = metifikys.config.ShadowConfig(render = LlmOverride("openrouter", "model-b"))
+        val cat = cat(dedup = DedupConfig(promptFile = "x.yaml"), llm = CategoryLlmOverrides(shadow = shadowCfg))
+        val config = cfg(minArticles = 1, primaryMaxPending = 0, category = cat)
+        val extractor = mockk<EventExtractor>()
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val promptLoader = mockk<PromptLoader>()
+        val factory = mockk<LlmClientsFactory>()
+        val deliverer = mockk<DigestDeliverer>(relaxed = true)
+        every { db.countPendingBatchesForCategory(any()) } returns 0
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { promptLoader.resolve(any()) } returns resolvedDedup
+        val shortlist = listOf(shortlistItem(1))
+        every { extractor.extract(any(), any(), any()) } returns ExtractOutcome.Ready(ExtractionResult(shortlist = shortlist))
+        val aClient = mockk<LlmClient>()
+        every { aClient.endpoint } returns metifikys.ai.LlmEndpoint("https://api.openai.com/v1", "", "model-a")
+        every { factory.forRender(any()) } returns aClient
+        every { aClient.summarizeShortlist(any(), any(), any(), any(), any(), any()) } returns "• **A**\n[Джерело](https://example.com/1)"
+        val bClient = mockk<LlmClient>()
+        every { bClient.endpoint } returns metifikys.ai.LlmEndpoint("https://openrouter.ai/api/v1", "", "model-b")
+        every { factory.forShadow(any(), metifikys.ai.LlmUseCase.SHADOW_RENDER) } returns bClient
+        val bShortlist = slot<List<ShortlistItem>>()
+        every { bClient.summarizeShortlist(any(), any(), capture(bShortlist), any(), "RS", "RU") } returns
+            "• **B**\n[Джерело](https://example.com/1)"
+        val rows = java.util.concurrent.CopyOnWriteArrayList<metifikys.db.ShadowRunRow>()
+        every { db.insertShadowRun(any()) } answers { rows += firstArg<metifikys.db.ShadowRunRow>() }
+        val runner = ShadowRunner(db)
+        val processor = CategoryProcessor(config, db, factory, promptLoader, deliverer, extractor, shadowRunner = runner)
+
+        try {
+            processor.process(mapOf("tech" to (1..3).map { article(it) }))
+
+            val deadline = System.currentTimeMillis() + 5_000
+            while (rows.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(10)
+            val row = rows.single()
+            assertEquals("RENDER", row.stage)
+            assertEquals(listOf("https://example.com/1"), row.aUrls)
+            assertEquals(listOf("https://example.com/1"), row.bUrls)
+            assertEquals(shortlist.map { it.eventKey }, bShortlist.captured.map { it.eventKey })
+            verify(exactly = 1) { deliverer.deliver("tech", "• **A**\n[Джерело](https://example.com/1)", any(), any()) }
+            verify(exactly = 1) { deliverer.deliver(any(), any(), any(), any()) }
+        } finally {
+            runner.shutdown()
+        }
+    }
 }

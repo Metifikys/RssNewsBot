@@ -415,6 +415,7 @@ class DigestCycle(
         // Unconditional: rows recorded while storyIntel was on still age out after it is switched off.
         db.deleteOldEventArticles(config.storyIntel.retentionDays)
         db.deleteOldEventHistory(config.storyIntel.historyRetentionDays)
+        db.deleteOldShadowRuns(config.processing.shadowRetentionDays)
     }
 
     /**

@@ -224,4 +224,34 @@ class PromptValidatorTest {
         assertEquals("a2", l.resolve(c)?.extractSystem)
         assertEquals(listOf(file.canonicalFile), reloaded)
     }
+
+    @Test
+    fun `a broken shadow prompt file is a WARN on shadow slots, never an ERROR`() {
+        val shadowCat = cat().copy(
+            llm = metifikys.config.CategoryLlmOverrides(
+                shadow = metifikys.config.ShadowConfig(
+                    extract = metifikys.config.LlmOverride("openrouter", "m"),
+                    promptFile = "prompts/missing.shadow.yaml"
+                )
+            )
+        )
+        val findings = PromptValidator(PromptLoader(tmp.toFile()), tmp.toFile()).validate(config(shadowCat))
+        assertTrue(findings.none { it.level == Level.ERROR }, findings.toString())
+        assertTrue(findings.any { it.level == Level.WARN && it.slot == "shadow:promptFile" }, findings.toString())
+    }
+
+    @Test
+    fun `a valid shadow prompt file adds no findings`() {
+        File(tmp.toFile(), "shadow.yaml").writeText(
+            "extract:\n  system: \"$goodExtractSystem\"\n  user: |\n    Batch: {{CURRENT_BATCH_JSON}}\n    Covered: {{PREVIOUSLY_COVERED_EVENTS_JSON}}\n" +
+                "render:\n  system: \"Render bullets. depth long.\"\n  user: \"{{SHORTLIST_JSON}}\"\n"
+        )
+        val shadowCat = cat().copy(
+            llm = metifikys.config.CategoryLlmOverrides(
+                shadow = metifikys.config.ShadowConfig(render = metifikys.config.LlmOverride("openrouter", "m"), promptFile = "shadow.yaml")
+            )
+        )
+        val findings = PromptValidator(PromptLoader(tmp.toFile()), tmp.toFile()).validate(config(shadowCat))
+        assertTrue(findings.none { it.slot.startsWith("shadow:") }, findings.toString())
+    }
 }

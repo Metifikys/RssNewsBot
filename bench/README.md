@@ -120,6 +120,23 @@ Sections whose table is missing (an older DB) or empty say so instead of failing
 - Not in the DB, so not counted: L1 link dedup, Step 0 mutes, cooldown drops, L3.5.
 - The page contains real titles and counts: keep it under the gitignored `scratch/`.
 
+## Shadow runs (`shadow-dump.mjs`)
+
+The bot's `llm.shadow` (a B model / prompt next to the live A on the same input, only A posted)
+stores every pair in `shadow_runs`. This dumps them side by side:
+
+```bash
+node bench/shadow-dump.mjs [db=logs/news.db] [outDir=scratch/shadow] [--category tech] [--days 7]
+```
+
+`shadow.md` + a static `shadow.html`: per (category, stage, B model) the runs, B failures (call
+error or unparseable answer), mean Jaccard of the links, B latency p50 / p95, topics the URL
+whitelist dropped, mean topic length and Cyrillic share; then every run — Step 1 as a URL table
+(both / only A / only B, status and newsworthiness/digestFit of each side, B's drops, B's raw
+answer when it did not parse), render as the two sides' topics next to each other. Both sides
+went through the same post-processing (Step 1 without the audience term), so a difference is
+the models' or prompts', not the code's.
+
 ## Jev (TypeSafe) pre-filter benchmark (`jev-*.mjs`)
 
 Question: can a cheap "decision model" (`typesafe/jev-1.13` via OpenRouter's

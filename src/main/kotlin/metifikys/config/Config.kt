@@ -95,7 +95,9 @@ data class ProcessingConfig(
      * How many days of article-embedding rows to keep. Pruned each cycle. Must be >= every
      * category's semanticDedup.windowDays (validated at load) — the detector scans back that far.
      */
-    val embeddingRetentionDays: Long = 30
+    val embeddingRetentionDays: Long = 30,
+    /** How many days of `shadow_runs` rows (`llm.shadow`) to keep. Pruned each cycle. Must be >= 1. */
+    val shadowRetentionDays: Long = 30
 )
 
 /**
@@ -1477,7 +1479,36 @@ data class CategoryLlmOverrides(
      * The editor-persona remark (`post.persona`), one short sync call per digest. Null falls back
      * to the [render] override, then to the global sync default; metered as `PERSONA` either way.
      */
-    val persona: LlmOverride? = null
+    val persona: LlmOverride? = null,
+    /** Shadow run of a second model / prompt next to the live one, stored for comparison only; see [ShadowConfig]. */
+    val shadow: ShadowConfig? = null
+)
+
+/**
+ * `llm.shadow`: a "B" model and/or prompt runs on exactly the input the live "A" gets, in parallel,
+ * and only A reaches the channel; both outputs land in `shadow_runs` for a side-by-side look
+ * (`bench/shadow-dump.mjs`, `/status` 🌓 line). Unlike `extractAlternate` (every second request
+ * goes to B and is published), both sides see the same batch and nothing of B is published.
+ *
+ * [extract] shadows Step 1 (same articles and covered context, B's own prompt); [render] shadows
+ * Step 2 on A's shortlist, so a render prompt change is judged on the same events. B's output goes
+ * through the same post-processing as A's (Step 1: URL filter, cooldown, cap, ranker without the
+ * audience term; render: the delivery's URL whitelist), nothing is written besides the row. B runs
+ * on its own single thread per category with a queue of [queueSize]; when that is full the run is
+ * dropped (`[Shadow] dropped (busy)`) — B never delays A. A CLI shadow doubles that quota's use:
+ * lower [sampleRate] for an expensive B. Needs `dedup:`; `batch: true` is not allowed here.
+ */
+data class ShadowConfig(
+    /** B for Step 1; null = no Step 1 shadow. */
+    val extract: LlmOverride? = null,
+    /** B for the render; null = no render shadow. */
+    val render: LlmOverride? = null,
+    /** B's prompt file (same keys as `dedup.promptFile`); null = A's prompts, only the model differs. */
+    val promptFile: String? = null,
+    /** Share of A's calls that also get a B run, 0.0–1.0. */
+    val sampleRate: Double = 1.0,
+    /** B runs waiting per category beyond the one in flight; more are dropped. */
+    val queueSize: Int = 4
 )
 
 data class DedupPromptsInline(
@@ -1829,6 +1860,9 @@ object ConfigLoader {
         }
         require(config.processing.llmCallRetentionDays >= 1) {
             "processing.llmCallRetentionDays must be >= 1 (got ${config.processing.llmCallRetentionDays})"
+        }
+        require(config.processing.shadowRetentionDays >= 1) {
+            "processing.shadowRetentionDays must be >= 1 (got ${config.processing.shadowRetentionDays})"
         }
         config.archive?.let { a ->
             require(a.rotation in ArchiveConfig.ROTATIONS) {
@@ -2262,6 +2296,28 @@ object ConfigLoader {
                 validateOverride(name, "summarize", ovr.summarize, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "batchFallback", ovr.batchFallback, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "persona", ovr.persona, openRouter, anthropic, config.claudeCli, config.codexCli)
+                ovr.shadow?.let { s ->
+                    require(s.extract != null || s.render != null) {
+                        "Category '$name' llm.shadow needs extract and/or render — without either nothing runs in the shadow"
+                    }
+                    require(category.dedup != null) {
+                        "Category '$name' llm.shadow needs a dedup: block — the shadow compares the two-step pipeline"
+                    }
+                    validateOverride(name, "shadow.extract", s.extract, openRouter, anthropic, config.claudeCli, config.codexCli)
+                    validateOverride(name, "shadow.render", s.render, openRouter, anthropic, config.claudeCli, config.codexCli)
+                    require(s.extract?.batch != true && s.render?.batch != true) {
+                        "Category '$name' llm.shadow: batch=true is not supported — the shadow runs synchronously next to the live call"
+                    }
+                    require(s.sampleRate in 0.0..1.0) { "Category '$name' llm.shadow.sampleRate must be in [0.0, 1.0] (got ${s.sampleRate})" }
+                    require(s.queueSize >= 1) { "Category '$name' llm.shadow.queueSize must be >= 1 (got ${s.queueSize})" }
+                    require(s.promptFile == null || s.promptFile.isNotBlank()) { "Category '$name' llm.shadow.promptFile must not be blank" }
+                    if (ovr.extractAlternate != null && s.extract != null) {
+                        logger.warn {
+                            "Category '$name' sets both llm.extractAlternate (every second Step 1 goes to B and is PUBLISHED) " +
+                                "and llm.shadow.extract — consider dropping extractAlternate: the shadow compares on the same batch"
+                        }
+                    }
+                }
                 ovr.batch?.let { b ->
                     require(b.provider in setOf("openai", "anthropic")) {
                         "Category '$name' llm.batch: batch override only supports provider: openai or anthropic (OpenRouter, Claude CLI, and Codex CLI have no Batch API)"

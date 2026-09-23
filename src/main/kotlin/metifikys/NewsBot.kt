@@ -25,6 +25,7 @@ import metifikys.digest.LongForm
 import metifikys.digest.MuteRegistry
 import metifikys.digest.PauseStore
 import metifikys.digest.PersonaWriter
+import metifikys.digest.ShadowRunner
 import metifikys.digest.PostImages
 import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.TrackerUpdater
@@ -262,6 +263,10 @@ class NewsBot(
             } else null
         )
 
+    /** `llm.shadow` B runs; only when some category configures a shadow. */
+    private val shadowRunner: ShadowRunner? =
+        if (config.categories.values.any { it.llm?.shadow != null }) ShadowRunner(db) else null
+
     private val categoryProcessor = CategoryProcessor(
         config = config,
         db = db,
@@ -272,7 +277,8 @@ class NewsBot(
         errorLog = errorLog,
         eventSemanticAnalyzer = eventSemanticAnalyzer,
         longFormTextFetcher = LongForm.TextFetcher(articleFetcher::fetchFullText),
-        muteRegistry = muteRegistry
+        muteRegistry = muteRegistry,
+        shadowRunner = shadowRunner
     )
 
     private val digestCycle = DigestCycle(
@@ -439,6 +445,7 @@ class NewsBot(
             updatesPoller?.stop()
             adminExecutor?.shutdownNow()
             moderationExecutor?.shutdownNow()
+            shadowRunner?.shutdown()
             val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             try {
                 for (executor in executors) {

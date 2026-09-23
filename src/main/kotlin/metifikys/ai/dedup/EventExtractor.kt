@@ -16,6 +16,9 @@ import metifikys.db.CoveredEventRow
 import metifikys.db.EventArticleRole
 import metifikys.db.EventArticleRow
 import metifikys.db.RejectedEventRow
+import metifikys.db.ShadowRunRow
+import metifikys.config.ShadowConfig
+import metifikys.digest.ShadowRunner
 import metifikys.digest.TrackerDates
 import metifikys.feedback.AffinityImpact
 import metifikys.feedback.AffinityMath
@@ -62,6 +65,15 @@ data class Step1Drop(val url: String, val eventKey: String, val reason: String) 
     }
 }
 
+/** `llm.shadow.extract` of one category: B's client and prompt set, and the runner that stores the pair. */
+class Step1Shadow(
+    val runner: ShadowRunner,
+    val cfg: ShadowConfig,
+    val client: LlmClient,
+    /** B's prompts — A's when `shadow.promptFile` is not set. */
+    val prompts: ResolvedDedupPrompts
+)
+
 /** [EventExtractor.evaluate]'s output: the result the digest would use, plus what was dropped. */
 data class Step1Evaluation(
     val result: ExtractionResult,
@@ -96,7 +108,9 @@ class EventExtractor(
     /** With `enabled`, every Step 1 result is also recorded as story clusters (`event_articles`). */
     private val storyIntel: StoryIntelConfig = StoryIntelConfig(),
     /** "Now" of the post-processing (cooldown, posts cap, anti-bubble, row stamps); golden tests pin it. */
-    private val clock: () -> LocalDateTime = LocalDateTime::now
+    private val clock: () -> LocalDateTime = LocalDateTime::now,
+    /** `llm.shadow.extract`: B runs next to every sync Step 1 call; null = no shadow. */
+    private val shadow: Step1Shadow? = null
 ) {
 
     companion object {
@@ -184,8 +198,9 @@ class EventExtractor(
 
         // Reaction-feedback lever A, prompt channel: resolves only when the template actually
         // contains {{AUDIENCE_SIGNALS}} (opt-in per prompt file); "" otherwise / on any failure.
-        val audienceSignals = if (prompts.extractSystem.contains("{{AUDIENCE_SIGNALS}}") ||
-            prompts.extractUser.contains("{{AUDIENCE_SIGNALS}}")
+        val audienceSignals = if (listOfNotNull(prompts, shadow?.prompts).any {
+                it.extractSystem.contains("{{AUDIENCE_SIGNALS}}") || it.extractUser.contains("{{AUDIENCE_SIGNALS}}")
+            }
         ) {
             try {
                 affinityScoresFor(category).buildAudienceSignals().also {
@@ -229,33 +244,82 @@ class EventExtractor(
             return ExtractOutcome.PendingBatch(future)
         }
 
-        // Sync path
-        val raw = try {
-            selectedClient.client.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt, maxRetry = 3)
-        } catch (e: BillingException) {
-            throw e
-        } catch (e: InterruptedException) {
-            // Cancellation (cycle deadline / shutdown) — abort the category; the legacy
-            // fallback would only spawn more doomed calls on an interrupted worker.
-            Thread.currentThread().interrupt()
-            throw e
+        // Sync path. llm.shadow.extract: B gets the same batch and context now, on its own thread;
+        // it is handed A's answer (or null) whatever happens below, and never delays A.
+        val shadowHandle = startShadow(category, cat, articles, coveredRows, vars, prompts, selectedClient.client)
+        var aRaw: String? = null
+        try {
+            val raw = try {
+                selectedClient.client.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt, maxRetry = 3)
+            } catch (e: BillingException) {
+                throw e
+            } catch (e: InterruptedException) {
+                // Cancellation (cycle deadline / shutdown) — abort the category; the legacy
+                // fallback would only spawn more doomed calls on an interrupted worker.
+                Thread.currentThread().interrupt()
+                throw e
+            } catch (e: Exception) {
+                logger.warn(e) {
+                    "[Category:$category][Dedup] Step 1 LLM call failed via ${selectedClient.providerLabel} - falling back to legacy"
+                }
+                return ExtractOutcome.FallbackToLegacy
+            }
+            aRaw = raw
+
+            if (raw.isBlank()) {
+                logger.warn {
+                    "[Category:$category][Dedup] Step 1 returned blank content via ${selectedClient.providerLabel} - falling back to legacy"
+                }
+                return ExtractOutcome.FallbackToLegacy
+            }
+
+            return postProcess(category, cat, articles, raw, coveredRows)
+                ?.let { ExtractOutcome.Ready(it) }
+                ?: ExtractOutcome.FallbackToLegacy
+        } finally {
+            shadowHandle?.finish(aRaw)
+        }
+    }
+
+    /**
+     * Starts the `llm.shadow.extract` B run on the prompt A is about to get (B's own templates, the
+     * same substitutions). Both answers are judged later by [evaluate] without the audience term
+     * and without writes, so the pair differs only in what the models said. Null = no shadow run.
+     */
+    private fun startShadow(
+        category: String,
+        cat: CategoryConfig,
+        articles: List<Article>,
+        coveredRows: List<CoveredEventRow>,
+        vars: Map<String, String>,
+        prompts: ResolvedDedupPrompts,
+        aClient: LlmClient
+    ): ShadowRunner.Handle? {
+        val s = shadow ?: return null
+        return try {
+            val bSystem = promptLoader.substitute(s.prompts.extractSystem, vars)
+            val bUser = promptLoader.substitute(s.prompts.extractUser, vars)
+            fun judge(side: String): (String) -> ShadowRunner.Outcome = { raw ->
+                ShadowRunner.step1Outcome(
+                    evaluate(category, cat, articles, raw, coveredRows, withAudience = false, tag = "[Category:$category][Shadow:$side]"),
+                    raw
+                )
+            }
+            s.runner.start(
+                category = category,
+                stage = ShadowRunRow.STAGE_EXTRACT,
+                cfg = s.cfg,
+                inputHash = ShadowRunner.hash(articles.joinToString("\n") { it.link }),
+                a = ShadowRunner.Side.of(aClient, ShadowRunner.hash(prompts.extractSystem + "\n" + prompts.extractUser)),
+                b = ShadowRunner.Side.of(s.client, ShadowRunner.hash(s.prompts.extractSystem + "\n" + s.prompts.extractUser)),
+                callB = { s.client.completeJson(systemPrompt = bSystem, userPrompt = bUser, maxRetry = 1) },
+                judgeA = judge("A"),
+                judgeB = judge("B")
+            )
         } catch (e: Exception) {
-            logger.warn(e) {
-                "[Category:$category][Dedup] Step 1 LLM call failed via ${selectedClient.providerLabel} - falling back to legacy"
-            }
-            return ExtractOutcome.FallbackToLegacy
+            logger.warn(e) { "[Category:$category][Shadow] could not start the Step 1 shadow — A unaffected" }
+            null
         }
-
-        if (raw.isBlank()) {
-            logger.warn {
-                "[Category:$category][Dedup] Step 1 returned blank content via ${selectedClient.providerLabel} - falling back to legacy"
-            }
-            return ExtractOutcome.FallbackToLegacy
-        }
-
-        return postProcess(category, cat, articles, raw, coveredRows)
-            ?.let { ExtractOutcome.Ready(it) }
-            ?: ExtractOutcome.FallbackToLegacy
     }
 
     /**

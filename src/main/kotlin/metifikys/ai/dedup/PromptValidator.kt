@@ -104,7 +104,23 @@ class PromptValidator(
                 "trackers are configured but the extract prompt never asks for eventDate — every tracker row stays undated"
             )
         }
+        out += validateShadow(name, cat, config)
         return out
+    }
+
+    /**
+     * `llm.shadow.promptFile` gets the same checks as `dedup.promptFile`, reported as `shadow:<slot>`
+     * and at most WARN: a broken shadow prompt only means no shadow run, the live pipeline is fine.
+     */
+    private fun validateShadow(name: String, cat: CategoryConfig, config: AppConfig): List<PromptFinding> {
+        val file = cat.llm?.shadow?.promptFile ?: return emptyList()
+        val dedup = cat.dedup ?: return emptyList()
+        val shadowCat = cat.copy(dedup = dedup.copy(promptFile = file, prompts = null), llm = cat.llm.copy(shadow = null))
+        return validateCategory(name, shadowCat, config).map {
+            val level = if (it.level == PromptFinding.Level.ERROR) PromptFinding.Level.WARN else it.level
+            val message = if (it.level == PromptFinding.Level.ERROR) "${it.message} — no shadow run" else it.message
+            it.copy(level = level, slot = "shadow:${it.slot}", message = message)
+        }
     }
 
     fun validateWeekly(config: AppConfig): List<PromptFinding> {

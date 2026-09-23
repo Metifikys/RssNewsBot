@@ -94,6 +94,7 @@ class StatusCommand(
         appendLatencySection(sb)
         appendReactionsSection(sb)
         appendVariantsSection(sb)
+        appendShadowLine(sb)
         appendAffinitySection(sb)
         appendFeedHealthSection(sb)
         appendFirstSourceSection(sb)
@@ -177,6 +178,18 @@ class StatusCommand(
             val arms = byCategory[name] ?: continue
             sb.append("  ${escapeMarkdown(name)}: ${arms.joinToString(" | ") { metifikys.feedback.VariantStats.cell(it) }}\n")
         }
+    }
+
+    /** `llm.shadow`: one line over the last 24h of `shadow_runs`; omitted without runs or on a query failure. */
+    private fun appendShadowLine(sb: StringBuilder) {
+        if (config.categories.values.none { it.llm?.shadow != null }) return
+        val runs = try {
+            db.fetchShadowRuns(LocalDateTime.now().minusHours(24))
+        } catch (e: Exception) {
+            logger.warn(e) { "[/status] fetchShadowRuns failed — omitting the shadow line" }
+            return
+        }
+        metifikys.digest.ShadowRunner.statusLine(runs)?.let { sb.append('\n').append(it).append('\n') }
     }
 
     private fun safeFetchReactions(sinceHours: Long): Map<String, CategoryReactionSummary> = try {

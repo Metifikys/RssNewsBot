@@ -8,6 +8,9 @@ import metifikys.ai.dedup.EventExtractor
 import metifikys.ai.dedup.ExtractOutcome
 import metifikys.ai.dedup.PromptLoader
 import metifikys.ai.dedup.ResolvedDedupPrompts
+import metifikys.ai.dedup.Step1Shadow
+import metifikys.ai.LlmUseCase
+import metifikys.db.ShadowRunRow
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
 import metifikys.config.DedupConfig
@@ -63,7 +66,9 @@ open class CategoryProcessor(
      */
     private val longFormTextFetcher: LongForm.TextFetcher? = null,
     /** Effective mute lists (YAML + DB overlay); null = the YAML lists only. */
-    muteRegistry: MuteRegistry? = null
+    muteRegistry: MuteRegistry? = null,
+    /** `llm.shadow` B runs next to Step 1 and the render; null when no category configures one. */
+    private val shadowRunner: ShadowRunner? = null
 ) {
 
     private companion object {
@@ -250,7 +255,8 @@ open class CategoryProcessor(
                     db = db,
                     alternateOpenAI = alternate,
                     requestCounter = extractorCounters.getOrPut(name) { AtomicLong(0) },
-                    storyIntel = config.storyIntel
+                    storyIntel = config.storyIntel,
+                    shadow = step1Shadow(name, categoryConfig, resolvedDedup)
                 )
             }
             val outcome = try {
@@ -565,34 +571,46 @@ open class CategoryProcessor(
                 resolvedDedup = resolvedDedup,
                 previousSummaries = previousSummaries,
                 chunkLabel = chunkLabel,
-                syncClient = syncClient
+                syncClient = syncClient,
+                shadow = startRenderShadow(name, categoryConfig, renderShortlist, effectiveArticles, resolvedDedup, syncClient)
             )
             return
         }
 
         val ctxLabel = chunkLabel.trim().ifEmpty { "[submit]" }
+        var renderShadow: ShadowRunner.Handle? = null
         val future: CompletableFuture<String> = try {
-            llmClientsFactory.forBatch(categoryConfig).submitCategoryBatch(name, input)
+            val batchClient = llmClientsFactory.forBatch(categoryConfig)
+            renderShadow = startRenderShadow(name, categoryConfig, renderShortlist, effectiveArticles, resolvedDedup, batchClient)
+            batchClient.submitCategoryBatch(name, input)
         } catch (e: BillingException) {
+            renderShadow?.finish(null)
             db.markUnprocessed(links)
             errorLog.recordBilling(name, ctxLabel)
             logger.warn { "[Category:$name]$chunkLabel Billing/quota limit reached — skipping." }
             return
         } catch (e: InterruptedException) {
+            renderShadow?.finish(null)
             db.markUnprocessed(links)
             Thread.currentThread().interrupt()
             logger.warn { "[Category:$name]$chunkLabel Batch submission cancelled (cycle deadline / shutdown) — reverting to UNPROCESSED." }
             throw e
         } catch (e: Exception) {
+            renderShadow?.finish(null)
             db.markUnprocessed(links)
             errorLog.recordError(name, ctxLabel, e)
             logger.error(e) { "[Category:$name]$chunkLabel Batch submission failed. Reverted articles to UNPROCESSED." }
             return
         }
 
+        val shadowOfBatch = renderShadow
         RunContext.carry(future)
-            .thenAccept { summary -> deliverer.deliver(name, summary, articles, renderShortlist) }
+            .thenAccept { summary ->
+                shadowOfBatch?.finish(summary)
+                deliverer.deliver(name, summary, articles, renderShortlist)
+            }
             .exceptionally { ex ->
+                shadowOfBatch?.finish(null)
                 val cause = if (ex is ExecutionException) ex.cause ?: ex else ex
                 db.markUnprocessed(links)
                 errorLog.recordError(name, ctxLabel, cause)
@@ -619,10 +637,12 @@ open class CategoryProcessor(
         resolvedDedup: ResolvedDedupPrompts? = null,
         previousSummaries: List<String> = emptyList(),
         chunkLabel: String = "",
-        syncClient: metifikys.ai.LlmClient = llmClientsFactory.forRender(categoryConfig)
+        syncClient: metifikys.ai.LlmClient = llmClientsFactory.forRender(categoryConfig),
+        shadow: ShadowRunner.Handle? = null
     ) {
         val links = articles.map { it.link }
         db.markProcessing(links)
+        var aSummary: String? = null
         try {
             val summary = if (shortlist != null) {
                 requireNotNull(resolvedDedup) { "shortlist set without resolvedDedup for sync fallback '$name'" }
@@ -645,6 +665,8 @@ open class CategoryProcessor(
                     maxArticles = SYNC_FALLBACK_CAP
                 )
             }
+            aSummary = summary
+            shadow?.finish(summary)
             deliverer.deliver(name, summary, articles, shortlist)
         } catch (e: BillingException) {
             db.markUnprocessed(links)
@@ -661,6 +683,70 @@ open class CategoryProcessor(
             db.markUnprocessed(links)
             errorLog.recordError(name, chunkLabel.trim().ifEmpty { "[sync]" }, e)
             logger.error(e) { "[Category:$name]$chunkLabel Sync fallback failed" }
+        } finally {
+            if (aSummary == null) shadow?.finish(null)
+        }
+    }
+
+    /**
+     * `llm.shadow.extract` of [name]: B's client and prompts for the extractor; null when the
+     * category shadows no Step 1, no runner is wired, or B's prompt file does not resolve (logged).
+     */
+    private fun step1Shadow(name: String, categoryConfig: CategoryConfig, resolvedDedup: ResolvedDedupPrompts): Step1Shadow? {
+        val runner = shadowRunner ?: return null
+        val cfg = categoryConfig.llm?.shadow ?: return null
+        val client = llmClientsFactory.forShadow(categoryConfig, LlmUseCase.SHADOW_EXTRACT) ?: return null
+        val prompts = shadowPrompts(name, categoryConfig, resolvedDedup) ?: return null
+        return Step1Shadow(runner, cfg, client, prompts)
+    }
+
+    /** B's prompt set: `shadow.promptFile` resolved like `dedup.promptFile`, or A's [resolvedDedup]. */
+    private fun shadowPrompts(name: String, categoryConfig: CategoryConfig, resolvedDedup: ResolvedDedupPrompts): ResolvedDedupPrompts? {
+        val file = categoryConfig.llm?.shadow?.promptFile ?: return resolvedDedup
+        val dedup = categoryConfig.dedup ?: return null
+        return promptLoader.resolve(categoryConfig.copy(dedup = dedup.copy(promptFile = file, prompts = null)))
+            ?: run {
+                logger.warn { "[Category:$name][Shadow] llm.shadow.promptFile '$file' does not resolve — no shadow run" }
+                null
+            }
+    }
+
+    /**
+     * Starts the `llm.shadow.render` B run: B renders A's final shortlist over the same articles
+     * with its own prompts; both outputs are judged by the delivery's topic preparation. The
+     * returned handle takes A's summary (or null). Null = no shadow run for this render.
+     */
+    private fun startRenderShadow(
+        name: String,
+        categoryConfig: CategoryConfig,
+        shortlist: List<ShortlistItem>?,
+        articles: List<Article>,
+        resolvedDedup: ResolvedDedupPrompts?,
+        aClient: metifikys.ai.LlmClient
+    ): ShadowRunner.Handle? {
+        val runner = shadowRunner ?: return null
+        if (shortlist.isNullOrEmpty() || resolvedDedup == null) return null
+        val cfg = categoryConfig.llm?.shadow?.takeIf { it.render != null } ?: return null
+        return try {
+            val client = llmClientsFactory.forShadow(categoryConfig, LlmUseCase.SHADOW_RENDER) ?: return null
+            val prompts = shadowPrompts(name, categoryConfig, resolvedDedup) ?: return null
+            val judge: (String) -> ShadowRunner.Outcome = { summary -> ShadowRunner.renderOutcome(name, summary, articles) }
+            runner.start(
+                category = name,
+                stage = ShadowRunRow.STAGE_RENDER,
+                cfg = cfg,
+                inputHash = ShadowRunner.hash(articles.joinToString("\n") { it.link } + "\n" + shortlist.joinToString("\n") { it.eventKey }),
+                a = ShadowRunner.Side.of(aClient, ShadowRunner.hash(resolvedDedup.renderSystem + "\n" + resolvedDedup.renderUser)),
+                b = ShadowRunner.Side.of(client, ShadowRunner.hash(prompts.renderSystem + "\n" + prompts.renderUser)),
+                callB = {
+                    client.summarizeShortlist(name, categoryConfig.emoji, shortlist, articles, prompts.renderSystem, prompts.renderUser)
+                },
+                judgeA = judge,
+                judgeB = judge
+            )
+        } catch (e: Exception) {
+            logger.warn(e) { "[Category:$name][Shadow] could not start the render shadow — A unaffected" }
+            null
         }
     }
 

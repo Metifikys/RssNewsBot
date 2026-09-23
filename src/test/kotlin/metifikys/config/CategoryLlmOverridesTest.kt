@@ -805,4 +805,61 @@ class CategoryLlmOverridesTest {
         }
         assertEquals(true, ex.message?.contains("fallback is not supported on the batch slot"))
     }
+
+    private fun shadowYaml(shadow: String, dedup: Boolean = true) = """
+        telegram:
+          botToken: "tok"
+        openai:
+          apiKey: "sk-test"
+        database:
+          path: "test.db"
+        scheduler:
+          intervalMinutes: 60
+        openrouter:
+          apiKey: "or-key"
+          model: "default-router-model"
+        categories:
+          gaming:
+            emoji: "🎮"
+            channelId: "@gaming"
+            feeds:
+              - https://example.com/feed
+${if (dedup) "            dedup:\n              promptFile: prompts/games-dedup.yaml" else ""}
+            llm:
+              shadow:
+$shadow
+    """
+
+    @Test
+    fun `parses llm shadow`() {
+        val config = load(shadowYaml("""
+                extract: { provider: openrouter, model: m-b }
+                render: { provider: openai, model: gpt-x }
+                promptFile: prompts/games-dedup.shadow.yaml
+                sampleRate: 0.5
+                queueSize: 2
+        """.trimIndent().prependIndent("                ")))
+        val s = config.categories["gaming"]?.llm?.shadow
+        assertEquals("m-b", s?.extract?.model)
+        assertEquals("gpt-x", s?.render?.model)
+        assertEquals("prompts/games-dedup.shadow.yaml", s?.promptFile)
+        assertEquals(0.5, s?.sampleRate)
+        assertEquals(2, s?.queueSize)
+    }
+
+    @Test
+    fun `shadow rejects batch, a missing dedup block and an empty shadow`() {
+        assertThrows<IllegalArgumentException> {
+            load(shadowYaml("                extract: { provider: openai, model: m, batch: true }"))
+        }
+        assertThrows<IllegalArgumentException> {
+            load(shadowYaml("                extract: { provider: openrouter, model: m }", dedup = false))
+        }
+        assertThrows<IllegalArgumentException> {
+            load(shadowYaml("                sampleRate: 0.5"))
+        }
+        assertThrows<IllegalArgumentException> {
+            load(shadowYaml("                render: { provider: openrouter, model: m }\n                sampleRate: 1.5"))
+        }
+    }
 }
