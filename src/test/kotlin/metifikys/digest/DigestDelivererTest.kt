@@ -93,6 +93,20 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `a source link whose URL has parentheses is not mistaken for a bare URL`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+
+        val articles = listOf(article(1).copy(link = "https://en.wikipedia.org/wiki/Doom_(2016_video_game)"))
+        val summary = "• **Story.**\n\nBody. [Doom](https://en.wikipedia.org/wiki/Doom_(2016_video_game))"
+
+        DigestDeliverer(config(), db, sender).deliver("tech", summary, articles)
+
+        verify(exactly = 1) { sender.sendToChannel(any(), any(), any()) }
+    }
+
+    @Test
     fun `partial send does not record the failed topic's event as covered`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

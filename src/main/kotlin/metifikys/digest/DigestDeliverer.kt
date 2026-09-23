@@ -23,9 +23,6 @@ private val logger = KotlinLogging.logger {}
 
 private val THREAD_TS: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM HH:mm")
 
-/** A Markdown `[label](url)` link — stripped out before scanning a topic for bare URLs. */
-private val MARKDOWN_LINK = Regex("""\[[^\[\]]*]\([^()]*\)""")
-
 /** Any `http(s)://` occurrence. In a well-formed topic every URL lives inside a Markdown link. */
 private val BARE_URL_SCHEME = Regex("""https?://""", RegexOption.IGNORE_CASE)
 
@@ -100,7 +97,7 @@ class DigestDeliverer(
                 // BUG-011 (bare-URL bypass): extractUrls only sees Markdown [label](url) links, so an
                 // injected *bare* URL (https://evil.example with no markdown) slips past the whitelist
                 // above. Strip the markdown links, then reject any remaining http(s):// in the topic.
-                if (BARE_URL_SCHEME.containsMatchIn(MARKDOWN_LINK.replace(topic, " "))) {
+                if (BARE_URL_SCHEME.containsMatchIn(TopicFormatter.MARKDOWN_LINK.replace(topic, " "))) {
                     logger.warn {
                         "[Category:$categoryName] Dropping topic with a bare (non-markdown) URL — possible prompt injection."
                     }
