@@ -72,7 +72,12 @@ class DigestCycle(
      * copied into the archive files before their expired rows are deleted; every other table,
      * and every table when this is null, is pruned by a plain DELETE as before.
      */
-    private val retentionArchiver: metifikys.db.RetentionArchiver? = null
+    private val retentionArchiver: metifikys.db.RetentionArchiver? = null,
+    /**
+     * Digest pauses set by `/pause` (`bot_state`). Null = nothing is ever paused. Only the digest
+     * half checks it; ingestion keeps running, and a forced run (`/run`) ignores it.
+     */
+    private val pauseStore: PauseStore? = null
 ) {
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -83,8 +88,8 @@ class DigestCycle(
      * throttle each other at the HTTP level, by design). Never throws for pipeline failures —
      * [runCategoryPipeline] records them in the error log — so the caller's schedule survives.
      */
-    fun runCategory(name: String) = timed(name, "run") { catCfg ->
-        runCategoryPipeline(name, catCfg, fetcher.newFetchDeadline())
+    fun runCategory(name: String, force: Boolean = false) = timed(name, if (force) "forced run" else "run") { catCfg ->
+        runCategoryPipeline(name, catCfg, fetcher.newFetchDeadline(), force)
     }
 
     /**
@@ -107,9 +112,9 @@ class DigestCycle(
      * Digest half only (ready query → Step 1 → Step 2) on whatever ingestion has already put in
      * the DB. Articles inserted while this runs simply wait for the next digest.
      */
-    fun runDigest(name: String) = timed(name, "digest") { _ ->
+    fun runDigest(name: String, force: Boolean = false) = timed(name, if (force) "forced digest" else "digest") { _ ->
         try {
-            digestCategory(name)
+            digestCategory(name, force)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             logger.warn { "[Cycle:$name] digest interrupted." }
@@ -233,11 +238,12 @@ class DigestCycle(
     private fun runCategoryPipeline(
         name: String,
         catCfg: metifikys.config.CategoryConfig,
-        fetchDeadlineNanos: Long
+        fetchDeadlineNanos: Long,
+        force: Boolean = false
     ) {
         try {
             if (!ingestCategory(name, catCfg, fetchDeadlineNanos)) return
-            digestCategory(name)
+            digestCategory(name, force)
         } catch (e: InterruptedException) {
             // Barrier cancellation or shutdown: keep the flag; articles left PROCESSING are
             // reclaimed next cycle via the stale-timeout.
@@ -308,8 +314,17 @@ class DigestCycle(
         return true
     }
 
-    /** Digest half: ready query → [CategoryProcessor.processSingle] (Step 1 + Step 2). */
-    private fun digestCategory(name: String) {
+    /**
+     * Digest half: ready query → [CategoryProcessor.processSingle] (Step 1 + Step 2). Skipped while
+     * the category is paused (`/pause`) unless [force]d; the articles simply wait.
+     */
+    private fun digestCategory(name: String, force: Boolean = false) {
+        if (!force) {
+            pauseStore?.pausedUntil(name)?.let { p ->
+                logger.info { "[Cycle:$name] paused until ${p.until ?: "/resume"}, digest skipped" }
+                return
+            }
+        }
         val ready = db.fetchReadyForDigest(name, config.processing.staleTimeoutHours)
         if (ready.isEmpty()) {
             logger.info { "[Cycle:$name] No ready articles. Skipping digest." }

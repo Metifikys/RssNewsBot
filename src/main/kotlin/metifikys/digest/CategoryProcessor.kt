@@ -60,7 +60,9 @@ open class CategoryProcessor(
      * Refetches an article page for a long-form event (`post.longForm`). Null (tests, or no
      * fetcher wired) = long items are still marked, but render gets only the RSS text.
      */
-    private val longFormTextFetcher: LongForm.TextFetcher? = null
+    private val longFormTextFetcher: LongForm.TextFetcher? = null,
+    /** Effective mute lists (YAML + DB overlay); null = the YAML lists only. */
+    muteRegistry: MuteRegistry? = null
 ) {
 
     private companion object {
@@ -74,12 +76,10 @@ open class CategoryProcessor(
 
     /**
      * Hard keyword mute applied before Step-1, per category: the global `preferences.mute` list
-     * merged with each category's own `mute` list. Empty filter when neither is configured.
+     * merged with each category's own `mute` list, plus the DB mutes added from Telegram when the
+     * registry has a DB. Empty filter when nothing is muted.
      */
-    private val muteFilters: Map<String, TopicMuteFilter> =
-        config.categories.mapValues { (_, cat) ->
-            TopicMuteFilter.of(config.preferences.mute + cat.mute)
-        }
+    private val mutes: MuteRegistry = muteRegistry ?: MuteRegistry(config)
 
     /**
      * Processes each ready category independently — categories never block each other:
@@ -168,12 +168,12 @@ open class CategoryProcessor(
         // ── Step 0: hard keyword mute (preferences.mute + category mute) ──────
         // Deterministic, editor-controlled drop applied before Step-1: muted articles never
         // reach the LLM (saves tokens) and are marked PROCESSED so they leave the queue for good.
-        val muteFilter = muteFilters[name] ?: TopicMuteFilter.EMPTY
+        val muteFilter = mutes.filterFor(name)
         val articles = if (muteFilter.isEmpty()) allArticles else {
             val (muted, kept) = allArticles.partition { muteFilter.matches(it) }
             if (muted.isNotEmpty()) {
                 db.markProcessed(muted.map { it.link })
-                logger.info { "[Category:$name] Muted ${muted.size} article(s) via preferences.mute; ${kept.size} remain." }
+                logger.info { "[Category:$name] Muted ${muted.size} article(s) via the mute lists; ${kept.size} remain." }
             }
             kept
         }

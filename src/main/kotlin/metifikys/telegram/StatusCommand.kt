@@ -29,11 +29,14 @@ class StatusCommand(
      * Telegram 429s in the last 24 hours ([TelegramSender.rateLimitsLast24h]); null omits the line.
      * Anything above zero in prod is the trigger for a full per-chat / global token bucket.
      */
-    private val telegramRateLimits: (() -> Int)? = null
+    private val telegramRateLimits: (() -> Int)? = null,
+    /** Digest pauses (`/pause`); null omits the pause marker. */
+    private val pauseStore: metifikys.digest.PauseStore? = null
 ) {
 
     private val timeFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
     private val stampFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+    private val pauseFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM HH:mm")
     private val zoneId: ZoneId = ZoneId.systemDefault()
 
     /** Renders status text and a token identifying the highest error seq consumed. */
@@ -61,6 +64,9 @@ class StatusCommand(
             val readyCount = readyByCategory[name].orEmpty().size
             sb.append('\n')
             sb.append("*${escapeMarkdown(name)}* ${category.emoji}\n")
+            pauseStore?.pausedUntil(name)?.let { p ->
+                sb.append("  ⏸ paused until ${p.until?.format(pauseFmt) ?: "/resume"}\n")
+            }
             sb.append("  last digest: $whenCell\n")
             sb.append("  ready for next batch: $readyCount\n")
             sb.append("  ").append(formatArticleCounts(articleCounts[name], publishedCounts[name] ?: 0L)).append('\n')

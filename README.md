@@ -42,8 +42,8 @@ via a `/status` admin snapshot.
   stripped from descriptions, site chrome is scrubbed from extracted text by the operator's
   rules (`fetcher.scrubRulesFile`, see `scrub-rules.example.yaml`), and reddit link posts are
   repointed at the article they link to.
-- **Keyword mute** (`preferences.mute` + per-category `mute:`) — whole-word blocklist applied
-  before Step 1; matching articles never reach an LLM.
+- **Keyword mute** (`preferences.mute` + per-category `mute:`, plus `/mute` from the admin
+  chat) — whole-word blocklist applied before Step 1; matching articles never reach an LLM.
 - **SSRF guard** — RFC-1918 / loopback / link-local hosts are rejected before any network
   call; only `http`/`https` schemes are allowed.
 - **No-redirect HTTP** — Telegram client refuses redirects so the bot token cannot leak to a
@@ -160,6 +160,13 @@ via a `/status` admin snapshot.
   `admin.userIds`, only in the admin chat or a private chat with the bot; strangers get no answer.
   Commands run one at a time on an `admin-commands` thread, their update offset is saved before
   they run (a crash never replays a command), and one older than 10 minutes is refused as stale.
+  Commands ([`AdminCommands`](src/main/kotlin/metifikys/telegram/AdminCommands.kt)): `/status`,
+  `/pause <cat> [6h|2d]` / `/resume <cat>` (digest only, ingestion continues; kept in `bot_state`),
+  `/run <cat> [fetch]` (queued on the category's own scheduler thread, reports the post count),
+  `/mute <word|"phrase"> [cat]` with a 7-day hit preview, `/unmute`, `/mutes [yaml]`. Telegram
+  mutes go to the `admin_mutes` table and are merged over the YAML lists by
+  [`MuteRegistry`](src/main/kotlin/metifikys/digest/MuteRegistry.kt), so a hand-synced prod config
+  cannot wipe them; `/mutes yaml` prints them as a config fragment to move into the repo.
 - **Per-LLM-call cost ledger** — `llm_calls` table records `(provider, model, category,
   useCase, promptTokens, completionTokens, estCostUsd, ts)` for every call, including the
   Batch API auto-halving.
@@ -892,11 +899,12 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 | `event_embeddings`   | One vector per `(category, event_key)` for the log-only event-level analyzer (Float32 LE blob) |
 | `digest_messages`    | One row per delivered Telegram message linking `(chat_id, message_id)` → category + `event_key` + article links, for reaction attribution |
 | `reaction_counts`    | Current aggregated reaction counts per `(chat_id, message_id, emoji)` from `message_reaction_count` updates (replace-all per message) |
-| `bot_state`          | Key/value store for restart-surviving runtime state (the Telegram `getUpdates` offset, tracker message ids + body hashes) |
+| `bot_state`          | Key/value store for restart-surviving runtime state (the Telegram `getUpdates` offset, tracker message ids + body hashes, `/pause` state as `pause:<category>`) |
 | `audience_affinity`  | Reaction-feedback scores per `(category, dimension, key)` with `n_tone` evidence counts, rebuilt on the maintenance tick |
 | `badge_cache`        | Rendered footer badges per `(provider, key)` with a per-provider TTL; `""` caches a negative lookup |
 | `entity_intros`      | First-mention memory for the Wikipedia intro: one row per `(category, entity key)`, hits and misses |
 | `tracker_entries`    | Living-tracker state per `(category, tracker, entity)`: event date, previous date, status, latest post |
+| `admin_mutes`        | Keyword mutes added from Telegram (`/mute`, suggestions, moderation), merged over the YAML mute lists; `category` null = global |
 
 Pruning runs on the maintenance tick (or at the start of a legacy cycle), skipped while any
 batch is pending:

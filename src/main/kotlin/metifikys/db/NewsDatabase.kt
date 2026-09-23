@@ -33,6 +33,7 @@ class NewsDatabase(dbPath: String) :
     BadgeCacheStore by BadgeCacheRepository(),
     TrackerStore by TrackerRepository(),
     EntityIntroStore by EntityIntroRepository(),
+    AdminMuteStore by AdminMuteRepository(),
     BotStateStore by BotStateRepository() {
 
     /** Canonical path of the DB file; side jobs (e.g. [RetentionArchiver]) place their files next to it. */

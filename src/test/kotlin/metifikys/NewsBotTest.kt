@@ -1924,4 +1924,18 @@ class NewsBotTest {
         verify(exactly = 0) { db.pruneOldCoveredEvents(any()) }
         verify(exactly = 0) { db.deleteOlderThan(any()) }
     }
+
+    @Test
+    fun `a manual run needs the per-category schedulers to exist`() {
+        val listener = object : metifikys.telegram.RunListener {
+            override fun started() = error("must not run")
+            override fun finished() = error("must not run")
+        }
+        assertEquals(metifikys.telegram.RunQueued.NOT_STARTED, bot.enqueueManualRun("tech", false, listener))
+        val cycleBot = NewsBot(
+            config.copy(scheduler = config.scheduler.copy(perCategory = false)),
+            fetcher, ArticleFetcher(fetcher, enforceUrlValidation = false), db, sender, llmClientsFactory = llmClientsFactory
+        )
+        assertEquals(metifikys.telegram.RunQueued.NOT_PER_CATEGORY, cycleBot.enqueueManualRun("tech", false, listener))
+    }
 }

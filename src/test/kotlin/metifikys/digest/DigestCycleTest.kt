@@ -82,8 +82,10 @@ class DigestCycleTest {
         errorLog: CycleErrorLog = CycleErrorLog(),
         articleFetcher: ArticleFetcher = ArticleFetcher(RssFetcher(enforceUrlValidation = false)),
         statusPoster: StatusPoster? = null,
-        retentionArchiver: RetentionArchiver? = null
+        retentionArchiver: RetentionArchiver? = null,
+        pauseStore: PauseStore? = null
     ) = DigestCycle(
+        pauseStore = pauseStore,
         statusPoster = statusPoster,
         retentionArchiver = retentionArchiver,
         config = config,
@@ -323,6 +325,37 @@ class DigestCycleTest {
 
             assertEquals(listOf("https://example.com/ready"), processor.calls.single().second.map { it.link })
         } finally {
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `a paused category keeps ingesting but skips the digest until forced or expired`() {
+        val server = serverRss(rssWithItems("https://example.com/p1"))
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val config = cfg(mapOf("a" to cat(urlOf(server))))
+            val processor = RecordingCategoryProcessor(config, db)
+            var now = LocalDateTime.now()
+            val pauses = PauseStore(db) { now }
+            pauses.pause("a", now.plusHours(2))
+            val c = cycle(config, fetcher, processor, pauseStore = pauses)
+
+            c.runCategory("a")
+            assertEquals(setOf("https://example.com/p1"), db.findExistingLinks(listOf("https://example.com/p1")), "ingest ran")
+            assertTrue(processor.calls.isEmpty(), "digest skipped while paused")
+            c.runDigest("a")
+            assertTrue(processor.calls.isEmpty())
+
+            c.runDigest("a", force = true)
+            assertEquals(1, processor.calls.size, "/run ignores the pause")
+
+            now = now.plusHours(3)
+            c.runDigest("a")
+            assertEquals(2, processor.calls.size, "an expired pause no longer blocks")
+            assertEquals(null, db.getState("pause:a"), "and is removed")
+        } finally {
+            server.stop(0)
             fetcher.shutdown()
         }
     }

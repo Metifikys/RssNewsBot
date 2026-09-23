@@ -264,6 +264,16 @@ feedback:
 #   # telegram.updatesPolling: true and a non-empty userIds. Accepted from an admin in statusChatId
 #   # or in a private chat with the bot; anyone else is ignored silently. The "/" menu is set for
 #   # those chats only. A command older than 10 minutes (sent while the bot was down) is refused.
+#   #   /status                     snapshot now (the rolling one is left alone)
+#   #   /pause <cat> [30m|6h|2d|1w] pause a category's digest (ingestion keeps going; survives a restart)
+#   #   /resume <cat>               lift it, shows the queued backlog
+#   #   /run <cat> [fetch]          run the digest now, queued on the category's own thread
+#   #                               (per-category scheduler only; ignores a pause)
+#   #   /mute <word|"phrase"> [cat] add a mute (shows 7-day hits first); /unmute removes bot mutes
+#   #   /mutes [yaml]               every mute with its source; `yaml` prints the bot's mutes as a
+#   #                               config fragment so you can move them into this file
+#   # Mutes added from Telegram live in the DB table admin_mutes ON TOP of the YAML lists (a manual
+#   # config sync can't wipe them); they and /pause are only honoured while commands are enabled.
 #   commands:
 #     enabled: false
 

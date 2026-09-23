@@ -120,6 +120,19 @@ interface DigestMessageStore {
      */
     fun fetchReactionSummary(sinceHours: Long): Map<String, CategoryReactionSummary>
 
+    /**
+     * Every article link that reached a channel since [since] (the `article_links` of the
+     * `digest_messages` rows), for [category] or for every category when null. Backs the "how
+     * many of these were published" half of a mute preview.
+     */
+    fun fetchDigestArticleLinksSince(category: String?, since: LocalDateTime): Set<String>
+
+    /**
+     * Posts [category] published since [since]: distinct `(sent_at, article_links)` pairs, so a
+     * topic chunked over several messages counts once. Backs the `/run` completion report.
+     */
+    fun countDigestPostsSince(category: String, since: LocalDateTime): Int
+
     /** Deletes digest-message links older than [days] days (by `sent_at`). */
     fun deleteOldDigestMessages(days: Long = 90)
 
@@ -256,6 +269,26 @@ internal class DigestMessageRepository : DigestMessageStore {
                 byEmoji = byEmoji
             )
         }
+    }
+
+    override fun fetchDigestArticleLinksSince(category: String?, since: LocalDateTime): Set<String> = transaction {
+        DigestMessagesTable
+            .select(DigestMessagesTable.articleLinks)
+            .where {
+                val recent = DigestMessagesTable.sentAt greaterEq since
+                if (category == null) recent else recent and (DigestMessagesTable.category eq category)
+            }
+            .flatMap { row -> row[DigestMessagesTable.articleLinks].lines().map { it.trim() }.filter { it.isNotEmpty() } }
+            .toSet()
+    }
+
+    override fun countDigestPostsSince(category: String, since: LocalDateTime): Int = transaction {
+        DigestMessagesTable
+            .select(DigestMessagesTable.sentAt, DigestMessagesTable.articleLinks)
+            .where { (DigestMessagesTable.category eq category) and (DigestMessagesTable.sentAt greaterEq since) }
+            .map { it[DigestMessagesTable.sentAt] to it[DigestMessagesTable.articleLinks] }
+            .distinct()
+            .size
     }
 
     override fun deleteOldDigestMessages(days: Long) {

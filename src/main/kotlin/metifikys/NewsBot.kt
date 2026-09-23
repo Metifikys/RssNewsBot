@@ -10,6 +10,7 @@ import metifikys.ai.dedup.PromptLoader
 import metifikys.config.AppConfig
 import metifikys.db.NewsDatabase
 import metifikys.db.RetentionArchiver
+import metifikys.digest.CategoryExecutors
 import metifikys.digest.CategoryProcessor
 import metifikys.digest.CycleErrorLog
 import metifikys.digest.DigestCycle
@@ -18,6 +19,8 @@ import metifikys.config.dayOfWeekParsed
 import metifikys.config.timeParsed
 import metifikys.digest.EventSemanticAnalyzer
 import metifikys.digest.LongForm
+import metifikys.digest.MuteRegistry
+import metifikys.digest.PauseStore
 import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.TrackerUpdater
 import metifikys.digest.WeeklyDigest
@@ -36,13 +39,15 @@ import metifikys.fetch.TextScrubRules
 import metifikys.telegram.AdminAuth
 import metifikys.telegram.AdminCallbackRouter
 import metifikys.telegram.AdminCommandRouter
+import metifikys.telegram.AdminCommands
+import metifikys.telegram.RunListener
+import metifikys.telegram.RunQueued
 import metifikys.telegram.StatusCommand
 import metifikys.telegram.StatusPoster
 import metifikys.telegram.TelegramSender
 import metifikys.telegram.TelegramUpdatesPoller
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
@@ -136,17 +141,34 @@ class NewsBot(
 
     /**
      * Per-category mode: one single-thread scheduler per category run type (digest, and ingest
-     * when decoupled), so runs of the same kind for a category never overlap.
+     * when decoupled), so runs of the same kind for a category never overlap — a manual `/run`
+     * queues on the same thread.
      */
-    private val categorySchedulers = mutableListOf<ScheduledExecutorService>()
+    private val categoryExecutors = CategoryExecutors()
 
     /** Per-category mode: retention cleanup, affinity rebuild and the status post, on their own clock. */
     private val maintenanceScheduler = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "maintenance") }
 
     private val errorLog = CycleErrorLog()
 
+    private val adminCommandsOn = config.admin.commands.enabled
+
+    /**
+     * Digest pauses (`/pause`). Only with admin commands on: a pause left in the DB while the
+     * commands are off could never be lifted, so it is not honoured then either.
+     */
+    private val pauseStore: PauseStore? = if (adminCommandsOn) PauseStore(db) else null
+
+    /**
+     * The effective mute lists. The DB overlay (`admin_mutes`, written from Telegram) is read only
+     * with admin commands on, for the same reason as [pauseStore]; otherwise the YAML lists alone.
+     */
+    private val muteRegistry = MuteRegistry(config, if (adminCommandsOn) db else null)
+
+    private val statusCommand = StatusCommand(config, db, errorLog, sender::rateLimitsLast24h, pauseStore)
+
     private val statusPoster: StatusPoster? = config.admin.statusChatId?.let { chatId ->
-        StatusPoster(chatId, sender, StatusCommand(config, db, errorLog, sender::rateLimitsLast24h), errorLog)
+        StatusPoster(chatId, sender, statusCommand, errorLog)
     }
 
     /**
@@ -154,7 +176,7 @@ class NewsBot(
      * (`admin.commands.enabled`; null — and no routers — otherwise).
      */
     private val adminExecutor: ExecutorService? =
-        if (config.admin.commands.enabled) {
+        if (adminCommandsOn) {
             Executors.newSingleThreadExecutor { r -> Thread(r, "admin-commands").also { it.isDaemon = true } }
         } else null
 
@@ -188,7 +210,8 @@ class NewsBot(
         eventExtractor = eventExtractor,
         errorLog = errorLog,
         eventSemanticAnalyzer = eventSemanticAnalyzer,
-        longFormTextFetcher = LongForm.TextFetcher(articleFetcher::fetchFullText)
+        longFormTextFetcher = LongForm.TextFetcher(articleFetcher::fetchFullText),
+        muteRegistry = muteRegistry
     )
 
     private val digestCycle = DigestCycle(
@@ -205,7 +228,8 @@ class NewsBot(
         errorLog = errorLog,
         semanticDedupDetector = semanticDedupDetector,
         affinityAggregator = affinityAggregator,
-        retentionArchiver = config.archive?.takeIf { it.enabled }?.let { RetentionArchiver.create(it, db) }
+        retentionArchiver = config.archive?.takeIf { it.enabled }?.let { RetentionArchiver.create(it, db) },
+        pauseStore = pauseStore
     )
 
     /**
@@ -229,6 +253,15 @@ class NewsBot(
             time = w.timeParsed(),
             runnable = { weeklyDigest?.run() }
         )
+    }
+
+    init {
+        commandRouter?.let { router ->
+            AdminCommands(
+                config, db, muteRegistry, pauseStore!!, statusCommand, sender,
+                runner = { name, withFetch, listener -> enqueueManualRun(name, withFetch, listener) }
+            ).registerAll(router)
+        }
     }
 
     fun start() {
@@ -318,7 +351,7 @@ class NewsBot(
         // rows on interrupt, and the startup reclaim covers a worker killed mid-flight).
         Runtime.getRuntime().addShutdownHook(Thread({
             logger.info { "[Shutdown] Stopping schedulers..." }
-            val executors = listOf(scheduler, maintenanceScheduler) + categorySchedulers
+            val executors = listOf(scheduler, maintenanceScheduler) + categoryExecutors.all()
             executors.forEach { it.shutdown() }
             weeklyScheduler?.shutdown()
             updatesPoller?.stop()
@@ -344,6 +377,7 @@ class NewsBot(
         // (or failing) digest run — reaction collection is independent of the digest pipeline.
         updatesPoller?.start()
         publishCommandMenu()
+        if (!adminCommandsOn) warnIgnoredAdminMutes()
 
         digestCycle.reclaimOrphanedProcessing()
         digestCycle.resumePendingBatches()
@@ -376,6 +410,16 @@ class NewsBot(
                     "${chats.size - failed.size}/${chats.size} chat(s)" + if (failed.isEmpty()) "" else ", failed: $failed"
             }
         }
+    }
+
+    /** Mutes added from Telegram stay in the DB when the commands are switched off — say they are inert. */
+    private fun warnIgnoredAdminMutes() {
+        val n = try {
+            db.fetchAdminMutes().size
+        } catch (e: Exception) {
+            0
+        }
+        if (n > 0) logger.warn { "[Admin] $n mute(s) added from Telegram (admin_mutes) are ignored while admin.commands is off" }
     }
 
     fun runDigestCycle() = digestCycle.runCycle()
@@ -425,9 +469,38 @@ class NewsBot(
 
     /** One named single-thread scheduler running [block] now and then every [intervalMinutes]. */
     private fun schedule(threadName: String, intervalMinutes: Long, block: () -> Unit) {
-        val executor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, threadName) }
-        categorySchedulers += executor
-        executor.scheduleAtFixedRate({ guarded("[$threadName]") { block() } }, 0, intervalMinutes, TimeUnit.MINUTES)
+        categoryExecutors.schedule(threadName, intervalMinutes) { guarded("[$threadName]") { block() } }
+    }
+
+    /**
+     * `/run`: queues a forced run of [name] on its own scheduler thread — behind a run in
+     * progress, never beside it — ignoring a `/pause`. Coupled mode runs the whole pipeline;
+     * decoupled mode runs the digest, after an ingest on the ingest thread when [withFetch].
+     */
+    internal fun enqueueManualRun(name: String, withFetch: Boolean, listener: RunListener): RunQueued {
+        if (!config.scheduler.perCategory) return RunQueued.NOT_PER_CATEGORY
+        val digestThread = "digest-$name"
+        val ingestThread = "ingest-$name"
+        val decoupled = categoryExecutors.has(ingestThread)
+        val digestTask = Runnable {
+            guarded("[$digestThread] manual") {
+                listener.started()
+                try {
+                    if (decoupled) digestCycle.runDigest(name, force = true) else digestCycle.runCategory(name, force = true)
+                } finally {
+                    listener.finished()
+                }
+            }
+        }
+        val queued = if (decoupled && withFetch) {
+            categoryExecutors.enqueue(ingestThread) {
+                guarded("[$ingestThread] manual") { digestCycle.runIngest(name) }
+                if (!categoryExecutors.enqueue(digestThread, digestTask)) logger.warn { "[Admin] /run $name: digest thread gone" }
+            }
+        } else {
+            categoryExecutors.enqueue(digestThread, digestTask)
+        }
+        return if (queued) RunQueued.QUEUED else RunQueued.NOT_STARTED
     }
 
     /** Legacy mode (`scheduler.perCategory=false`): one global cycle at the shared interval. */

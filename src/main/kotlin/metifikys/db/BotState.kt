@@ -21,6 +21,9 @@ interface BotStateStore {
 
     /** Upserts a persisted state value. */
     fun setState(key: String, value: String)
+
+    /** Removes a state key; true when it existed. */
+    fun deleteState(key: String): Boolean
 }
 
 internal class BotStateRepository : BotStateStore {
@@ -45,5 +48,9 @@ internal class BotStateRepository : BotStateStore {
                 }
             }
         }
+    }
+
+    override fun deleteState(key: String): Boolean = transaction {
+        BotStateTable.deleteWhere { BotStateTable.key eq key } > 0
     }
 }
