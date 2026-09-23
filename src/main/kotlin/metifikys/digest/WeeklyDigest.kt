@@ -16,6 +16,7 @@ import metifikys.db.CoveredEventRow
 import metifikys.db.NewsDatabase
 import metifikys.db.RejectedEventRow
 import metifikys.format.TopicFormatter
+import metifikys.log.RunContext
 import metifikys.model.Article
 import metifikys.telegram.TelegramSender
 import java.io.File
@@ -205,10 +206,12 @@ class WeeklyDigest(
         }
         logger.info { "[Weekly] Starting weekly roundup for ${cats.size} category(ies): $cats" }
         for (name in cats) {
-            try {
-                runForCategory(name)
-            } catch (e: Exception) {
-                logger.error(e) { "[Weekly:$name] failed — other categories unaffected." }
+            RunContext.withRun(RunContext.newRunId(name, "weekly"), name, "weekly") {
+                try {
+                    runForCategory(name)
+                } catch (e: Exception) {
+                    logger.error(e) { "[Weekly:$name] failed — other categories unaffected." }
+                }
             }
         }
         logger.info { "[Weekly] Weekly roundup finished." }

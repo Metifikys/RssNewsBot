@@ -1,6 +1,7 @@
 package metifikys.fetch
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import metifikys.log.RunContext
 import metifikys.model.Article
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -162,7 +163,8 @@ class ArticleFetcher(
         if (articles.size <= 1) return articles.map(transform)
         val pool = Executors.newFixedThreadPool(min(articles.size, FETCH_PARALLELISM))
         try {
-            val futures = articles.map { a -> CompletableFuture.supplyAsync({ transform(a) }, pool) }
+            val logCtx = RunContext.capture() // the run's MDC (runId) follows into the pool
+            val futures = articles.map { a -> CompletableFuture.supplyAsync({ RunContext.within(logCtx) { transform(a) } }, pool) }
             val deadline = System.nanoTime() + FETCH_BUDGET_MILLIS * 1_000_000
             return futures.mapIndexed { i, f ->
                 try {

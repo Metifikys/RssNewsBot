@@ -8,6 +8,7 @@ import com.rometools.rome.io.XmlReader
 import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.CategoryConfig
 import metifikys.config.FeedConfig
+import metifikys.log.RunContext
 import metifikys.model.Article
 import metifikys.model.ArticleMeta
 import metifikys.model.HtmlText
@@ -225,12 +226,13 @@ class RssFetcher(
         deadlineNanos: Long,
         result: CompletableFuture<List<Article>>
     ) {
-        fetchPool.schedule({
-            if (result.isDone) return@schedule
+        // The run's MDC (runId) follows the feed into the pool and through its retries.
+        fetchPool.schedule(RunContext.wrap(Runnable {
+            if (result.isDone) return@Runnable
             if (System.nanoTime() >= deadlineNanos) {
                 logger.warn { "Fetch deadline reached before attempt $attempt for ${feedConfig.url} — deferred to next cycle" }
                 result.complete(emptyList())
-                return@schedule
+                return@Runnable
             }
             val host = hostKey(feedConfig.url)
             val gateDelayMs = hostThrottle.acquireDelayMs(host)
@@ -243,7 +245,7 @@ class RssFetcher(
                     logger.debug { "Host $host throttled — ${feedConfig.url} re-queued in ${gateDelayMs / 1000}s (attempt $attempt not consumed)" }
                     scheduleAttempt(feedConfig, category, attempt, withJitter(gateDelayMs), deadlineNanos, result)
                 }
-                return@schedule
+                return@Runnable
             }
             when (val outcome = fetchFeedOnce(feedConfig, category)) {
                 is FetchOutcome.Success -> {
@@ -285,7 +287,7 @@ class RssFetcher(
                     }
                 }
             }
-        }, delayMs, TimeUnit.MILLISECONDS)
+        }), delayMs, TimeUnit.MILLISECONDS)
     }
 
     /** Adds 0–20% random jitter so same-host feeds never re-fire in a synchronized burst. */

@@ -40,6 +40,7 @@ import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.HostThrottle
 import metifikys.fetch.RssFetcher
 import metifikys.fetch.TextScrubRules
+import metifikys.log.RunContext
 import metifikys.telegram.AdminAlerts
 import metifikys.telegram.AdminAuth
 import metifikys.telegram.AdminCallbackRouter
@@ -580,19 +581,23 @@ class NewsBot(
         val digestThread = "digest-$name"
         val ingestThread = "ingest-$name"
         val decoupled = categoryExecutors.has(ingestThread)
+        // The whole manual run (ingest + digest) logs under the runId the /run reply showed.
+        val runId = listener.runId ?: RunContext.newRunId(name, "cmd")
         val digestTask = Runnable {
-            guarded("[$digestThread] manual") {
-                listener.started()
-                try {
-                    if (decoupled) digestCycle.runDigest(name, force = true) else digestCycle.runCategory(name, force = true)
-                } finally {
-                    listener.finished()
+            RunContext.withRun(runId, name, "cmd") {
+                guarded("[$digestThread] manual") {
+                    listener.started()
+                    try {
+                        if (decoupled) digestCycle.runDigest(name, force = true) else digestCycle.runCategory(name, force = true)
+                    } finally {
+                        listener.finished()
+                    }
                 }
             }
         }
         val queued = if (decoupled && withFetch) {
             categoryExecutors.enqueue(ingestThread) {
-                guarded("[$ingestThread] manual") { digestCycle.runIngest(name) }
+                RunContext.withRun(runId, name, "cmd") { guarded("[$ingestThread] manual") { digestCycle.runIngest(name) } }
                 if (!categoryExecutors.enqueue(digestThread, digestTask)) logger.warn { "[Admin] /run $name: digest thread gone" }
             }
         } else {

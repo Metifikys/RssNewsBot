@@ -11,6 +11,7 @@ import metifikys.db.NewsDatabase
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.RssFetcher
+import metifikys.log.RunContext
 import metifikys.model.ShortlistItem
 import metifikys.telegram.StatusPoster
 import java.time.LocalDateTime
@@ -133,13 +134,16 @@ class DigestCycle(
             logger.warn { "[Cycle:$name] unknown category — nothing to run." }
             return
         }
-        val startedNanos = System.nanoTime()
-        logger.info { "[Cycle:$name] $what started at ${LocalDateTime.now()}" }
-        try {
-            block(catCfg)
-        } finally {
-            val seconds = (System.nanoTime() - startedNanos) / 1_000_000_000
-            logger.info { "[Cycle:$name] $what finished in ${seconds}s" }
+        // One runId per category run (MDC, JSON log); a `/run` from the admin chat arrives with its own.
+        RunContext.ensureRun(name, what.substringAfterLast(' ')) {
+            val startedNanos = System.nanoTime()
+            logger.info { "[Cycle:$name] $what started at ${LocalDateTime.now()} runId=${RunContext.currentRunId()}" }
+            try {
+                block(catCfg)
+            } finally {
+                val seconds = (System.nanoTime() - startedNanos) / 1_000_000_000
+                logger.info { "[Cycle:$name] $what finished in ${seconds}s" }
+            }
         }
     }
 
@@ -149,7 +153,7 @@ class DigestCycle(
      * admin chat. Runs on its own timer, independent of any category's progress. Each part is
      * exception-safe on its own so a failing status post cannot skip the next cleanup.
      */
-    fun runMaintenance() {
+    fun runMaintenance() = RunContext.withRun(RunContext.newRunId("all", "maint"), null, "maint") {
         val startedNanos = System.nanoTime()
         try {
             runCleanup()
@@ -202,7 +206,7 @@ class DigestCycle(
             // Common case in tests / small setups: one category → run inline, skip the pool.
             if (categories.size == 1) {
                 val (name, catCfg) = categories.first()
-                runCategoryPipeline(name, catCfg, fetchDeadlineNanos)
+                RunContext.ensureRun(name, "run") { runCategoryPipeline(name, catCfg, fetchDeadlineNanos) }
                 return
             }
 
@@ -215,7 +219,7 @@ class DigestCycle(
             }
             try {
                 val tasks = categories.map { (name, catCfg) ->
-                    Callable { runCategoryPipeline(name, catCfg, fetchDeadlineNanos) }
+                    Callable { RunContext.ensureRun(name, "run") { runCategoryPipeline(name, catCfg, fetchDeadlineNanos) } }
                 }
                 val deadlineMinutes = config.processing.categoryDeadlineMinutes
                 if (deadlineMinutes > 0) {
@@ -451,10 +455,14 @@ class DigestCycle(
                     "(categories: ${record.categoryNames.ifEmpty { "unknown" }}, created ${record.createdAt})"
             }
 
-            if (record.kind == "extract") {
-                resumeExtractBatch(record)
-            } else {
-                resumeRenderBatch(record)
+            // One runId per resumed batch; its callbacks carry it (RunContext.carry).
+            val firstCategory = record.categoryNames.split(',').map { it.trim() }.firstOrNull { it.isNotEmpty() }
+            RunContext.withRun("resume-${record.batchId}", firstCategory, "resume") {
+                if (record.kind == "extract") {
+                    resumeExtractBatch(record)
+                } else {
+                    resumeRenderBatch(record)
+                }
             }
         }
 
@@ -471,7 +479,7 @@ class DigestCycle(
             }
         }
 
-        llmClientsFactory.forBatch(null).resumeBatch(record.batchId)
+        RunContext.carry(llmClientsFactory.forBatch(null).resumeBatch(record.batchId))
             .thenAccept { summaries ->
                 for ((categoryName, summary) in summaries) {
                     val resolvedArticles = if (record.articleLinks.isNotBlank()) {
@@ -521,7 +529,7 @@ class DigestCycle(
             db = db
         )
 
-        primaryClient.resumeExtractBatch(record.batchId)
+        RunContext.carry(primaryClient.resumeExtractBatch(record.batchId))
             .thenAccept { rawJson ->
                 val result = extractor.resumeFromBatch(categoryName, catCfg, articles, rawJson)
                 val links = articles.map { it.link }

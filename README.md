@@ -146,6 +146,13 @@ via a `/status` admin snapshot.
 ### Observability
 - **Logback** with day-rolling, gzipped archive; structured `[Category:foo]` /
   `[SemanticDedup]` / `[Batch]` / `[Ranker]` prefixes.
+- **Run ids + JSON log** — every category run gets an MDC `runId`
+  (`<category>-<phase>-<yyyyMMdd-HHmmss>-<4 hex>`, phase run / ingest / digest / cmd / resume /
+  weekly / maint) that follows its work into the fetch pools and the batch callbacks
+  ([`RunContext`](src/main/kotlin/metifikys/log/RunContext.kt)); the text log shows it after the
+  thread name and `/run` replies with it. Alongside the text log, `logs/rssbot.json.log` holds the
+  same stream as one JSON object per line (logback's built-in `JsonEncoder`, MDC under `mdc`), kept
+  for two days only: `zcat -f logs/rssbot*.json.log* | jq -c 'select(.mdc.runId=="tech-digest-…")'`.
 - **Reaction tracking** (opt-in, `telegram.updatesPolling: true`) — a `getUpdates` long-poll loop
   records anonymous channel-post reaction counts (`message_reaction_count`) into `reaction_counts`,
   joined back to the rendering event via `digest_messages`, and surfaced in the `/status`

@@ -1,6 +1,7 @@
 package metifikys.enrich
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import metifikys.log.RunContext
 import metifikys.model.Article
 import metifikys.model.ShortlistItem
 import java.util.concurrent.Callable
@@ -42,7 +43,7 @@ class BadgeResolver(
             logger.debug { "$label[Badge] budget exhausted — skipping ${active.map { it.id }}" }
             return emptyList()
         }
-        val futures = active.map { p -> p to pool.submit(Callable { p.badge(item, articles) }) }
+        val futures = active.map { p -> p to pool.submit(RunContext.wrap(Callable { p.badge(item, articles) })) }
         val out = mutableListOf<String>()
         for ((provider, future) in futures) {
             val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()).coerceAtLeast(0)

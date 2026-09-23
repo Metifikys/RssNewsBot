@@ -2,6 +2,7 @@ package metifikys.digest
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.ai.BillingException
+import metifikys.log.RunContext
 import metifikys.ai.LlmClientsFactory
 import metifikys.ai.dedup.EventExtractor
 import metifikys.ai.dedup.ExtractOutcome
@@ -111,7 +112,7 @@ open class CategoryProcessor(
         }
         try {
             val tasks = byCategory.map { (name, articles) ->
-                Callable { runCategorySafely(name, articles) }
+                RunContext.wrap(Callable { runCategorySafely(name, articles) })
             }
             // Default (0): wait for every category — digest work is never cancelled; the inner
             // timeouts (HTTP, CLI force-kill, bounded retries) already bound each worker.
@@ -140,7 +141,7 @@ open class CategoryProcessor(
      * category (recorded, not propagated), leaving the other workers unaffected. Stricter than the
      * old inline loop, where one uncaught throw aborted the whole cycle.
      */
-    private fun runCategorySafely(name: String, articles: List<Article>) {
+    private fun runCategorySafely(name: String, articles: List<Article>) = RunContext.ensureRun(name, "run") {
         try {
             processCategory(name, articles)
         } catch (e: InterruptedException) {
@@ -280,7 +281,7 @@ open class CategoryProcessor(
                 is ExtractOutcome.PendingBatch -> {
                     // Batch submitted; Step 2 fires from the callback when the batch resolves.
                     val capturedExtractor = extractor
-                    outcome.future
+                    RunContext.carry(outcome.future)
                         .thenAccept { rawJson ->
                             val result = capturedExtractor.resumeFromBatch(name, categoryConfig, capped, rawJson)
                             when {
@@ -581,7 +582,7 @@ open class CategoryProcessor(
             return
         }
 
-        future
+        RunContext.carry(future)
             .thenAccept { summary -> deliverer.deliver(name, summary, articles, renderShortlist) }
             .exceptionally { ex ->
                 val cause = if (ex is ExecutionException) ex.cause ?: ex else ex

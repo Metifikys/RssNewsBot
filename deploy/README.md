@@ -92,3 +92,15 @@ Full LLM prompts/responses now log at `DEBUG` (INFO keeps model + lengths), and
 logback rotates `logs/rssbot.log` (50 MB × 30, 2 GB cap). systemd sends
 stdout/stderr to journald (bounded), so there is no unbounded `rssbot.out`
 anymore. Raise a package to DEBUG temporarily by editing `logback.xml`.
+
+`logs/rssbot.json.log` carries the same lines as JSON with the run's `runId` /
+`category` / `phase`, kept for two days (today + two daily archives, 1 GB cap).
+One category run, start to batch callback:
+
+```bash
+cd /opt/rssbot
+zcat -f logs/rssbot*.json.log* | jq -c 'select(.mdc.runId=="tech-digest-20260923-071856-3fa2") | [(.timestamp/1000|todate),.level,.message]'
+```
+
+The runId is in the text log after the thread name (`[digest-tech] [tech-digest-…]`), in the
+`[Cycle:tech] … started` line, and in the reply to `/run`.

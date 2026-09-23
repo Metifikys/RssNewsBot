@@ -12,6 +12,8 @@ enum class RunQueued { QUEUED, NOT_PER_CATEGORY, NOT_STARTED }
 
 /** Hooks of one manual run: [started] when it leaves the queue, [finished] when it is done. */
 interface RunListener {
+    /** Log run id the run uses (MDC `runId`), shown in the replies; null = one is generated. */
+    val runId: String? get() = null
     fun started()
     fun finished()
 }
@@ -105,7 +107,9 @@ class AdminCommands(
             ctx.reply("ℹ️ /run не підтримується в цьому режимі.")
             return
         }
+        val runId = "$cat-cmd-${ctx.updateId}"
         val listener = object : RunListener {
+            override val runId: String = runId
             @Volatile var startedAt: LocalDateTime = clock()
             @Volatile var pendingBefore = 0
 
@@ -121,13 +125,13 @@ class AdminCommands(
                     when {
                         posts > 0 -> "✅ $cat: $posts пост(ів)"
                         pendingAfter > pendingBefore -> "📦 $cat: пішло в Batch API, пости прийдуть з результатом"
-                        else -> "ℹ️ $cat: нічого не опубліковано (мало статей, hold-back або все відсіяно) — деталі в лозі [Cycle:$cat]"
+                        else -> "ℹ️ $cat: нічого не опубліковано (мало статей, hold-back або все відсіяно) — деталі в лозі, runId=$runId"
                     }
                 )
             }
         }
         when (r.enqueue(cat, withFetch, listener)) {
-            RunQueued.QUEUED -> ctx.reply("▶️ $cat: у черзі" + if (withFetch) " (спершу збір статей)" else "")
+            RunQueued.QUEUED -> ctx.reply("▶️ $cat: у черзі" + (if (withFetch) " (спершу збір статей)" else "") + ", runId=$runId")
             RunQueued.NOT_PER_CATEGORY -> ctx.reply("ℹ️ /run працює лише з scheduler.perCategory: true")
             RunQueued.NOT_STARTED -> ctx.reply("ℹ️ планувальник ще не запущений — спробуй за хвилину")
         }

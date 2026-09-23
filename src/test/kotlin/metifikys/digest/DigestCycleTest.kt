@@ -303,6 +303,32 @@ class DigestCycleTest {
     }
 
     @Test
+    fun `a category run logs under its own runId, a manual run keeps the one it was given`() {
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        val log = org.slf4j.LoggerFactory.getLogger("metifikys.digest.DigestCycle") as ch.qos.logback.classic.Logger
+        val appender = ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>().also { it.start() }
+        log.addAppender(appender)
+        try {
+            val config = cfg(mapOf("a" to cat("http://localhost:1/never-fetched")))
+            val c = cycle(config, fetcher, RecordingCategoryProcessor(config, db))
+            c.runDigest("a")
+            metifikys.log.RunContext.withRun("a-cmd-7", "a", "cmd") { c.runDigest("a", force = true) }
+
+            val started = appender.list.filter { it.formattedMessage.startsWith("[Cycle:a]") && "started" in it.formattedMessage }
+            assertEquals(2, started.size)
+            val scheduled = started[0].mdcPropertyMap["runId"]!!
+            assertTrue(Regex("""a-digest-\d{8}-\d{6}-[0-9a-f]{4}""").matches(scheduled), scheduled)
+            assertTrue("runId=$scheduled" in started[0].formattedMessage)
+            assertEquals("a", started[0].mdcPropertyMap["category"])
+            assertEquals("a-cmd-7", started[1].mdcPropertyMap["runId"])
+            assertEquals(null, org.slf4j.MDC.get("runId"), "MDC cleared after the run")
+        } finally {
+            log.detachAppender(appender)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
     fun `runDigest processes ready articles without fetching anything`() {
         val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
         try {

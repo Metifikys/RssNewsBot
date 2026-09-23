@@ -146,7 +146,8 @@ class AdminCommandsTest {
 
         send("/run gaming fetch")
         assertEquals(listOf("gaming" to true), runnerCalls)
-        assertEquals("▶️ gaming: у черзі (спершу збір статей)", replies.last())
+        assertEquals("▶️ gaming: у черзі (спершу збір статей), runId=gaming-cmd-1", replies.last())
+        assertEquals("gaming-cmd-1", lastListener!!.runId)
         lastListener!!.started()
         db.insertDigestMessages(listOf(DigestMessageRow(-1, 9, "gaming", "e", "https://a/9", LocalDateTime.now().plusSeconds(1))))
         lastListener!!.finished()
