@@ -68,6 +68,41 @@ These audits produced the 2026-08 fixes: HTML strip at ingestion (`HtmlText`), s
 scrubbing + meta-description fallback in `ArticleFetcher`, politics mute keys, and the
 `openrouter.models` failover ladder.
 
+Timestamps in the DB are the server's **local** time stored as text, so date windows compare
+with `datetime('now','localtime',…)`, never the bare (UTC) `datetime('now',…)`.
+
+### Report (`db-audit/report.mjs`)
+
+A weekly look at the whole picture without hand-written SQL: one self-contained HTML page
+(inline CSS + SVG charts, no scripts, no network), opened straight from disk.
+
+```bash
+node bench/db-audit/report.mjs [db=logs/news.db] [out=scratch/db-report.html] \
+     [--days 30] [--stale 26] [--now "YYYY-MM-DD HH:MM"] [--prices prices.json] [--archive archive/]
+```
+
+Sections: messages per category/day and digest runs; reactions (share of messages with one,
+per emoji, top 10); LLM calls per provider/model/use case with tokens, avg/p95 latency and
+cost; feed/domain health (sources derived from article links, regular sources quiet for more
+than 3 days in red); dedup layers (L2 semantic, Step 1 rejected / duplicate / covered); article
+status, queue and PROCESSING orphans older than `--stale` hours, batch jobs; CLI health, digest
+pauses, Telegram mutes, mute proposals and moderation presses; the audience-affinity snapshot.
+Sections whose table is missing (an older DB) or empty say so instead of failing.
+
+- **Time:** windows are whole local days ending now; run on the server or a machine in the
+  same time zone, or pin the end with `--now` (a snapshot copied hours ago otherwise shows
+  "last message 9 h ago").
+- **Cost:** `est_cost_usd` is 0 when the bot has no `pricing:` block, so the script prices
+  tokens itself from a small table (`PRICES` in the script; `:free` models cost 0, BATCH is
+  half price). `claudecli` / `codexcli` are marked *subscription*: their figure is the API
+  equivalent, not a bill. Override or add prices with
+  `--prices file.json` = `{"model-id or prefix*": {"input": 2, "output": 10}}` (USD per 1M).
+- **History:** retention trims `rejected_events` (~30 d), `covered_events` (14 d or
+  `feedback.lookbackDays`), `digest_messages` / `reaction_counts` (90 d) and `llm_calls`;
+  `--archive <dir>` merges the monthly archive files through `lib/archive.mjs`.
+- Not in the DB, so not counted: L1 link dedup, Step 0 mutes, cooldown drops, L3.5.
+- The page contains real titles and counts: keep it under the gitignored `scratch/`.
+
 ## Jev (TypeSafe) pre-filter benchmark (`jev-*.mjs`)
 
 Question: can a cheap "decision model" (`typesafe/jev-1.13` via OpenRouter's
