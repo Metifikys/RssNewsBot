@@ -1,7 +1,10 @@
 package metifikys.db
 
-import org.jetbrains.exposed.sql.Table
+import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.javatime.datetime
+import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.LocalDateTime
 
 /**
@@ -33,3 +36,65 @@ data class EntityIntroRow(
     val lang: String?,
     val introducedAt: LocalDateTime
 )
+
+interface EntityIntroStore {
+    fun getEntityIntro(category: String, entityKey: String): EntityIntroRow?
+
+    /** Upserts the record for (category, entity key). */
+    fun putEntityIntro(row: EntityIntroRow)
+
+    fun deleteOldEntityIntros(days: Long = 730)
+}
+
+internal class EntityIntroRepository : EntityIntroStore {
+
+    override fun getEntityIntro(category: String, entityKey: String): EntityIntroRow? = transaction {
+        EntityIntrosTable
+            .selectAll()
+            .where { (EntityIntrosTable.category eq category) and (EntityIntrosTable.entityKey eq entityKey) }
+            .firstOrNull()
+            ?.let {
+                EntityIntroRow(
+                    category = it[EntityIntrosTable.category],
+                    entityKey = it[EntityIntrosTable.entityKey],
+                    title = it[EntityIntrosTable.title],
+                    extract = it[EntityIntrosTable.extract],
+                    url = it[EntityIntrosTable.url],
+                    lang = it[EntityIntrosTable.lang],
+                    introducedAt = it[EntityIntrosTable.introducedAt]
+                )
+            }
+    }
+
+    override fun putEntityIntro(row: EntityIntroRow) {
+        transaction {
+            val updated = EntityIntrosTable.update(
+                { (EntityIntrosTable.category eq row.category) and (EntityIntrosTable.entityKey eq row.entityKey) }
+            ) {
+                it[title] = row.title
+                it[extract] = row.extract
+                it[url] = row.url
+                it[lang] = row.lang
+                it[introducedAt] = row.introducedAt
+            }
+            if (updated == 0) {
+                EntityIntrosTable.insertIgnore {
+                    it[category] = row.category
+                    it[entityKey] = row.entityKey
+                    it[title] = row.title
+                    it[extract] = row.extract
+                    it[url] = row.url
+                    it[lang] = row.lang
+                    it[introducedAt] = row.introducedAt
+                }
+            }
+        }
+    }
+
+    override fun deleteOldEntityIntros(days: Long) {
+        val cutoff = LocalDateTime.now().minusDays(days)
+        transaction {
+            EntityIntrosTable.deleteWhere { introducedAt less cutoff }
+        }
+    }
+}
