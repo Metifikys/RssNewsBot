@@ -146,9 +146,6 @@ class TelegramSender(
         /** Telegram's hard limit for sendPhoto caption length. */
         const val MAX_CAPTION_LEN = 1024
 
-        /** A Markdown `[label](url)` link — used to avoid truncating a caption mid-link (BUG-010). */
-        val MARKDOWN_LINK = Regex("""\[[^\[\]]*]\([^()]*\)""")
-
         /** Fallback wait when Telegram returns 429 without a `parameters.retry_after`. */
         const val DEFAULT_RETRY_AFTER_SEC = 3L
 
@@ -231,7 +228,8 @@ class TelegramSender(
         var end = MAX_CAPTION_LEN - 1  // leave room for the ellipsis
         // BUG-010: if the cut lands inside a [label](url) link, back up to the link's start so we
         // never emit half a link (toHtml can't render it and it reads as gibberish in plain text).
-        for (m in MARKDOWN_LINK.findAll(text)) {
+        // Uses toHtml's own matcher, so a `[P]` label or a `Foo_(bar)` URL counts as a link too.
+        for (m in TopicFormatter.MARKDOWN_LINK.findAll(text)) {
             if (m.range.first < end && end <= m.range.last) { end = m.range.first; break }
         }
         // BUG-009: never split an astral-plane emoji's UTF-16 surrogate pair.

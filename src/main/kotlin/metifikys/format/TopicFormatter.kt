@@ -44,11 +44,20 @@ object TopicFormatter {
     private val FALLBACK_LINK_REGEX =
         Regex("""\s*\[([^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*)]\(($URL_BODY)\)\s*$""")
 
+    // A [label](url) link: label tolerates one level of nested brackets (e.g. a `[P]` flair), the
+    // URL one level of balanced parens. Groups: 1 = label, 2 = url.
+    private const val LINK = """\[([^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*)]\(($URL_BODY)\)"""
+
+    /**
+     * The canonical Markdown link matcher — exactly the links [toHtml] renders as `<a>`. Code that
+     * must not cut or mis-scan a link (caption truncation, bare-URL checks) should use this one.
+     */
+    val MARKDOWN_LINK = Regex(LINK)
+
     // Inline Markdown we convert to Telegram HTML, in one pass: **bold**, `code`, and
-    // [label](url) links anywhere in the text (not just a trailing one). Label tolerates one level
-    // of nested brackets (e.g. a `[P]` flair) and the URL one level of balanced parens.
+    // [label](url) links anywhere in the text (not just a trailing one).
     private val INLINE_HTML = Regex(
-        """\*\*(.+?)\*\*|`([^`]+)`|\[([^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*)]\(($URL_BODY)\)""",
+        """\*\*(.+?)\*\*|`([^`]+)`|$LINK""",
         RegexOption.DOT_MATCHES_ALL
     )
 

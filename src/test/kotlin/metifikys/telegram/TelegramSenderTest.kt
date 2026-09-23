@@ -200,6 +200,22 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `truncateForCaption does not cut inside a link whose url has parentheses`() {
+        val head = "x".repeat(1000)
+        val link = "[Doom](https://en.wikipedia.org/wiki/Doom_(2016_video_game)_and_a_long_tail)"
+        val out = sender.truncateForCaption("$head $link tail")
+        assertEquals("$head…", out)
+    }
+
+    @Test
+    fun `truncateForCaption does not cut inside a link whose label has brackets`() {
+        val head = "x".repeat(1000)
+        val link = "[I built a thing [P] with a long title](https://example.com/some/long/path)"
+        val out = sender.truncateForCaption("$head $link tail")
+        assertEquals("$head…", out)
+    }
+
+    @Test
     fun `truncateForCaption keeps a 1200-char topic within the caption limit`() {
         val text = "т".repeat(1150) + " [дж](https://ex.com/a)"
         val out = sender.truncateForCaption(text)
