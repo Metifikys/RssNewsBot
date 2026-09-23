@@ -736,13 +736,20 @@ class NewsDatabase(dbPath: String) {
         }
     }
 
+    /**
+     * Returns the articles for [links] in the order of [links] (first occurrence wins; unknown
+     * links are skipped). Order matters: a resumed batch rebuilds the prompt's article list from
+     * its saved links, and Step 1 `articleIndices` are positions in that list — SQLite's own
+     * `IN` order (link-sorted via the unique index) would silently re-map them.
+     */
     fun fetchArticlesByLinks(links: List<String>): List<Article> {
         if (links.isEmpty()) return emptyList()
-        return transaction {
+        val byLink = transaction {
             ArticlesTable.selectAll()
                 .where { ArticlesTable.link inList links }
-                .map { it.toArticle() }
+                .associateBy({ it[ArticlesTable.link] }, { it.toArticle() })
         }
+        return links.distinct().mapNotNull { byLink[it] }
     }
 
     /**

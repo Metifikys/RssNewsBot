@@ -296,6 +296,19 @@ class NewsDatabaseTest {
     }
 
     @Test
+    fun `fetchArticlesByLinks returns rows in the order of the requested links`() {
+        // Step 1 articleIndices are positional into the prompt's article list, and a resumed
+        // extract batch rebuilds that list from its saved links — SQLite order must not leak through.
+        db.insertArticles(listOf(
+            article("https://example.com/b"),
+            article("https://example.com/c"),
+            article("https://example.com/a")
+        ))
+        val requested = listOf("https://example.com/c", "https://example.com/a", "https://example.com/b")
+        assertEquals(requested, db.fetchArticlesByLinks(requested).map { it.link })
+    }
+
+    @Test
     fun `fetchArticlesByLinks returns only the requested articles`() {
         db.insertArticles(listOf(
             article("https://example.com/1"),
