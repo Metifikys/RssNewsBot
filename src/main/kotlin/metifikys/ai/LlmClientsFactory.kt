@@ -18,7 +18,9 @@ import java.util.concurrent.ConcurrentHashMap
 class LlmClientsFactory(
     private val config: AppConfig,
     private val db: NewsDatabase,
-    private val recorder: LlmCallRecorder? = null
+    private val recorder: LlmCallRecorder? = null,
+    /** Outcome sink for the `claude` / `codex` clients (`health.enabled`); null = not tracked. */
+    private val cliHealth: CliOutcomeSink? = null
 ) {
     private val cache = ConcurrentHashMap<Triple<String, String, Boolean>, LlmClient>()
 
@@ -185,13 +187,13 @@ class LlmClientsFactory(
                     val cli = config.claudeCli
                         ?: error("Claude CLI endpoint constructed without claudeCli: config block")
                     require(!batchCapable) { "Claude CLI provider has no Batch API — it cannot be batch-capable" }
-                    ClaudeCli(ep, cli.command, cli.timeoutSeconds)
+                    ClaudeCli(ep, cli.command, cli.timeoutSeconds, health = cliHealth)
                 }
                 LlmEndpoint.Provider.CODEX_CLI -> {
                     val cli = config.codexCli
                         ?: error("Codex CLI endpoint constructed without codexCli: config block")
                     require(!batchCapable) { "Codex CLI provider has no Batch API — it cannot be batch-capable" }
-                    CodexCli(ep, cli.command, cli.timeoutSeconds)
+                    CodexCli(ep, cli.command, cli.timeoutSeconds, health = cliHealth)
                 }
             }
         }

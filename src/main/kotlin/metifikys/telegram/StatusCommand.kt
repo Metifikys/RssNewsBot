@@ -31,7 +31,9 @@ class StatusCommand(
      */
     private val telegramRateLimits: (() -> Int)? = null,
     /** Digest pauses (`/pause`); null omits the pause marker. */
-    private val pauseStore: metifikys.digest.PauseStore? = null
+    private val pauseStore: metifikys.digest.PauseStore? = null,
+    /** `CLI: claude ✅ 2h · codex ⛔ auth з 03:10` (`health.enabled`); null omits the line. */
+    private val cliHealthLine: (() -> String?)? = null
 ) {
 
     private val timeFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
@@ -78,6 +80,13 @@ class StatusCommand(
 
         telegramRateLimits?.let { count ->
             sb.append('\n').append("📨 Telegram 429 (24h): ${count()}\n")
+        }
+        cliHealthLine?.let { line ->
+            try {
+                line()?.let { sb.append('\n').append(escapeMarkdown(it)).append('\n') }
+            } catch (e: Exception) {
+                logger.warn(e) { "[Status] CLI health line failed" }
+            }
         }
         appendLatencySection(sb)
         appendReactionsSection(sb)

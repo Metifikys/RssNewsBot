@@ -15,10 +15,10 @@ class AdminAlerts(
 ) {
     val enabled: Boolean get() = !chatId.isNullOrBlank()
 
-    fun send(text: String): Boolean {
+    fun send(text: String, silent: Boolean = false): Boolean {
         val chat = chatId?.trim()?.takeIf { it.isNotEmpty() } ?: return false
         return try {
-            (sender.sendMessageWithKeyboard(chat, text) != null).also { ok ->
+            (sender.sendMessageWithKeyboard(chat, text, silent = silent) != null).also { ok ->
                 if (!ok) logger.warn { "[Admin] alert to $chat not delivered: ${text.lineSequence().first()}" }
             }
         } catch (e: Exception) {

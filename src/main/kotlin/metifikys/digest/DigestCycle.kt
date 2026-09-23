@@ -79,7 +79,9 @@ class DigestCycle(
      */
     private val pauseStore: PauseStore? = null,
     /** Weekly mute proposals to the admin chat (`admin.muteSuggestions`); null = off. */
-    private val muteSuggester: metifikys.feedback.MuteSuggester? = null
+    private val muteSuggester: metifikys.feedback.MuteSuggester? = null,
+    /** `claude` / `codex` health: setup-token expiry and the idle probe (`health.enabled`); null = off. */
+    private val cliHealthMonitor: metifikys.ai.CliHealthMonitor? = null
 ) {
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -157,11 +159,21 @@ class DigestCycle(
         }
         affinityAggregator?.recomputeIfStale()
         muteSuggester?.runIfDue()
+        runCliHealth()
         statusPoster?.post()
         val seconds = (System.nanoTime() - startedNanos) / 1_000_000_000
         logger.info {
             "[Maintenance] cleanup + affinity + status post done in ${seconds}s" +
                 (if (statusPoster == null) " (no status chat configured)" else "")
+        }
+    }
+
+    /** CLI probe + token expiry; a failure there must never break maintenance. */
+    private fun runCliHealth() {
+        try {
+            cliHealthMonitor?.maintenanceTick()
+        } catch (e: Exception) {
+            logger.warn(e) { "[CliHealth] maintenance tick failed" }
         }
     }
 
@@ -179,6 +191,7 @@ class DigestCycle(
             affinityAggregator?.recomputeIfStale()
 
             muteSuggester?.runIfDue()
+            runCliHealth()
 
             // One shared wall-clock deadline for the whole cycle's fetch stage — every
             // category's feeds go through the fetcher's bounded pool, so the budget is

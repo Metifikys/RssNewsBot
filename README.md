@@ -180,6 +180,16 @@ via a `/status` admin snapshot.
   thread: 🗑 delete (confirmed; every chunk, within Telegram's 48 h; `covered_events` kept so the
   story is not re-posted), 🔇 mute the franchise (same DB mute as `/mute`), 👍/👎 an explicit
   signal in `admin_feedback` that affinity counts as `feedback.explicitWeight` reactions at once.
+- **CLI login health** (opt-in, `health.enabled`) —
+  [`CliHealthMonitor`](src/main/kotlin/metifikys/ai/CliHealthMonitor.kt) gets the outcome of every
+  `claude -p` / `codex exec` run, classified by the shared
+  [`CliErrorClassifier`](src/main/kotlin/metifikys/ai/CliErrorClassifier.kt) (auth / limit / model /
+  timeout / error). Entering auth, limit or model — and recovering — sends one message to the
+  admin chat, even when a `fallback` provider served the call (an expired login used to be visible
+  only in the logs). State lives in `bot_state`, so a restart neither repeats nor forgets an alert.
+  The maintenance tick probes a CLI with no successful run in `cliProbe.intervalHours` (codex: the
+  cheap `codex login status` first when available) and warns daily before a `claude setup-token`
+  expires (`claudeTokenExpires`). `/status` shows `CLI: claude ✅ 2h · codex ⛔ auth з 03:10`.
 - **Per-LLM-call cost ledger** — `llm_calls` table records `(provider, model, category,
   useCase, promptTokens, completionTokens, estCostUsd, ts)` for every call, including the
   Batch API auto-halving.
@@ -797,6 +807,7 @@ first cycle.
 | `feedback`        | no       | Reaction-feedback aggregation (off by default)              |
 | `weekly`          | no       | Weekly top-story roundup (off by default)                   |
 | `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`) |
+| `health`          | no       | `claude` / `codex` login + usage-limit alerts in the admin chat, idle probe, `setup-token` expiry (off by default) |
 | `pricing`         | no       | USD/1M tokens per (provider, model)                          |
 | `categories`      | yes      | Map of category name → `CategoryConfig`                     |
 

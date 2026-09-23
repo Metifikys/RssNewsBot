@@ -264,6 +264,43 @@ data class WeeklyPromptsInline(
     val user: String? = null
 )
 
+/**
+ * Health of the subscription-logged-in `claude` / `codex` CLIs on the server. Their OAuth login
+ * expires quietly, and with a `fallback` configured the other provider serves the calls, so
+ * until now an expired login showed up only in the logs. With [enabled], every real CLI call
+ * reports its outcome (ok / auth / limit / model / timeout / error); entering auth, limit or
+ * model — and recovering from it — sends one message to `admin.statusChatId`, and `/status`
+ * gets a `CLI:` line. Needs `admin.statusChatId`.
+ */
+data class HealthConfig(
+    val enabled: Boolean = false,
+    /** Active check from the maintenance tick for a CLI with no successful real call lately. */
+    val cliProbe: CliProbeConfig = CliProbeConfig(),
+    /**
+     * Expiry date (`YYYY-MM-DD`) of a long-lived `claude setup-token` token, if that is how the
+     * server logs in; warns once a day from [warnDaysBefore] days before. The short-lived
+     * access token in `~/.claude/.credentials.json` refreshes itself and is not a signal.
+     */
+    val claudeTokenExpires: String? = null,
+    val warnDaysBefore: Long = 14
+)
+
+/**
+ * The probe: `ping` through `claude -p` / `codex exec` (for codex, `codex login status` first
+ * when the installed version has it — a logged-out answer then needs no model call). Skipped
+ * while a real call of that CLI succeeded within [intervalHours], so a busy bot never probes.
+ * Uses subscription usage: at most one call per CLI per interval, only when idle.
+ */
+data class CliProbeConfig(
+    val enabled: Boolean = true,
+    val intervalHours: Long = 6,
+    val timeoutSeconds: Long = 60,
+    /** Model for the claude probe; blank = `claudeCli.model`. */
+    val claudeModel: String = "",
+    /** Model for the codex probe; blank = `codexCli.model`. */
+    val codexModel: String = ""
+)
+
 data class AppConfig(
     val telegram: TelegramConfig,
     val openai: OpenAIConfig,
@@ -285,6 +322,8 @@ data class AppConfig(
     val preferences: PreferencesConfig = PreferencesConfig(),
     /** Global knobs for the live-data footer badges; per-category on/off is `post.badges`. */
     val badges: BadgeSettings = BadgeSettings(),
+    /** `claude` / `codex` login and usage-limit alerts; see [HealthConfig]. */
+    val health: HealthConfig = HealthConfig(),
     /**
      * Per-(provider, model) prices used by `/status` cost stats. Costs are in USD per
      * 1,000,000 tokens (matches how OpenAI / Anthropic publish their pricing pages).
@@ -1323,6 +1362,7 @@ object ConfigLoader {
         }
 
         validateAdmin(config)
+        validateHealth(config)
 
         val badges = config.badges.copy(
             githubToken = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() } ?: config.badges.githubToken
@@ -1582,6 +1622,28 @@ object ConfigLoader {
             anthropic = anthropic,
             badges = badges
         )
+    }
+
+    /** `health:` block — alerts go to the admin chat, so it must exist; dates and intervals sane. */
+    private fun validateHealth(config: AppConfig) {
+        val h = config.health
+        h.claudeTokenExpires?.let { d ->
+            try {
+                java.time.LocalDate.parse(d.trim())
+            } catch (e: DateTimeParseException) {
+                throw IllegalArgumentException("health.claudeTokenExpires must be YYYY-MM-DD (got '$d')")
+            }
+        }
+        require(h.warnDaysBefore >= 0) { "health.warnDaysBefore must be >= 0 (got ${h.warnDaysBefore})" }
+        require(h.cliProbe.intervalHours >= 1) { "health.cliProbe.intervalHours must be >= 1 (got ${h.cliProbe.intervalHours})" }
+        require(h.cliProbe.timeoutSeconds in 5..600) {
+            "health.cliProbe.timeoutSeconds must be within 5..600 (got ${h.cliProbe.timeoutSeconds})"
+        }
+        if (h.enabled) {
+            require(!config.admin.statusChatId.isNullOrBlank()) {
+                "health.enabled needs admin.statusChatId — the CLI alerts are sent there"
+            }
+        }
     }
 
     /** `admin:` block — the admin-command features need the poller and at least one admin. */

@@ -1,6 +1,7 @@
 package metifikys
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import metifikys.ai.CliHealthMonitor
 import metifikys.ai.Embedder
 import metifikys.ai.LlmCallRecorder
 import metifikys.ai.LlmClientsFactory
@@ -94,7 +95,16 @@ class NewsBot(
     sender: TelegramSender = TelegramSender(config.telegram.botToken),
     private val promptLoader: PromptLoader = PromptLoader(),
     llmCallRecorder: LlmCallRecorder = LlmCallRecorder(db, metifikys.ai.LlmPricing(config.pricing)),
-    llmClientsFactory: LlmClientsFactory = LlmClientsFactory(config, db, llmCallRecorder),
+    /**
+     * `claude` / `codex` login and usage-limit tracking with admin-chat alerts; built only with
+     * `health.enabled` (null otherwise, and the CLI clients report nowhere).
+     */
+    private val cliHealthMonitor: CliHealthMonitor? =
+        if (config.health.enabled) {
+            val alerts = AdminAlerts(config.admin.statusChatId, sender)
+            CliHealthMonitor(config, db, alert = { text, silent -> alerts.send(text, silent) })
+        } else null,
+    llmClientsFactory: LlmClientsFactory = LlmClientsFactory(config, db, llmCallRecorder, cliHealthMonitor),
     articleSummarizer: ArticleSummarizer = ArticleSummarizer(config, config.categories, llmClientsFactory),
     /**
      * Test escape hatch: when non-null, every category uses this extractor instead of
@@ -170,7 +180,8 @@ class NewsBot(
      */
     private val muteRegistry = MuteRegistry(config, if (adminCommandsOn) db else null)
 
-    private val statusCommand = StatusCommand(config, db, errorLog, sender::rateLimitsLast24h, pauseStore)
+    private val statusCommand =
+        StatusCommand(config, db, errorLog, sender::rateLimitsLast24h, pauseStore, cliHealthMonitor?.let { m -> m::statusLine })
 
     private val statusPoster: StatusPoster? = config.admin.statusChatId?.let { chatId ->
         StatusPoster(chatId, sender, statusCommand, errorLog)
@@ -257,7 +268,8 @@ class NewsBot(
         affinityAggregator = affinityAggregator,
         retentionArchiver = config.archive?.takeIf { it.enabled }?.let { RetentionArchiver.create(it, db) },
         pauseStore = pauseStore,
-        muteSuggester = muteSuggester
+        muteSuggester = muteSuggester,
+        cliHealthMonitor = cliHealthMonitor
     )
 
     /**
@@ -378,6 +390,14 @@ class NewsBot(
         }
         if (overrides.isNotEmpty()) {
             logger.info { "[LLM] per-category overrides: $overrides" }
+        }
+        cliHealthMonitor?.let { m ->
+            val probe = config.health.cliProbe
+            logger.info {
+                "[CliHealth] tracking ${m.providers.ifEmpty { listOf("no CLI configured") }}; " +
+                    (if (probe.enabled) "idle probe every ${probe.intervalHours}h" else "probe off") +
+                    (config.health.claudeTokenExpires?.let { "; setup-token expires $it" } ?: "")
+            }
         }
 
         // Graceful shutdown: stop every scheduler and wait up to 30s in total for in-flight

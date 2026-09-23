@@ -43,7 +43,9 @@ class CodexCli(
     private val maxRetries: Int = 2,
     private val retryBackoffMillis: Long = 60_000L,
     private val batchUnsupportedReason: String =
-        "Codex CLI provider has no Batch API — it is sync-only"
+        "Codex CLI provider has no Batch API — it is sync-only",
+    /** Where every run's outcome is reported (login / limit alerts, `health.enabled`); null = nowhere. */
+    private val health: CliOutcomeSink? = null
 ) : LlmClient {
 
     private val model: String get() = endpoint.model
@@ -254,6 +256,7 @@ class CodexCli(
             process.destroyForcibly()
             stdoutDrain.join(1000)
             stderrDrain.join(1000)
+            health?.report("codex", CliState.TIMEOUT, "timed out after ${timeoutSeconds}s")
             throw CliTimeoutException(
                 "codex CLI timed out after ${timeoutSeconds}s (model '${model.ifBlank { "<cli-default>" }}', " +
                     "prompt ${prompt.length} chars); output so far: ${outputTail(stdoutBuf, stderrBuf)}"
@@ -276,18 +279,20 @@ class CodexCli(
             val stderr = stderrBuf.toString().trim()
             val combined = listOf(stdout, stderr).filter { it.isNotBlank() }.joinToString("\n").trim()
             val detail = combined.ifBlank { "<no output>" }.takeLast(2000)
-            when {
-                isBillingError(combined) ->
+            val failure = CliErrorClassifier.classifyCodex(combined)
+            health?.report("codex", CliHealthMonitor.stateOf(failure), detail)
+            when (failure) {
+                CliFailure.LIMIT ->
                     throw BillingException("Codex CLI usage/credit limit reached (exit $exit): $detail")
-                isAuthError(combined) ->
+                CliFailure.AUTH ->
                     throw NonRetryableCliException(
                         "Codex CLI auth/login problem (exit $exit) — re-authenticate `codex` on the host: $detail"
                     )
-                isModelError(combined) ->
+                CliFailure.MODEL ->
                     throw NonRetryableCliException(
                         "Codex CLI model problem (exit $exit) for model '${model.ifBlank { "<cli-default>" }}': $detail"
                     )
-                else ->
+                CliFailure.OTHER ->
                     throw IOException("codex CLI exited with code $exit: $detail")
             }
         }
@@ -298,6 +303,7 @@ class CodexCli(
         } catch (_: IOException) {
             ""
         }
+        health?.report("codex", CliState.OK, null)
         return lastMessage.ifBlank { stdoutBuf.toString().trim() }
     }
 
@@ -320,29 +326,5 @@ class CodexCli(
             .joinToString("\n")
             .trim()
         return combined.ifBlank { "<no output>" }.takeLast(limit)
-    }
-
-    private fun isBillingError(text: String): Boolean {
-        val s = text.lowercase()
-        return "usage limit" in s || "quota" in s || "credit" in s ||
-            "insufficient_quota" in s || "out of credits" in s ||
-            ("rate limit" in s && "exceeded" in s) ||
-            ("hit your" in s && "limit" in s) || "weekly limit" in s || "session limit" in s
-    }
-
-    /** Auth/login failures that recur until the operator re-authenticates `codex` on the host. */
-    private fun isAuthError(text: String): Boolean {
-        val s = text.lowercase()
-        return "not logged in" in s || "unauthorized" in s || "invalid api key" in s ||
-            "token has expired" in s || "login expired" in s ||
-            ("login" in s && ("run" in s || "please" in s || "expired" in s)) ||
-            ("authentication" in s && ("fail" in s || "error" in s))
-    }
-
-    /** The configured model is unknown or inaccessible — retrying with the same model can't help. */
-    private fun isModelError(text: String): Boolean {
-        val s = text.lowercase()
-        return "model_not_found" in s || "unknown model" in s ||
-            ("model" in s && ("not exist" in s || "not found" in s || "no access" in s || "may not have access" in s))
     }
 }

@@ -89,6 +89,18 @@ anthropic:
 #     summarize: { provider: codexcli, model: gpt-5-codex }
 # …or per feed:  - { url: https://example.com/feed, summarize: codexcli }
 
+# Optional: `claude` / `codex` login health (off by default). Every real CLI run reports its
+# outcome; an expired login, a subscription limit or an unavailable model — and the recovery —
+# each send ONE message to admin.statusChatId (required), even when a `fallback` provider saved
+# the call. `/status` gets a `CLI: claude ✅ 2h · codex ⛔ auth з 03:10` line. The idle probe
+# pings a CLI with no successful run in `intervalHours` (codex: `codex login status` first when
+# the installed version has it). Run the bot as the same user / HOME as the CLIs were logged in.
+# health:
+#   enabled: true
+#   cliProbe: { enabled: true, intervalHours: 6, timeoutSeconds: 60, claudeModel: "", codexModel: "" }
+#   claudeTokenExpires: "2027-08-01"  # only for a `claude setup-token` login; warns daily from…
+#   warnDaysBefore: 14                # …this many days before
+
 database:
   path: "news.db"
 
