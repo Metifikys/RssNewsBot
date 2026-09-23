@@ -143,6 +143,21 @@ object StoryLines {
     private val MILLION = java.math.BigDecimal(1_000_000)
     private val BILLION = java.math.BigDecimal(1_000_000_000)
 
+    /** `🌀 анонсовано вчетверте, дати досі немає (вперше: 03.2025)`; null without a result. */
+    fun vaporware(r: Vaporware.Result?): String? {
+        if (r == null) return null
+        return "🌀 анонсовано ${ordinalTimes(r.number)}, дати досі немає (вперше: ${r.firstAt.format(MONTH_YEAR)})"
+    }
+
+    /** `вдруге` … `удесяте`, then `уже 11-й раз`. */
+    fun ordinalTimes(n: Int): String = ORDINAL_TIMES[n] ?: "уже $n-й раз"
+
+    private val ORDINAL_TIMES = mapOf(
+        1 to "вперше", 2 to "вдруге", 3 to "втретє", 4 to "вчетверте", 5 to "вп'яте", 6 to "ушосте",
+        7 to "усьоме", 8 to "увосьме", 9 to "удев'яте", 10 to "удесяте"
+    )
+    private val MONTH_YEAR = java.time.format.DateTimeFormatter.ofPattern("MM.yyyy")
+
     /** Ukrainian plural: 1 / 21 → [one], 2–4 / 22–24 → [few], else [many]. */
     fun plural(n: Int, one: String, few: String, many: String): String {
         val mod100 = n % 100

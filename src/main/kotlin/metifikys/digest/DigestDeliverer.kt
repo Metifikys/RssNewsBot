@@ -6,6 +6,7 @@ import metifikys.config.ConflictLineConfig
 import metifikys.config.PostConfig
 import metifikys.config.StoryLinesConfig
 import metifikys.config.ThreadsConfig
+import metifikys.config.VaporwareLineConfig
 import metifikys.db.CoveredEventRow
 import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
@@ -22,6 +23,7 @@ import metifikys.story.Genealogy
 import metifikys.story.Hype
 import metifikys.story.StoryClusterLoader
 import metifikys.story.StoryLines
+import metifikys.story.Vaporware
 import metifikys.telegram.ModeratedPost
 import metifikys.telegram.ModerationNotifier
 import metifikys.telegram.SentRef
@@ -337,7 +339,8 @@ class DigestDeliverer(
      * `post.storyLines`: eventKey → the story footer lines, from one `event_articles` lookup per
      * digest (an update's `relatedPreviousEventKey` chain included): the 📢 / 🥇 line, then the ⚖️
      * sources-disagree line (`conflicts.mode: post`; in `log` mode it is only logged as
-     * `[StoryConflict]`). Needs `storyIntel.enabled`; any failure yields no lines, never a failed digest.
+     * `[StoryConflict]`), then the 🌀 vaporware line (one `event_history` lookup per digest). Needs
+     * `storyIntel.enabled`; any failure yields no lines, never a failed digest.
      */
     private fun resolveStoryLines(
         category: String,
@@ -349,10 +352,12 @@ class DigestDeliverer(
         val hype = cfg.hype?.takeIf { it.enabled }
         val first = cfg.first?.takeIf { it.enabled }
         val conflicts = cfg.conflicts?.takeIf { it.enabled }
-        if (hype == null && first == null && conflicts == null) return emptyMap()
-        val stories = shortlist.associate { it.eventKey to listOfNotNull(it.eventKey, it.relatedPreviousEventKey) }
-        val loaded = storyClusters.load(category, stories, batch, withVectors = hype != null && hype.reprintSimilarity < 1.0)
+        val vaporware = cfg.vaporware?.takeIf { it.enabled }
         val out = LinkedHashMap<String, List<String>>()
+        val loaded = if (hype != null || first != null || conflicts != null) {
+            val stories = shortlist.associate { it.eventKey to listOfNotNull(it.eventKey, it.relatedPreviousEventKey) }
+            storyClusters.load(category, stories, batch, withVectors = hype != null && hype.reprintSimilarity < 1.0)
+        } else emptyMap()
         for ((key, l) in loaded) {
             val lines = try {
                 listOfNotNull(
@@ -370,7 +375,36 @@ class DigestDeliverer(
             out[key] = lines
             logger.info { "[Category:$category][Story] $key: ${lines.joinToString(" / ")} (${l.cluster.members.size} article(s))" }
         }
+        if (vaporware != null) {
+            for ((key, line) in vaporwareLines(category, shortlist, vaporware)) out[key] = out[key].orEmpty() + line
+        }
         return out
+    }
+
+    /**
+     * `post.storyLines.vaporware`: eventKey → `🌀 анонсовано вчетверте…` for the undated announcements
+     * whose entity keeps being announced ([Vaporware]); one `event_history` lookup, fail-open.
+     */
+    private fun vaporwareLines(category: String, shortlist: List<ShortlistItem>, cfg: VaporwareLineConfig): Map<String, String> {
+        val types = cfg.announceTypes.map { it.lowercase() }.toSet()
+        val candidates = shortlist.filter { it.eventType.lowercase() in types }
+            .mapNotNull { item -> EventHistoryRecorder.entityKeyOf(item.subject, item.franchise).takeIf { it.isNotEmpty() }?.let { item to it } }
+        if (candidates.isEmpty()) return emptyMap()
+        return try {
+            val history = db.fetchEventHistoryByEntities(category, candidates.map { it.second })
+            val now = LocalDateTime.now()
+            val out = LinkedHashMap<String, String>()
+            for ((item, entity) in candidates) {
+                val r = Vaporware.count(item.eventType, item.eventDate, history[entity].orEmpty(), cfg, now) ?: continue
+                val line = StoryLines.vaporware(r) ?: continue
+                out[item.eventKey] = line
+                logger.info { "[Category:$category][Story] ${item.eventKey}: $line (entity $entity)" }
+            }
+            out
+        } catch (e: Exception) {
+            logger.warn(e) { "[Category:$category][Story] vaporware lookup failed — sending without it" }
+            emptyMap()
+        }
     }
 
     /**

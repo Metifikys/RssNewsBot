@@ -478,6 +478,17 @@ categories:
       #   # reprint that contradicts its cluster) — check them for a week before `post`, which adds
       #   # the footer line; use minSupport: 2 with post.
       #   conflicts: { enabled: true, mode: log, minSupport: 1, dateToleranceDays: 1 }
+      #   # 🌀 анонсовано вчетверте, дати досі немає (вперше: 03.2025) — for an undated item of an
+      #   # announceTypes type, read from event_history (delivered events, kept for years): the
+      #   # undated announcements about the same subject form waves (a gap of minGapDays starts a
+      #   # new one); shown from the minAnnouncements-th wave. A day / month date in the history
+      #   # means no line; a year / quarter ("2027") stops it only with softDatesStop.
+      #   vaporware:
+      #     enabled: true
+      #     announceTypes: [major_announcement, rumor, leak, dev_quote]
+      #     minAnnouncements: 3
+      #     minGapDays: 30
+      #     softDatesStop: false
     # Living pinned messages maintained from this category's events. After every digest the
     # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
     # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),

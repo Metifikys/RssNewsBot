@@ -45,6 +45,7 @@ object ConfigChangelog {
         Entry("categories.*.post.storyLines", "2026-09-23", "story footer lines: 📢 outlets / original sources (needs storyIntel)"),
         Entry("weekly.showOutlets", "2026-09-23", "weekly badge 📢 N видань · M першоджерел instead of 🔁 N (needs storyIntel)"),
         Entry("weekly.sourceLeaderboard", "2026-09-23", "weekly 🥇 who-writes-first block (needs storyIntel; /status shows it anyway)"),
+        Entry("categories.*.post.storyLines.vaporware", "2026-09-23", "🌀 re-announced without a date, counted over event_history (needs storyIntel)"),
         Entry("categories.*.post.storyLines.conflicts", "2026-09-23", "⚖️ sources-disagree check: log-only by default ([StoryConflict]), mode: post adds the line"),
     )
 

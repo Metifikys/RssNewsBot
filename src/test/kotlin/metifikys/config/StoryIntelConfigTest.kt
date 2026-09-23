@@ -122,4 +122,21 @@ class StoryIntelConfigTest {
         val noStory = assertThrows<IllegalArgumentException> { load(yaml(post = "storyLines:\n  conflicts: { mode: post }")) }
         assertTrue("storyIntel.enabled" in noStory.message!!, noStory.message)
     }
+
+    @Test
+    fun `vaporware line is read and checked`() {
+        val c = load(yaml(top = "storyIntel:\n  enabled: true", post = "storyLines:\n  vaporware: { minAnnouncements: 4, announceTypes: [rumor, leak] }"))
+        val v = c.categories.getValue("gaming").post?.storyLines?.vaporware
+        assertEquals(4, v?.minAnnouncements)
+        assertEquals(listOf("rumor", "leak"), v?.announceTypes)
+        assertEquals(30, v?.minGapDays)
+        assertEquals(1095, c.storyIntel.historyRetentionDays)
+
+        val tooFew = assertThrows<IllegalArgumentException> {
+            load(yaml(top = "storyIntel:\n  enabled: true", post = "storyLines:\n  vaporware: { minAnnouncements: 1 }"))
+        }
+        assertTrue("minAnnouncements" in tooFew.message!!, tooFew.message)
+        val noStory = assertThrows<IllegalArgumentException> { load(yaml(post = "storyLines:\n  vaporware: { enabled: true }")) }
+        assertTrue("storyIntel.enabled" in noStory.message!!, noStory.message)
+    }
 }

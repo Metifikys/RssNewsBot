@@ -691,4 +691,39 @@ class DigestDelivererTest {
         )
         assertEquals("**Story.**\n\n[Title 1](https://example.com/1)\n\n#tech", outputs["log"])
     }
+
+    // ── post.storyLines.vaporware (🌀) ───────────────────────────────────────
+
+    @Test
+    fun `an undated re-announcement gets the vaporware line from the event history`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val past = listOf(400L, 200L, 90L).map { days ->
+            metifikys.db.EventHistoryRow(
+                category = "tech", eventKey = "old-$days", entityKey = "hollow_knight_silksong", subject = "Hollow Knight: Silksong",
+                franchise = "Hollow Knight", eventType = "rumor", coreFact = "f", eventDate = null, newsworthiness = 5,
+                coveredAt = LocalDateTime.now().minusDays(days)
+            )
+        }
+        every { db.fetchEventHistoryByEntities("tech", listOf("hollow_knight_silksong")) } returns mapOf("hollow_knight_silksong" to past)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 11L))
+        val cfg = configWithPost(
+            PostConfig(
+                hashtags = HashtagsConfig(category = "#tech"),
+                storyLines = metifikys.config.StoryLinesConfig(vaporware = metifikys.config.VaporwareLineConfig())
+            )
+        ).copy(storyIntel = metifikys.config.StoryIntelConfig(enabled = true))
+        val item = shortlistItem("evt-1", article(1).link).copy(subject = "Hollow Knight: Silksong", eventType = "major_announcement")
+
+        DigestDeliverer(cfg, db, sender).deliver("tech", "• **Story.**\n\n[Title 1](https://example.com/1)", listOf(article(1)), listOf(item))
+
+        val first = LocalDateTime.now().minusDays(400).format(java.time.format.DateTimeFormatter.ofPattern("MM.yyyy"))
+        assertEquals(
+            "**Story.**\n\n[Title 1](https://example.com/1)\n\n🌀 анонсовано вчетверте, дати досі немає (вперше: $first)\n#tech",
+            sent.captured
+        )
+        verify(exactly = 0) { db.fetchEventClusters(any(), any()) }
+    }
 }

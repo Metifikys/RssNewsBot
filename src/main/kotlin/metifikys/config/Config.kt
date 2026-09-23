@@ -968,7 +968,25 @@ data class StoryLinesConfig(
     /** `🥇 першим був X (+2 год)`; see [FirstLineConfig]. */
     val first: FirstLineConfig? = null,
     /** `⚖️ Джерела розходяться: …`; see [ConflictLineConfig]. */
-    val conflicts: ConflictLineConfig? = null
+    val conflicts: ConflictLineConfig? = null,
+    /** `🌀 анонсовано вчетверте, дати досі немає`; see [VaporwareLineConfig]. */
+    val vaporware: VaporwareLineConfig? = null
+)
+
+/**
+ * The vaporware counter, read from `event_history` (the delivered events, kept for years): for an
+ * item of one of [announceTypes] without a date, the waves of undated announcements about the same
+ * entity (the normalized subject) — a new wave after a gap of [minGapDays] — counting the current
+ * one; from [minAnnouncements] the footer says `🌀 анонсовано вчетверте, дати досі немає (вперше:
+ * 03.2025)`. A day or month date anywhere in the history means it is not vaporware; a quarter or
+ * year date stops the count only with [softDatesStop].
+ */
+data class VaporwareLineConfig(
+    val enabled: Boolean = true,
+    val announceTypes: List<String> = listOf("major_announcement", "rumor", "leak", "dev_quote"),
+    val minAnnouncements: Int = 3,
+    val minGapDays: Long = 30,
+    val softDatesStop: Boolean = false
 )
 
 /**
@@ -1700,7 +1718,8 @@ object ConfigLoader {
                     require(t.maxAgeDays >= 1) { "Category '$name' post.threads.maxAgeDays must be >= 1 (got ${t.maxAgeDays})" }
                 }
                 post.storyLines?.let { s ->
-                    val anyOn = s.hype?.enabled == true || s.first?.enabled == true || s.conflicts?.enabled == true
+                    val anyOn = s.hype?.enabled == true || s.first?.enabled == true || s.conflicts?.enabled == true ||
+                        s.vaporware?.enabled == true
                     require(!anyOn || config.storyIntel.enabled) {
                         "Category '$name' post.storyLines needs storyIntel.enabled: true — the lines read the story clusters it records"
                     }
@@ -1716,6 +1735,13 @@ object ConfigLoader {
                     s.first?.let { f ->
                         require(f.minOutlets >= 2) { "Category '$name' post.storyLines.first.minOutlets must be >= 2 (got ${f.minOutlets})" }
                         require(f.minLeadMinutes >= 0) { "Category '$name' post.storyLines.first.minLeadMinutes must be >= 0 (got ${f.minLeadMinutes})" }
+                    }
+                    s.vaporware?.let { v ->
+                        require(v.announceTypes.isNotEmpty()) { "Category '$name' post.storyLines.vaporware.announceTypes must not be empty" }
+                        require(v.minAnnouncements >= 2) {
+                            "Category '$name' post.storyLines.vaporware.minAnnouncements must be >= 2 (got ${v.minAnnouncements})"
+                        }
+                        require(v.minGapDays >= 1) { "Category '$name' post.storyLines.vaporware.minGapDays must be >= 1 (got ${v.minGapDays})" }
                     }
                     s.conflicts?.let { c ->
                         require(c.mode in setOf(ConflictLineConfig.MODE_LOG, ConflictLineConfig.MODE_POST)) {

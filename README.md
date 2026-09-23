@@ -176,6 +176,12 @@ via a `/status` admin snapshot.
     article with several values in a slot is skipped). `mode: log` (default) only logs
     `[StoryConflict]` — plus `[StoryConflict][late]` when a Layer 2 reprint contradicts its cluster —
     so the precision can be checked before `mode: post` adds the line.
+    **vaporware**: `🌀 анонсовано вчетверте, дати досі немає (вперше: 03.2025)` — for an undated
+    item of an `announceTypes` type, the waves of undated announcements about the same subject in
+    `event_history` (a gap of `minGapDays` starts a new wave;
+    [`Vaporware`](src/main/kotlin/metifikys/story/Vaporware.kt)), from the `minAnnouncements`-th; a
+    day / month date anywhere in its history means no line (a year / quarter only with
+    `softDatesStop`).
 - **Living trackers** (`trackers:` per category) — e.g. a pinned "📅 Найближчі релізи" message
   the bot edits after every digest from `release_date` / `delay` events and their `eventDate`
   (year cross-checked against the article), with `⏳ було <old date>` on a delay, a
