@@ -115,6 +115,19 @@ anthropic:
 #   thresholds: { deadDays: 3, deadFailStreak: 10, staleNewDays: 14, noisyMinArticles: 30,
 #                 noisyMaxPublishedPct: 2, noisyMinJunkPct: 80, minPublishedForFirst: 5,
 #                 mirrorMaxFirstPct: 10, primaryMinFirstPct: 50 }
+#   # Candidate new feeds (independent of `enabled`): domains the channel keeps publishing from
+#   # (via reddit / hnrss / the converter) with no configured feed on them; every `everyDays` the
+#   # best few get feed autodiscovery (<link rel=alternate>, /feed, /rss, …; public hosts only).
+#   # Results: feed_candidates table + log; the static report shows them as "Кандидати". The bot
+#   # never adds a feed. Network: ≤ maxProbesPerRun hosts and ≤ maxRequestsPerRun requests a run.
+#   candidates:
+#     enabled: true
+#     everyDays: 7
+#     maxProbesPerRun: 10
+#     maxRequestsPerRun: 40
+#     minPublished: 3        # published links in windowDays
+#     recheckDays: 30
+#     ignoreDomains: [youtube.com, x.com, twitter.com, reddit.com, t.me, wikipedia.org, github.com]
 
 database:
   path: "news.db"

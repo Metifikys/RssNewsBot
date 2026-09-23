@@ -519,6 +519,34 @@ function feedName(url) {
   sections.push(section('feedq', 'Per-feed quality', body));
 }
 
+// 4c. Feed candidates (feed_candidates, written by the bot's feedHealth.candidates) ─────────────
+{
+  let body = '';
+  if (!has('feed_candidates')) {
+    body = '<p class="empty">No <code>feed_candidates</code> table: enable <code>feedHealth.candidates</code> in the bot (weekly, log-only).</p>';
+  } else {
+    const rows = q(`SELECT * FROM feed_candidates ORDER BY status = 'dismissed', status != 'found', published DESC, domain`);
+    summary.candidatesFound = rows.filter((r) => r.status === 'found').length;
+    body += table(rows, [
+      { key: 'domain', label: 'domain', fmt: (v, r) => `${esc(v)}${r.host !== v ? ` <span class="muted">${esc(r.host)}</span>` : ''}` },
+      { key: 'published', label: 'published', num: true, fmt: num },
+      { key: 'status', label: 'status', cls: (r) => (r.status === 'found' ? 'good' : r.status === 'error' ? 'warn' : '') },
+      { key: 'feed_url', label: 'feed', fmt: (v) => (v ? `<code>${esc(v)}</code>` : '—') },
+      { key: 'entries', label: 'entries', num: true, fmt: (v) => (v == null ? '—' : num(v)) },
+      { key: 'items_per_day', label: 'per day', num: true, fmt: (v) => (v == null ? '—' : num(v, 1)) },
+      { key: 'overlap', label: 'already brought', num: true, fmt: (v, r) => (v == null ? '—' : `${v}/${Math.min(r.entries ?? 20, 20)}`) },
+      { key: 'note', label: 'note', fmt: (v) => esc(v ?? '') },
+      { key: 'sample_link', label: 'example', fmt: (v) => (v ? `<a href="${esc(v)}">${esc(v.length > 60 ? `${v.slice(0, 59)}…` : v)}</a>` : '') },
+      { key: 'checked_at', label: 'checked', fmt: (v) => esc(v?.slice(0, 10) ?? 'not yet') },
+    ], { empty: '<p class="empty">No candidates yet: no domain outside the configured feeds reached the channel often enough.</p>' });
+    body += `<p class="note">Domains the channel published from (through reddit, hnrss, a converter) with no configured feed on them, ranked by published links in the bot's <code>feedHealth.windowDays</code>. ` +
+      `"feed" is what autodiscovery found (<code>&lt;link rel=alternate&gt;</code>, else <code>/feed</code>, <code>/rss</code>, …); "none" — no feed, maybe through the converter. ` +
+      `"already brought" = of its newest links, how many other feeds had. Suggestions only: add a feed to <code>config.yaml</code> by hand; ` +
+      `<code>UPDATE feed_candidates SET status = 'dismissed' WHERE domain = '…'</code> hides one for good.</p>`;
+  }
+  sections.push(section('candidates', 'Кандидати (feed candidates)', body));
+}
+
 // 5. Dedup layers ──────────────────────────────────────────────────────────────
 {
   let body = '';
@@ -702,6 +730,7 @@ const head = tiles([
   ['Queue', num(summary.pending), `${num(summary.processing)} processing · ${num(summary.orphans)} orphans`],
   ['Silent sources', num(summary.silent), `regular sources quiet > ${SILENT_DAYS} d`],
   ...(summary.feedAnomalies != null ? [['Feed hints', num(summary.feedAnomalies), 'feeds with 💀 💤 🗑 🪞']] : []),
+  ...(summary.candidatesFound != null ? [['Feed candidates', num(summary.candidatesFound), 'with a discovered feed']] : []),
   ['CLI', esc(summary.cli ?? '—'), 'health state from bot_state'],
 ]);
 const nav = sections.map((s) => { const m = /id="(\w+)"><h2>([^<]+)/.exec(s); return `<a href="#${m[1]}">${m[2]}</a>`; }).join('');

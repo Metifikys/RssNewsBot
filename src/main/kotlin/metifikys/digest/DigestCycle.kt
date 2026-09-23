@@ -85,7 +85,9 @@ class DigestCycle(
     /** `claude` / `codex` health: setup-token expiry and the idle probe (`health.enabled`); null = off. */
     private val cliHealthMonitor: metifikys.ai.CliHealthMonitor? = null,
     /** Per-feed fetch outcomes, flushed to `feed_stats` on the maintenance tick (`feedHealth.enabled`); null = off. */
-    private val feedHealthRecorder: metifikys.fetch.FeedHealthRecorder? = null
+    private val feedHealthRecorder: metifikys.fetch.FeedHealthRecorder? = null,
+    /** Candidate new feeds with autodiscovery, every `everyDays` (`feedHealth.candidates.enabled`); null = off. */
+    private val feedCandidateFinder: metifikys.feeds.FeedCandidateFinder? = null
 ) {
 
     private val shortlistJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -168,6 +170,7 @@ class DigestCycle(
         muteSuggester?.runIfDue()
         runCliHealth()
         flushFeedHealth()
+        feedCandidateFinder?.runIfDue()
         statusPoster?.post()
         val seconds = (System.nanoTime() - startedNanos) / 1_000_000_000
         logger.info {
@@ -211,6 +214,7 @@ class DigestCycle(
             muteSuggester?.runIfDue()
             runCliHealth()
             flushFeedHealth()
+            feedCandidateFinder?.runIfDue()
 
             // One shared wall-clock deadline for the whole cycle's fetch stage — every
             // category's feeds go through the fetcher's bounded pool, so the budget is

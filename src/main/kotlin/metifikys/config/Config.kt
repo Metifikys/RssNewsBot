@@ -315,7 +315,35 @@ data class FeedHealthConfig(
     val windowDays: Long = 14,
     /** The `/status` section; off keeps recording without the section. */
     val statusSection: Boolean = true,
-    val thresholds: FeedHealthThresholds = FeedHealthThresholds()
+    val thresholds: FeedHealthThresholds = FeedHealthThresholds(),
+    /** Candidate new feeds (log + report only); works without [enabled]. */
+    val candidates: FeedCandidatesConfig = FeedCandidatesConfig()
+)
+
+/**
+ * Plan §24 v1: domains the channel keeps publishing from (via reddit / hnrss / a converter) with no
+ * configured feed on them, plus feed autodiscovery (`<link rel=alternate>`, `/feed`, …) for the
+ * best few. Results go to `feed_candidates` and the log; the static report shows them. The bot
+ * never adds a feed. Window = `feedHealth.windowDays`.
+ */
+data class FeedCandidatesConfig(
+    val enabled: Boolean = false,
+    /** Run on the maintenance tick at most this often. */
+    val everyDays: Long = 7,
+    /** Hosts probed per run. */
+    val maxProbesPerRun: Int = 10,
+    /** Hard cap on HTTP requests per run, redirects included. */
+    val maxRequestsPerRun: Int = 40,
+    /** A domain needs at least this many published links in the window. */
+    val minPublished: Int = 3,
+    /** A probed domain is probed again after this many days. */
+    val recheckDays: Long = 30,
+    /** Never candidates (a domain covers its subdomains): platforms, social networks, reference sites. */
+    val ignoreDomains: List<String> = listOf(
+        "youtube.com", "youtu.be", "x.com", "twitter.com", "reddit.com", "redd.it", "t.me", "wikipedia.org",
+        "github.com", "bsky.app", "instagram.com", "facebook.com", "tiktok.com", "store.steampowered.com",
+        "steamcommunity.com", "news.ycombinator.com"
+    )
 )
 
 /** The hint rules (deterministic, text only): 💀 dead, 💤 stale, 🗑 noisy, 🪞 mirror, ⭐ first source. */
@@ -1764,6 +1792,13 @@ object ConfigLoader {
         )) {
             require(v in 0.0..100.0) { "feedHealth.thresholds.$name must be within 0..100 (got $v)" }
         }
+        val c = f.candidates
+        require(c.everyDays >= 1 && c.recheckDays >= 1) { "feedHealth.candidates.everyDays / recheckDays must be >= 1" }
+        require(c.maxProbesPerRun in 1..50) { "feedHealth.candidates.maxProbesPerRun must be within 1..50 (got ${c.maxProbesPerRun})" }
+        require(c.maxRequestsPerRun in 1..200) {
+            "feedHealth.candidates.maxRequestsPerRun must be within 1..200 (got ${c.maxRequestsPerRun})"
+        }
+        require(c.minPublished >= 1) { "feedHealth.candidates.minPublished must be >= 1 (got ${c.minPublished})" }
     }
 
     /** `admin:` block — the admin-command features need the poller and at least one admin. */

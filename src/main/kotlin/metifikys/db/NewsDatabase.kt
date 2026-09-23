@@ -37,6 +37,7 @@ class NewsDatabase(dbPath: String) :
     MuteSuggestionStore by MuteSuggestionRepository(),
     AdminFeedbackStore by AdminFeedbackRepository(),
     FeedStore by FeedRepository(),
+    FeedCandidateStore by FeedCandidateRepository(),
     BotStateStore by BotStateRepository() {
 
     /** Canonical path of the DB file; side jobs (e.g. [RetentionArchiver]) place their files next to it. */

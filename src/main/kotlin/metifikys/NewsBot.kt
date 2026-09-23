@@ -37,6 +37,8 @@ import metifikys.feedback.AffinityAggregator
 import metifikys.feedback.MuteSuggester
 import metifikys.fetch.ArticleFetcher
 import metifikys.fetch.ArticleSummarizer
+import metifikys.feeds.FeedCandidateFinder
+import metifikys.feeds.FeedDiscovery
 import metifikys.fetch.FeedHealthRecorder
 import metifikys.fetch.HostThrottle
 import metifikys.fetch.RssFetcher
@@ -275,7 +277,10 @@ class NewsBot(
         muteSuggester = muteSuggester,
         cliHealthMonitor = cliHealthMonitor,
         // Only read with the feature on: tests hand in strict fetcher mocks.
-        feedHealthRecorder = if (config.feedHealth.enabled) fetcher.healthRecorder else null
+        feedHealthRecorder = if (config.feedHealth.enabled) fetcher.healthRecorder else null,
+        feedCandidateFinder = if (config.feedHealth.candidates.enabled) {
+            FeedCandidateFinder(config, db, FeedDiscovery(SHARED_HOST_THROTTLE))
+        } else null
     )
 
     /**

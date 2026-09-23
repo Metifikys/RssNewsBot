@@ -221,6 +221,14 @@ via a `/status` admin snapshot.
   disabled automatically. The full per-feed table (published %, junk %, first %, echo lag, fetch
   errors) is the "Per-feed quality" section of `bench/db-audit/report.mjs`. A junk-classifier score
   column (`articles.junk_score`) is averaged per feed once it exists.
+- **Feed candidates** (opt-in, `feedHealth.candidates`) — weekly on the maintenance tick,
+  [`FeedCandidateFinder`](src/main/kotlin/metifikys/feeds/FeedCandidateFinder.kt) ranks the domains
+  the channel published from without a configured feed on them (they came through reddit, hnrss
+  or the converter) and runs feed autodiscovery on the best few
+  ([`FeedDiscovery`](src/main/kotlin/metifikys/feeds/FeedDiscovery.kt): `<link rel=alternate>`,
+  then `/feed`, `/rss`, …; public hosts only, redirects re-validated, per-run request cap). Results
+  land in `feed_candidates` and the log, and the static report lists them under "Кандидати" with
+  how many of the found feed's links other feeds already bring. Log-only: `feeds:` is never changed.
 - **Per-LLM-call cost ledger** — `llm_calls` table records `(provider, model, category,
   useCase, promptTokens, completionTokens, estCostUsd, ts)` for every call, including the
   Batch API auto-halving.
@@ -839,7 +847,7 @@ first cycle.
 | `weekly`          | no       | Weekly top-story roundup (off by default)                   |
 | `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`) |
 | `health`          | no       | `claude` / `codex` login + usage-limit alerts in the admin chat, idle probe, `setup-token` expiry (off by default) |
-| `feedHealth`      | no       | Per-feed fetch health + the `/status` 📡 Feeds anomalies: `enabled`, `windowDays` (14, max 30), `statusSection`, `thresholds` (off by default) |
+| `feedHealth`      | no       | Per-feed fetch health + the `/status` 📡 Feeds anomalies: `enabled`, `windowDays` (14, max 30), `statusSection`, `thresholds`; `candidates` (candidate feeds + autodiscovery, own `enabled`) (off by default) |
 | `pricing`         | no       | USD/1M tokens per (provider, model)                          |
 | `categories`      | yes      | Map of category name → `CategoryConfig`                     |
 
@@ -979,6 +987,7 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 | `articles`           | Canonical article rows + status (`UNPROCESSED`/`PROCESSING`/`PROCESSED`/`DUPLICATE`) + `duplicate_of` pointer + image/summary cache; `feed_url` (the configured feed that first brought the link), `fetched_at` (first-ingest time, our clock — unlike `pub_date`) and `drop_reason` (`mute` for Step 0 keyword drops) are null on rows older than the columns |
 | `feed_sightings`     | `(link, feed_url, seen_at)`: a link a second feed brought after another feed already had it — the unique-link insert otherwise hides the echo. A feed re-reading its own links is not recorded |
 | `feed_stats`         | Fetch health per feed url (`feedHealth.enabled`): last attempt / success, `fail_streak` (failed passes since the last success; 304 = success), totals, last error and entry count |
+| `feed_candidates`    | Candidate source domains (`feedHealth.candidates`): published links in the window, discovery status (`unchecked` / `found` / `none` / `error`; `dismissed` by hand), found feed URL, entries, items per day, overlap with existing feeds |
 | `pending_batches`    | In-flight batch jobs (`kind`, `category_names`, `article_links`, `shortlist_json`) for restart-safe resume |
 | `summaries`          | Delivered digest text + article count; injected as context next cycle and used for previous-URL filtering |
 | `covered_events`     | Step 1 dedup memory: one row per `(category, event_key)`; upsert keeps subject/franchise/eventType stable |
