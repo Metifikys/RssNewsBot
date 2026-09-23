@@ -328,8 +328,8 @@ class OpenAI(
 
     /**
      * Non-streaming chat completion with `response_format={type:"json_object"}`.
-     * Used by the Step 1 event extractor; returns the raw content string of the first choice
-     * (which is expected to be a JSON object — caller is responsible for parsing).
+     * Used by the Step 1 event extractor; returns the content string of the first choice without
+     * a code fence around it (expected to be a JSON object — caller is responsible for parsing).
      *
      * Reuses the same retry semantics and [BillingException] handling as [request].
      * Blocks the calling thread on retries (same as [request]).
@@ -372,7 +372,8 @@ class OpenAI(
                 val responseBody = response.body?.string()
                     ?: throw IOException("Empty response body")
                 val parsed = decodeChatCompletionResponse(responseBody)
-                val result = parsed.choices.firstOrNull()?.message?.content.orEmpty()
+                // JSON mode does not stop every OpenRouter model from fencing its answer.
+                val result = LlmJson.stripCodeFences(parsed.choices.firstOrNull()?.message?.content.orEmpty())
                 if (result.isBlank()) {
                     logger.warn { "Empty JSON response. Model=$model | raw: ${responseBody.take(500)}" }
                 }

@@ -82,6 +82,25 @@ class OpenAITest {
         }
     }
 
+    @Test
+    fun `completeJson unwraps a fenced JSON answer instead of retrying it as unparseable`() {
+        // Some OpenRouter models fence their answer even in JSON mode; the maxRetry loop parses
+        // the result, so an unstripped fence burned every retry and Step 1 fell back to legacy.
+        val content = "```json\\n{\\\"shortlist\\\": []}\\n```"
+        withChatCompletionServer(
+            statusCode = 200,
+            responseBody = """{"id":"c1","object":"chat.completion","created":1,"model":"test-model",""" +
+                """"choices":[{"index":0,"message":{"role":"assistant","content":"$content"}}]}"""
+        ) { baseUrl, requestCount ->
+            val client = OpenAI(LlmEndpoint(baseUrl = baseUrl, apiKey = "test-key", model = "test-model"))
+
+            val result = client.completeJson(systemPrompt = "system", userPrompt = "user", maxRetry = 3)
+
+            assertEquals("""{"shortlist": []}""", result)
+            assertEquals(1, requestCount.get())
+        }
+    }
+
     private fun withChatCompletionServer(
         statusCode: Int,
         responseBody: String,

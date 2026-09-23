@@ -108,6 +108,14 @@ class FactCheckerTest {
     }
 
     @Test
+    fun `a fenced verdict is parsed like a bare one`() {
+        val store = Store()
+        val answer = "```json\n{\"verdict\":\"supported\",\"claims\":[]}\n```"
+        assertEquals(FactCheckRow.SUPPORTED, checker(judge(answer), store = store).check("tech", cat, post)?.verdict)
+        assertEquals(1, store.rows.size)
+    }
+
+    @Test
     fun `a judge exception never leaves the checker`() {
         val client = mockk<LlmClient>()
         every { client.endpoint } returns LlmEndpoint("https://x", "", "judge")

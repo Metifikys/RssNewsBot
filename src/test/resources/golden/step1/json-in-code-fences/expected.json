@@ -1,6 +1,22 @@
 {
-  "fallbackToLegacy" : true,
-  "shortlist" : [ ],
+  "fallbackToLegacy" : false,
+  "shortlist" : [ {
+    "url" : "https://news.example/ps6-rumor",
+    "status" : "new",
+    "newsworthiness" : 6,
+    "digestFit" : 7,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/ps6-rumor" ]
+  }, {
+    "url" : "https://news.example/xbox-price",
+    "status" : "new",
+    "newsworthiness" : 7,
+    "digestFit" : 8,
+    "eventDate" : null,
+    "lane" : null,
+    "sourceLinks" : [ "https://news.example/xbox-price" ]
+  } ],
   "drops" : [ ],
   "rejectedSaved" : 0
 }

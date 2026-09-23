@@ -8,6 +8,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import metifikys.ai.BillingException
 import metifikys.ai.LlmClient
+import metifikys.ai.LlmJson
 import metifikys.config.CategoryConfig
 import metifikys.config.DigestConfig
 import metifikys.config.StoryIntelConfig
@@ -364,8 +365,10 @@ class EventExtractor(
         withAudience: Boolean = true,
         tag: String = "[Category:$category]"
     ): Step1Evaluation? {
+        // A model may fence its JSON whatever the provider; completeJson strips it, but a batch
+        // result or any other LlmClient's answer reaches here as-is.
         val parsed = try {
-            json.decodeFromString<ExtractionResult>(raw)
+            json.decodeFromString<ExtractionResult>(LlmJson.stripCodeFences(raw))
         } catch (e: Exception) {
             logger.warn(e) {
                 "$tag[Dedup] Step 1 JSON parse failed. Raw (truncated): ${raw.take(500)}"

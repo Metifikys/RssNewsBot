@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import metifikys.ai.LlmClient
+import metifikys.ai.LlmJson
 import metifikys.ai.MeteredLlmClient
 import metifikys.ai.PromptBuilder
 import metifikys.config.CategoryConfig
@@ -135,7 +136,7 @@ class FactChecker(
 
     private fun parseVerdict(raw: String): Verdict? {
         val v = try {
-            json.decodeFromString<Verdict>(raw)
+            json.decodeFromString<Verdict>(LlmJson.stripCodeFences(raw))
         } catch (e: Exception) {
             return null
         }

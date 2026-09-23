@@ -2,7 +2,7 @@
   "category": "games",
   "now": "2026-09-20T12:00:00",
   "emoji": "🎮",
-  "description": "A fenced ```json answer reaching EventExtractor as-is does not parse → legacy fallback. The CLI and Anthropic clients strip fences before this point; the OpenAI-compatible (OpenRouter) client does not.",
+  "description": "A fenced ```json answer reaching EventExtractor as-is (an OpenRouter model in JSON mode, a batch result) is unwrapped and parsed like a bare one — no legacy fallback.",
   "articles": [
     {
       "title": "PS6 dev kits reportedly shipping",

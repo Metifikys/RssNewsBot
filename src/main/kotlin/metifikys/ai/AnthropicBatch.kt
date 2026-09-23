@@ -159,7 +159,7 @@ class AnthropicBatch(
             val results = pollAndCollect(batchId)
             val rawText = results[category]
                 ?: throw IOException("No extract result for category '$category' in batch $batchId")
-            val content = stripCodeFences(rawText)
+            val content = LlmJson.stripCodeFences(rawText)
             logger.info { "[LLM][batch][extract][anthropic] RESPONSE | id=$category len=${content.length}" }
             logger.debug { "[LLM][batch][extract][anthropic] RESPONSE | id=$category\n$content" }
             content
@@ -177,18 +177,8 @@ class AnthropicBatch(
             val results = pollAndCollect(batchId)
             val rawText = results.values.firstOrNull()
                 ?: throw IOException("No result in extract batch $batchId")
-            stripCodeFences(rawText)
+            LlmJson.stripCodeFences(rawText)
         }, pollExecutor)
-    }
-
-    private fun stripCodeFences(s: String): String {
-        val trimmed = s.trim()
-        if (!trimmed.startsWith("```")) return trimmed
-        val firstNewline = trimmed.indexOf('\n')
-        if (firstNewline < 0) return trimmed
-        val withoutOpening = trimmed.substring(firstNewline + 1)
-        val closing = withoutOpening.lastIndexOf("```")
-        return if (closing >= 0) withoutOpening.substring(0, closing).trim() else withoutOpening.trim()
     }
 
     // ── Submission ────────────────────────────────────────────────────────────

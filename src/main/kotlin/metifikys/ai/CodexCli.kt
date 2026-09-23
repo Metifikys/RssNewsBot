@@ -111,7 +111,7 @@ class CodexCli(
         val jsonInstruction = "\n\nRespond with a single valid JSON object only. " +
                 "Do not wrap the JSON in code fences and do not include any prose before or after."
         val raw = request(prompt = userPrompt + jsonInstruction, systemPromptOverride = systemPrompt)
-        return stripCodeFences(raw)
+        return LlmJson.stripCodeFences(raw)
     }
 
     override fun completeJson(systemPrompt: String, userPrompt: String, maxRetry: Int): String {
@@ -140,17 +140,6 @@ class CodexCli(
             }
         }
         throw lastException ?: IOException("Unknown error")
-    }
-
-    private fun stripCodeFences(s: String): String {
-        val trimmed = s.trim()
-        if (!trimmed.startsWith("```")) return trimmed
-        // ```json\n...\n``` or ```\n...\n```
-        val firstNewline = trimmed.indexOf('\n')
-        if (firstNewline < 0) return trimmed
-        val withoutOpening = trimmed.substring(firstNewline + 1)
-        val closing = withoutOpening.lastIndexOf("```")
-        return if (closing >= 0) withoutOpening.substring(0, closing).trim() else withoutOpening.trim()
     }
 
     private fun request(prompt: String, systemPromptOverride: String? = null): String {
