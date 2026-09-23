@@ -153,7 +153,23 @@ data class AdminConfig(
     /** Admin commands over the `getUpdates` poller; off by default. */
     val commands: AdminCommandsConfig = AdminCommandsConfig(),
     /** Periodic mute proposals with approve/reject buttons in the admin chat; off by default. */
-    val muteSuggestions: MuteSuggestionsConfig = MuteSuggestionsConfig()
+    val muteSuggestions: MuteSuggestionsConfig = MuteSuggestionsConfig(),
+    /** One moderation message per published post in the admin chat; off by default. */
+    val moderation: ModerationConfig = ModerationConfig()
+)
+
+/**
+ * Post moderation from the PRIVATE admin chat — never buttons under the channel post, which
+ * every reader would see. After each digest, one silent compact message per published post
+ * (title, category, link) with [🗑 delete] [🔇 mute the franchise] [👍 more] [👎 less]. Delete
+ * asks for confirmation and removes every chunk of the post (Telegram allows it for 48 h);
+ * more/less land in `admin_feedback` as an explicit affinity signal (`feedback.explicitWeight`).
+ * Needs `admin.commands.enabled` (the buttons) and `statusChatId` (where the messages go).
+ */
+data class ModerationConfig(
+    val enabled: Boolean = false,
+    /** Categories whose posts get a moderation message; empty = all. */
+    val categories: List<String> = emptyList()
 )
 
 /**
@@ -335,6 +351,12 @@ data class FeedbackConfig(
     val minVolume: Int = 1,
     /** Recompute when the last run is older than this many hours. */
     val recomputeHours: Long = 12,
+    /**
+     * How many reactions one 👍/👎 moderation press (`admin.moderation`) counts as. It adds to the
+     * post's reactions (volume `+w`, valence `±w`) and, unlike reactions, is used at once —
+     * no `attributionHours` wait. Deleting a post counts as a double "less" (`2w`).
+     */
+    val explicitWeight: Double = 3.0,
     /**
      * Per-emoji valence overrides merged over the built-in defaults
      * (see `metifikys.feedback.ReactionValence`). Keys are the stored emoji strings
@@ -1228,6 +1250,7 @@ object ConfigLoader {
             require(fb.shrinkageK > 0.0) { "feedback.shrinkageK must be > 0 (got ${fb.shrinkageK})" }
             require(fb.minVolume >= 1) { "feedback.minVolume must be >= 1 (got ${fb.minVolume})" }
             require(fb.recomputeHours >= 1) { "feedback.recomputeHours must be >= 1 (got ${fb.recomputeHours})" }
+            require(fb.explicitWeight > 0.0) { "feedback.explicitWeight must be > 0 (got ${fb.explicitWeight})" }
             require(fb.lookbackDays * 24 > fb.attributionHours) {
                 "feedback.lookbackDays (${fb.lookbackDays}) must reach further back than attributionHours (${fb.attributionHours}) — otherwise the aggregation window is empty"
             }
@@ -1536,6 +1559,14 @@ object ConfigLoader {
             require(s.minTone >= 0.0) { "admin.muteSuggestions.minTone must be >= 0 (got ${s.minTone})" }
             require(s.minRejected >= 1) { "admin.muteSuggestions.minRejected must be >= 1 (got ${s.minRejected})" }
             require(s.maxPerRun in 1..20) { "admin.muteSuggestions.maxPerRun must be within 1..20 (got ${s.maxPerRun})" }
+        }
+        admin.moderation.takeIf { it.enabled }?.let { m ->
+            require(admin.commands.enabled && admin.statusChatId != null) {
+                "admin.moderation.enabled needs admin.commands.enabled (for the buttons) and admin.statusChatId (where the messages go)"
+            }
+            for (cat in m.categories) {
+                require(cat in config.categories) { "admin.moderation.categories references unknown category '$cat'" }
+            }
         }
     }
 

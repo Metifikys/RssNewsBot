@@ -14,7 +14,10 @@ import metifikys.format.TopicDecorator
 import metifikys.format.TopicFormatter
 import metifikys.model.Article
 import metifikys.model.ShortlistItem
+import metifikys.telegram.ModeratedPost
+import metifikys.telegram.ModerationNotifier
 import metifikys.telegram.SentRef
+import metifikys.telegram.TelegramLinks
 import metifikys.telegram.TelegramSender
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -39,7 +42,9 @@ class DigestDeliverer(
     /** First-mention Wikipedia intro; null when no category enables it (`post.intro`). */
     private val introProvider: WikipediaIntroProvider? = null,
     /** Living tracker messages; null when no category configures `trackers`. */
-    private val trackerUpdater: TrackerUpdater? = null
+    private val trackerUpdater: TrackerUpdater? = null,
+    /** Moderation messages in the admin chat (`admin.moderation`); null when off. */
+    private val moderationNotifier: ModerationNotifier? = null
 ) {
 
     /**
@@ -154,6 +159,8 @@ class DigestDeliverer(
         val sentTopics = mutableListOf<String>()
         val failedTopicIdx = mutableListOf<Int>()
         val digestMessageRows = mutableListOf<DigestMessageRow>()
+        val moderated = mutableListOf<ModeratedPost>()
+        val moderate = moderationNotifier?.appliesTo(categoryName) == true
         val sentAt = LocalDateTime.now()
 
         for ((idx, topic) in topics.withIndex()) {
@@ -226,6 +233,18 @@ class DigestDeliverer(
                         sentAt = sentAt
                     )
                 }
+                if (moderate) {
+                    val first = refs.first()
+                    moderated += ModeratedPost(
+                        category = categoryName,
+                        chatId = first.chatId,
+                        messageId = first.messageId,
+                        eventKey = eventKey,
+                        title = ModerationNotifier.titleOf(topic),
+                        muteKeyword = item?.let { ModerationNotifier.muteKeywordFor(it.franchise, it.subject) },
+                        url = TelegramLinks.messageUrl(channelId, first.chatId, first.messageId)
+                    )
+                }
             } else {
                 failedTopicIdx += idx
             }
@@ -240,6 +259,8 @@ class DigestDeliverer(
                 val sentKeys = digestMessageRows.mapNotNull { it.eventKey }.toSet()
                 trackerUpdater.afterDigest(categoryName, shortlist.filter { it.eventKey in sentKeys }, digestMessageRows)
             }
+            // After the channel sends: the admin-chat messages go out on the notifier's own thread.
+            moderationNotifier?.afterDigest(categoryName, moderated)
         }
 
         when {

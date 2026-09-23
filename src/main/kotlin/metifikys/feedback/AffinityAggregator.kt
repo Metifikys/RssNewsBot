@@ -6,6 +6,9 @@ import metifikys.db.NewsDatabase
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeParseException
+import kotlin.math.abs
+import kotlin.math.roundToInt
+import kotlin.math.sign
 
 private val logger = KotlinLogging.logger {}
 
@@ -73,7 +76,10 @@ class AffinityAggregator(
 
     private fun recompute(now: LocalDateTime) {
         val inputs = db.fetchAffinityInputs(feedback.attributionHours, feedback.lookbackDays)
+        val explicit = explicitInputs()
+        val explicitByMessage = explicit.associateBy { it.chatId to it.messageId }
         val signals = inputs.map { m ->
+            val e = explicitByMessage[m.chatId to m.messageId]
             AffinityMath.MessageSignal(
                 category = m.category,
                 sentAt = m.sentAt,
@@ -81,8 +87,25 @@ class AffinityAggregator(
                 franchise = m.franchise,
                 eventType = m.eventType,
                 source = AffinityMath.sourceDomain(m.url),
-                volume = m.reactions.sumOf { it.count },
-                valenceSum = m.reactions.sumOf { valence.of(it.emoji) * it.count }
+                volume = m.reactions.sumOf { it.count } + explicitVolume(e),
+                valenceSum = m.reactions.sumOf { valence.of(it.emoji) * it.count } + explicitValence(e)
+            )
+        }.toMutableList()
+        // A post with an explicit signal but outside the reaction input — younger than
+        // attributionHours (an explicit press needs no time to mature) or deleted from the
+        // channel (its digest_messages rows are gone) — counts on the explicit signal alone.
+        val inInputs = inputs.map { it.chatId to it.messageId }.toSet()
+        for (e in explicit) {
+            if ((e.chatId to e.messageId) in inInputs) continue
+            signals += AffinityMath.MessageSignal(
+                category = e.category,
+                sentAt = e.sentAt,
+                subject = e.subject,
+                franchise = e.franchise,
+                eventType = e.eventType,
+                source = AffinityMath.sourceDomain(e.url),
+                volume = explicitVolume(e),
+                valenceSum = explicitValence(e)
             )
         }
         val rows = AffinityMath.aggregate(
@@ -104,6 +127,22 @@ class AffinityAggregator(
         }
         logScores(rows)
     }
+
+    /** Moderation 👍/👎/🗑 signals (`admin_feedback`); a read failure only drops them. */
+    private fun explicitInputs(): List<metifikys.db.ExplicitFeedbackInput> = try {
+        db.fetchExplicitFeedbackInputs(feedback.lookbackDays)
+    } catch (e: Exception) {
+        logger.warn(e) { "[Affinity] reading admin_feedback failed — explicit signals left out" }
+        emptyList()
+    }
+
+    /** An explicit signal counts as `|signal| × explicitWeight` reactions (a delete = two "less"). */
+    private fun explicitVolume(e: metifikys.db.ExplicitFeedbackInput?): Int =
+        if (e == null) 0 else (abs(e.signal) * feedback.explicitWeight).roundToInt().coerceAtLeast(1)
+
+    /** …all of one valence, so a post carrying only an explicit signal has tone exactly ±1. */
+    private fun explicitValence(e: metifikys.db.ExplicitFeedbackInput?): Double =
+        if (e == null) 0.0 else sign(e.signal.toDouble()) * explicitVolume(e)
 
     /**
      * Ranked score dump so the operator can see WHAT the audience likes, not just that

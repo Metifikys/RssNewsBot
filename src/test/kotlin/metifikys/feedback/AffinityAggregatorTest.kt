@@ -201,6 +201,35 @@ class AffinityAggregatorTest {
         assertTrue(fifa.sentiment < 0.0 && silksong.sentiment > 0.0)
     }
 
+    private fun explicit(messageId: Long, signal: Int, ageDays: Long = 3, category: String = "games") =
+        db.upsertAdminFeedback(
+            metifikys.db.AdminFeedbackRow(-100L, messageId, category, "evt_$messageId", now.minusDays(ageDays), signal)
+        )
+
+    @Test
+    fun `explicit less-like-this without any reaction turns a franchise negative`() {
+        repeat(3) { i -> seedMessage(10L + i, "fifa", emptyList()); explicit(10L + i, metifikys.db.ExplicitSignal.LESS) }
+        repeat(3) { i -> seedMessage(20L + i, "silksong", listOf(ReactionCount("👍", 1))) }
+        repeat(3) { i -> seedMessage(30L + i, "quiet", emptyList()) }
+
+        AffinityAggregator(feedback(minVolume = 1), db).recomputeIfStale()
+
+        val fifa = db.fetchAudienceAffinity().single { it.dimension == "franchise" && it.key == "fifa" }
+        assertTrue(fifa.score < 0.0, "explicit 👎 must go negative, got ${fifa.score}")
+        assertTrue(fifa.nTone > 0.0)
+    }
+
+    @Test
+    fun `an explicit signal on a post younger than attributionHours counts at once`() {
+        repeat(3) { i -> seedMessage(10L + i, "fresh", emptyList(), ageDays = 0); explicit(10L + i, metifikys.db.ExplicitSignal.MORE, ageDays = 0) }
+        repeat(3) { i -> seedMessage(20L + i, "other", listOf(ReactionCount("👎", 1))) }
+
+        AffinityAggregator(feedback(minVolume = 1), db).recomputeIfStale()
+
+        val fresh = db.fetchAudienceAffinity().single { it.dimension == "franchise" && it.key == "fresh" }
+        assertTrue(fresh.score > 0.0, "young post with explicit 👍 counted, got ${fresh.score}")
+    }
+
     @Test
     fun `disabled feedback computes nothing`() {
         seedMessage(1L, "silksong", listOf(ReactionCount("🔥", 10)))

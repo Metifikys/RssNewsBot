@@ -74,6 +74,21 @@ class AdminConfigTest {
     }
 
     @Test
+    fun `moderation needs the commands and known categories`() {
+        assertThrows<IllegalArgumentException> {
+            load(admin = "admin:\n  statusChatId: \"1\"\n  moderation:\n    enabled: true\n")
+        }
+        val commands = "admin:\n  statusChatId: \"1\"\n  userIds: [1]\n  commands:\n    enabled: true\n"
+        val e = assertThrows<IllegalArgumentException> {
+            load(telegramExtra = "  updatesPolling: true\n", admin = commands + "  moderation:\n    enabled: true\n    categories: [nope]\n")
+        }
+        assertTrue("nope" in e.message.orEmpty(), e.message)
+        val c = load(telegramExtra = "  updatesPolling: true\n", admin = commands + "  moderation:\n    enabled: true\n    categories: [gaming]\n")
+        assertEquals(listOf("gaming"), c.admin.moderation.categories)
+        assertEquals(3.0, c.feedback.explicitWeight)
+    }
+
+    @Test
     fun `commands without userIds are rejected`() {
         val e = assertThrows<IllegalArgumentException> {
             load(telegramExtra = "  updatesPolling: true\n", admin = "admin:\n  commands:\n    enabled: true\n")

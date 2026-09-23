@@ -133,6 +133,19 @@ interface DigestMessageStore {
      */
     fun countDigestPostsSince(category: String, since: LocalDateTime): Int
 
+    /** The row of one delivered message, or null. */
+    fun fetchDigestMessage(chatId: Long, messageId: Long): DigestMessageRow?
+
+    /**
+     * Every message of the post [row] belongs to — the chunks of one topic share the chat,
+     * category, `sent_at` and event key (legacy rows without a key: the article links) — ordered
+     * by message id.
+     */
+    fun fetchDigestMessagesOfPost(row: DigestMessageRow): List<DigestMessageRow>
+
+    /** Deletes the rows of these `(chat_id, message_id)` messages (a post deleted from the channel). */
+    fun deleteDigestMessages(refs: Collection<Pair<Long, Long>>)
+
     /** Deletes digest-message links older than [days] days (by `sent_at`). */
     fun deleteOldDigestMessages(days: Long = 90)
 
@@ -289,6 +302,43 @@ internal class DigestMessageRepository : DigestMessageStore {
             .map { it[DigestMessagesTable.sentAt] to it[DigestMessagesTable.articleLinks] }
             .distinct()
             .size
+    }
+
+    private fun ResultRow.toDigestMessageRow() = DigestMessageRow(
+        chatId = this[DigestMessagesTable.chatId],
+        messageId = this[DigestMessagesTable.messageId],
+        category = this[DigestMessagesTable.category],
+        eventKey = this[DigestMessagesTable.eventKey],
+        articleLinks = this[DigestMessagesTable.articleLinks],
+        sentAt = this[DigestMessagesTable.sentAt]
+    )
+
+    override fun fetchDigestMessage(chatId: Long, messageId: Long): DigestMessageRow? = transaction {
+        DigestMessagesTable.selectAll()
+            .where { (DigestMessagesTable.chatId eq chatId) and (DigestMessagesTable.messageId eq messageId) }
+            .map { it.toDigestMessageRow() }
+            .firstOrNull()
+    }
+
+    override fun fetchDigestMessagesOfPost(row: DigestMessageRow): List<DigestMessageRow> = transaction {
+        DigestMessagesTable.selectAll()
+            .where {
+                (DigestMessagesTable.chatId eq row.chatId) and
+                    (DigestMessagesTable.category eq row.category) and
+                    (DigestMessagesTable.sentAt eq row.sentAt)
+            }
+            .map { it.toDigestMessageRow() }
+            .filter { if (row.eventKey != null) it.eventKey == row.eventKey else it.eventKey == null && it.articleLinks == row.articleLinks }
+            .sortedBy { it.messageId }
+    }
+
+    override fun deleteDigestMessages(refs: Collection<Pair<Long, Long>>) {
+        if (refs.isEmpty()) return
+        transaction {
+            for ((chat, message) in refs) {
+                DigestMessagesTable.deleteWhere { (chatId eq chat) and (messageId eq message) }
+            }
+        }
     }
 
     override fun deleteOldDigestMessages(days: Long) {

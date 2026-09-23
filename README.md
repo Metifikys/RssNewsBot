@@ -173,6 +173,13 @@ via a `/status` admin snapshot.
   franchises Step 1 keeps rejecting without ever covering become keywords, checked against 30
   days of titles, and up to `maxPerRun` go to the admin chat as silent messages with
   in-category / global / no buttons. Decisions are kept in `mute_suggestions`.
+- **Post moderation in the admin chat** (opt-in, `admin.moderation`) — no buttons under channel
+  posts (every reader would see them); instead
+  [`ModerationNotifier`](src/main/kotlin/metifikys/telegram/ModerationNotifier.kt) sends one
+  silent message per published post to the private admin chat, after the digest and on its own
+  thread: 🗑 delete (confirmed; every chunk, within Telegram's 48 h; `covered_events` kept so the
+  story is not re-posted), 🔇 mute the franchise (same DB mute as `/mute`), 👍/👎 an explicit
+  signal in `admin_feedback` that affinity counts as `feedback.explicitWeight` reactions at once.
 - **Per-LLM-call cost ledger** — `llm_calls` table records `(provider, model, category,
   useCase, promptTokens, completionTokens, estCostUsd, ts)` for every call, including the
   Batch API auto-halving.
@@ -911,6 +918,7 @@ layout idempotence, hashtag well-formedness. A failure prints its seed; rerun it
 | `entity_intros`      | First-mention memory for the Wikipedia intro: one row per `(category, entity key)`, hits and misses |
 | `tracker_entries`    | Living-tracker state per `(category, tracker, entity)`: event date, previous date, status, latest post |
 | `admin_mutes`        | Keyword mutes added from Telegram (`/mute`, suggestions, moderation), merged over the YAML mute lists; `category` null = global |
+| `admin_feedback`     | Explicit 👍/👎/🗑 per post from the moderation buttons (last press wins), with the post's category, event and send time; kept apart from `reaction_counts`, which every reaction update replaces |
 | `mute_suggestions`   | Mute proposals sent to the admin chat with their evidence, 30-day hit counts, message id and decision (`pending`/`approved`/`rejected`) |
 
 Pruning runs on the maintenance tick (or at the start of a legacy cycle), skipped while any

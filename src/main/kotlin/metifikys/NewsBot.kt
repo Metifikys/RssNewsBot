@@ -41,6 +41,7 @@ import metifikys.telegram.AdminAuth
 import metifikys.telegram.AdminCallbackRouter
 import metifikys.telegram.AdminCommandRouter
 import metifikys.telegram.AdminCommands
+import metifikys.telegram.ModerationNotifier
 import metifikys.telegram.RunListener
 import metifikys.telegram.RunQueued
 import metifikys.telegram.StatusCommand
@@ -204,7 +205,20 @@ class NewsBot(
     private val muteSuggester: MuteSuggester? =
         if (config.admin.muteSuggestions.enabled) MuteSuggester(config, db, muteRegistry, sender) else null
 
-    internal val deliverer = DigestDeliverer(config, db, sender, badgeResolver, introProvider, trackerUpdater)
+    /**
+     * Moderation messages (`admin.moderation`) go out on their own thread after each digest, so
+     * channel delivery never waits for the admin chat.
+     */
+    private val moderationExecutor: ExecutorService? =
+        if (config.admin.moderation.enabled) {
+            Executors.newSingleThreadExecutor { r -> Thread(r, "admin-notify").also { it.isDaemon = true } }
+        } else null
+
+    private val moderationNotifier: ModerationNotifier? =
+        moderationExecutor?.let { ModerationNotifier(config, db, muteRegistry, sender, it) }
+
+    internal val deliverer =
+        DigestDeliverer(config, db, sender, badgeResolver, introProvider, trackerUpdater, moderationNotifier)
 
     private val categoryProcessor = CategoryProcessor(
         config = config,
@@ -269,6 +283,7 @@ class NewsBot(
             ).registerAll(router)
         }
         muteSuggester?.let { s -> callbackRouter?.register("ms") { cb, parts -> s.handleCallback(cb, parts) } }
+        moderationNotifier?.let { m -> callbackRouter?.register("mod") { cb, parts -> m.handleCallback(cb, parts) } }
     }
 
     fun start() {
@@ -363,6 +378,7 @@ class NewsBot(
             weeklyScheduler?.shutdown()
             updatesPoller?.stop()
             adminExecutor?.shutdownNow()
+            moderationExecutor?.shutdownNow()
             val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             try {
                 for (executor in executors) {

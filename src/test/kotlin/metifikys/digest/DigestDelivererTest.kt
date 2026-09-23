@@ -314,6 +314,34 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `moderation gets one post per topic, not per chunk, after the channel sends`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendToChannel(any(), match { "/1)" in it }, any(), any()) } returns listOf(SentRef(-100123L, 11L), SentRef(-100123L, 12L))
+        every { sender.sendToChannel(any(), match { "/2)" in it }, any(), any()) } returns listOf(SentRef(-100123L, 13L))
+        val notifier = mockk<metifikys.telegram.ModerationNotifier>(relaxed = true)
+        every { notifier.appliesTo("tech") } returns true
+
+        val articles = listOf(article(1), article(2))
+        val shortlist = listOf(
+            shortlistItem("evt-1", article(1).link).copy(franchise = "Silksong / Team Cherry"),
+            shortlistItem("evt-2", article(2).link)
+        )
+        val summary = "• **First [story].**\n\n[Title 1](https://example.com/1)\n• **Second.**\n\n[Title 2](https://example.com/2)"
+
+        DigestDeliverer(config(), db, sender, moderationNotifier = notifier).deliver("tech", summary, articles, shortlist)
+
+        verify {
+            notifier.afterDigest("tech", match { posts ->
+                posts.map { it.messageId } == listOf(11L, 13L) &&
+                    posts[0].muteKeyword == "silksong" && posts[1].muteKeyword == null &&
+                    posts[0].url == "https://t.me/tech/11" && posts[0].eventKey == "evt-1"
+            })
+        }
+    }
+
+    @Test
     fun `legacy bullet gets only the static category tag`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

@@ -15,7 +15,8 @@ internal object Schema {
         ArticlesTable, PendingBatchesTable, SummariesTable, CoveredEventsTable, RejectedEventsTable,
         LlmCallsTable, ArticleEmbeddingsTable, EventEmbeddingsTable,
         DigestMessagesTable, ReactionCountsTable, AudienceAffinityTable, BotStateTable,
-        BadgeCacheTable, EntityIntrosTable, TrackerEntriesTable, AdminMutesTable, MuteSuggestionsTable
+        BadgeCacheTable, EntityIntrosTable, TrackerEntriesTable, AdminMutesTable, MuteSuggestionsTable,
+        AdminFeedbackTable
     )
 
     fun create() {

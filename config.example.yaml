@@ -224,6 +224,7 @@ feedback:
                            # 1 suits a single-reader channel (your own 👍/👎 is the signal),
                            # raise for channels with a real audience
   recomputeHours: 12       # rebuild cadence (checked at the start of each digest cycle)
+  explicitWeight: 3.0      # one 👍/👎 moderation press (admin.moderation) = this many reactions
   # Per-emoji valence overrides (-1.0..1.0), merged over the built-in defaults:
   # valence:
   #   "🤡": 1.0            # e.g. an audience that uses 🤡 approvingly
@@ -290,6 +291,19 @@ feedback:
 #     minTone: 2.0
 #     minRejected: 20
 #     maxPerRun: 5
+#   # Post moderation from THIS (private) chat — never buttons under channel posts, which every
+#   # reader would see. After each digest, one silent message per published post:
+#   #   🎮 gaming · <title> · post-link   [🗑 delete] [🔇 Mute: <franchise>] [👍 more] [👎 less]
+#   # 🗑 asks first, then deletes every chunk of the post (Telegram allows it for 48 h) and its
+#   # digest_messages rows; the event stays covered, so it is not posted again. 🔇 asks in-category
+#   # or global and writes the same DB mute as /mute. 👍/👎 go to admin_feedback (last press wins,
+#   # the same press again clears it) and count as feedback.explicitWeight reactions in the next
+#   # affinity recompute — no attributionHours wait; a deleted post counts as a double 👎.
+#   # Needs commands.enabled + statusChatId. 20–40 posts a day mean as many messages here; they go
+#   # out after the digest on their own thread, spaced 1 s apart, so channel posting never waits.
+#   moderation:
+#     enabled: false
+#     categories: []           # empty = every category
 
 categories:
   tech:

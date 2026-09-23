@@ -51,6 +51,12 @@ interface TrackerStore {
 
     /** Entries not touched by any digest in [days] days: a stale TBA or a long-released title. */
     fun deleteOldTrackerEntries(days: Long = 365)
+
+    /**
+     * Forgets the "latest post" of entries that point at these messages of [chatId] (a post
+     * deleted from the channel): the tracker line stays, without a link to a dead post.
+     */
+    fun clearTrackerPostRefs(chatId: Long, messageIds: Collection<Long>): Int
 }
 
 internal class TrackerRepository : TrackerStore {
@@ -108,6 +114,18 @@ internal class TrackerRepository : TrackerStore {
                     it[messageId] = row.messageId
                     it[updatedAt] = row.updatedAt
                 }
+            }
+        }
+    }
+
+    override fun clearTrackerPostRefs(chatId: Long, messageIds: Collection<Long>): Int {
+        if (messageIds.isEmpty()) return 0
+        return transaction {
+            TrackerEntriesTable.update({
+                (TrackerEntriesTable.chatId eq chatId) and (TrackerEntriesTable.messageId inList messageIds)
+            }) {
+                it[TrackerEntriesTable.chatId] = null
+                it[TrackerEntriesTable.messageId] = null
             }
         }
     }

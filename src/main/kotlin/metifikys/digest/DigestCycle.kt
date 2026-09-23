@@ -360,6 +360,7 @@ class DigestCycle(
         retain("rejected_events", REJECTED_EVENTS_RETENTION_DAYS) { db.deleteOldRejectedEvents(it) }
         retain("digest_messages", REACTION_RETENTION_DAYS) { db.deleteOldDigestMessages(it) }
         retain("reaction_counts", REACTION_RETENTION_DAYS) { db.deleteOldReactionCounts(it) }
+        db.deleteOldAdminFeedback(REACTION_RETENTION_DAYS)
         retain("llm_calls", config.processing.llmCallRetentionDays) { db.deleteOldLlmCalls(it) }
         db.deleteOldBadgeCache()
         db.deleteOldEntityIntros()
