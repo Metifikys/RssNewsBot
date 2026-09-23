@@ -100,4 +100,13 @@ class EventHistoryTest {
         assertEquals(0, rec.backfillIfEmpty())
         assertEquals(2, db.fetchEventHistorySince("gaming", now.minusDays(100)).size)
     }
+
+    @Test
+    fun `the entity key drops the parenthetical Step 1 adds to the subject`() {
+        // Prod subjects look like "Ace Attorney 7 (чутки про розробку)": the name, then what happened.
+        assertEquals("ace_attorney_7", EventHistoryRecorder.entityKeyOf("Ace Attorney 7 (чутки про розробку)", "Ace Attorney / Capcom"))
+        assertEquals("ace_attorney_7", EventHistoryRecorder.entityKeyOf("Ace Attorney 7", ""))
+        assertEquals("the_witcher", EventHistoryRecorder.entityKeyOf("", "The Witcher"))
+        assertEquals("", EventHistoryRecorder.entityKeyOf("", ""))
+    }
 }

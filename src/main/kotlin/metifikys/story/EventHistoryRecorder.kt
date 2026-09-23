@@ -59,9 +59,17 @@ class EventHistoryRecorder(private val config: AppConfig, private val db: NewsDa
         private const val BACKFILL_DAYS = 3650L
         private const val BACKFILL_LIMIT = 100_000
 
-        /** The entity an event is about: the subject, or the franchise when there is none — as the trackers key it. */
-        fun entityKeyOf(subject: String, franchise: String): String =
-            Hashtags.entityKey(subject.trim().ifEmpty { franchise.trim() }) ?: ""
+        /**
+         * The entity an event is about: the subject, or the franchise when there is none (as the
+         * trackers pick it), without the trailing parenthetical Step 1 adds to describe the event —
+         * "Ace Attorney 7 (чутки про розробку)" and "Ace Attorney 7 (анонс)" are one entity.
+         */
+        fun entityKeyOf(subject: String, franchise: String): String {
+            val name = subject.trim().ifEmpty { franchise.trim() }
+            return Hashtags.entityKey(TRAILING_PAREN.replace(name, "").ifBlank { name }) ?: ""
+        }
+
+        private val TRAILING_PAREN = Regex("""\s*\([^()]*\)\s*$""")
 
         fun rowOf(category: String, item: ShortlistItem, at: LocalDateTime): EventHistoryRow =
             row(
