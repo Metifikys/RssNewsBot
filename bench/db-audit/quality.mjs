@@ -6,7 +6,7 @@ const db = new DatabaseSync(process.argv[2] || 'logs/news.db', { readOnly: true 
 const rows = db.prepare(`
   SELECT category, link, title, length(description) dlen, substr(description,1,400) dhead,
          (summary IS NOT NULL AND length(summary)>0) has_sum, status
-  FROM articles WHERE pub_date >= datetime('now','-30 days')
+  FROM articles WHERE pub_date >= datetime('now','localtime','-30 days')
 `).all();
 
 const hostOf = (url) => {
@@ -70,27 +70,27 @@ const sample = (label, sql) => {
 };
 sample('empty description, no summary', `
   SELECT category, title, link, length(description) dlen, substr(description,1,200) dhead
-  FROM articles WHERE pub_date >= datetime('now','-14 days') AND length(description)=0
+  FROM articles WHERE pub_date >= datetime('now','localtime','-14 days') AND length(description)=0
   ORDER BY pub_date DESC LIMIT 8`);
 sample('tiny description (<=80), no summary', `
   SELECT category, title, link, length(description) dlen, substr(description,1,200) dhead
-  FROM articles WHERE pub_date >= datetime('now','-14 days') AND length(description) BETWEEN 1 AND 80
+  FROM articles WHERE pub_date >= datetime('now','localtime','-14 days') AND length(description) BETWEEN 1 AND 80
     AND (summary IS NULL OR length(summary)=0)
   ORDER BY pub_date DESC LIMIT 8`);
 sample('reddit boilerplate', `
   SELECT category, title, link, length(description) dlen, substr(description,1,200) dhead
-  FROM articles WHERE pub_date >= datetime('now','-14 days') AND description LIKE '%submitted by%' AND description LIKE '%[link]%'
+  FROM articles WHERE pub_date >= datetime('now','localtime','-14 days') AND description LIKE '%submitted by%' AND description LIKE '%[link]%'
   ORDER BY pub_date DESC LIMIT 6`);
 sample('read-more stubs', `
   SELECT category, title, link, length(description) dlen, substr(description,1,200) dhead
-  FROM articles WHERE pub_date >= datetime('now','-14 days')
+  FROM articles WHERE pub_date >= datetime('now','localtime','-14 days')
     AND (description LIKE '%appeared first on%' OR description LIKE '%Continue reading%' OR description LIKE '%Read more%')
   ORDER BY pub_date DESC LIMIT 6`);
 
 // which categories & hosts feed SUMMARIZE via openrouter (llm_calls has category)
 console.log('\n=== llm_calls SUMMARIZE by category (14d) ===');
 console.table(db.prepare(`SELECT provider, model, category, COUNT(*) n FROM llm_calls
-  WHERE use_case='SUMMARIZE' AND ts >= datetime('now','-14 days') GROUP BY provider, model, category`).all());
+  WHERE use_case='SUMMARIZE' AND ts >= datetime('now','localtime','-14 days') GROUP BY provider, model, category`).all());
 
 // one full recent politics digest + one gaming digest as baseline reference
 for (const cat of ['politics','gaming','tech']) {
@@ -102,7 +102,7 @@ for (const cat of ['politics','gaming','tech']) {
 console.log('\n=== sample stored summaries (tech, prod nemotron/gpt output) ===');
 for (const r of db.prepare(`SELECT title, link, length(description) dlen, substr(summary,1,350) s
   FROM articles WHERE category='tech' AND summary IS NOT NULL AND length(summary)>0
-    AND pub_date >= datetime('now','-7 days') ORDER BY pub_date DESC LIMIT 4`).all()) {
+    AND pub_date >= datetime('now','localtime','-7 days') ORDER BY pub_date DESC LIMIT 4`).all()) {
   console.log(`- ${r.title?.slice(0,80)} [dlen=${r.dlen}]`);
   console.log(`  summary: ${JSON.stringify(r.s)}\n`);
 }

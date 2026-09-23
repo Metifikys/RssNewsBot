@@ -12,22 +12,22 @@ const sumCandidates = [
   // 2 tech EN, enriched full-content (dlen ~1500) WITH prod nemotron summary as baseline
   ...pick(`SELECT id, category, title, link, description, summary FROM articles
     WHERE category='tech' AND summary IS NOT NULL AND length(summary)>100 AND length(description)>=1200
-      AND pub_date >= datetime('now','-4 days')
+      AND pub_date >= datetime('now','localtime','-4 days')
       AND (link LIKE '%tomshardware%' OR link LIKE '%wired.com%' OR link LIKE '%xda-developers%' OR link LIKE '%arstechnica%' OR link LIKE '%theverge%')
     ORDER BY pub_date DESC`, 2),
   // 1 science with prod summary
   ...pick(`SELECT id, category, title, link, description, summary FROM articles
     WHERE category='science' AND summary IS NOT NULL AND length(summary)>100 AND length(description)>=1000
-      AND pub_date >= datetime('now','-4 days') ORDER BY pub_date DESC`, 1),
+      AND pub_date >= datetime('now','localtime','-4 days') ORDER BY pub_date DESC`, 1),
   // 1 tech UA short-desc (no prod summary — thin input + language fidelity probe)
   ...pick(`SELECT id, category, title, link, description, summary FROM articles
     WHERE category='tech' AND (summary IS NULL OR summary='') AND (link LIKE '%itc.ua%' OR link LIKE '%mezha%' OR link LIKE '%gagadget%')
-      AND length(description) BETWEEN 150 AND 600 AND pub_date >= datetime('now','-4 days')
+      AND length(description) BETWEEN 150 AND 600 AND pub_date >= datetime('now','localtime','-4 days')
     ORDER BY pub_date DESC`, 1),
   // 1 politics UA (pravda) with decent desc
   ...pick(`SELECT id, category, title, link, description, summary FROM articles
     WHERE category='politics' AND link LIKE '%pravda.com.ua%' AND length(description) BETWEEN 500 AND 1600
-      AND pub_date >= datetime('now','-4 days') ORDER BY pub_date DESC`, 1),
+      AND pub_date >= datetime('now','localtime','-4 days') ORDER BY pub_date DESC`, 1),
 ];
 
 const SUMMARIZE_SYSTEM =

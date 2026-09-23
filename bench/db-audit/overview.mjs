@@ -18,14 +18,14 @@ console.table(q(`SELECT category,
   SUM(CASE WHEN length(description) BETWEEN 81 AND 300 THEN 1 ELSE 0 END) short_desc,
   SUM(CASE WHEN length(description) > 300 THEN 1 ELSE 0 END) ok_desc,
   SUM(CASE WHEN summary IS NOT NULL AND length(summary) > 0 THEN 1 ELSE 0 END) has_summary
-FROM articles WHERE pub_date >= datetime('now','-30 days') GROUP BY category`));
+FROM articles WHERE pub_date >= datetime('now','localtime','-30 days') GROUP BY category`));
 
 console.log('=== summaries (recent digests) ===');
 console.table(q(`SELECT category, created_at, article_count, length(summary) len FROM summaries ORDER BY created_at DESC LIMIT 12`));
 
 console.log('=== llm_calls last 14d ===');
 console.table(q(`SELECT provider, model, use_case, COUNT(*) n, ROUND(AVG(duration_ms)) avg_ms, ROUND(SUM(est_cost_usd),3) cost
-FROM llm_calls WHERE ts >= datetime('now','-14 days') GROUP BY provider, model, use_case ORDER BY n DESC LIMIT 20`));
+FROM llm_calls WHERE ts >= datetime('now','localtime','-14 days') GROUP BY provider, model, use_case ORDER BY n DESC LIMIT 20`));
 
 console.log('=== pending_batches ===');
 console.table(q(`SELECT kind, status, COUNT(*) n FROM pending_batches GROUP BY kind, status`));
