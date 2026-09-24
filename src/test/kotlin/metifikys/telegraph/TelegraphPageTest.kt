@@ -72,6 +72,33 @@ class TelegraphPageTest {
         assertTrue(full.endsWith("Second paragraph <b>raw</b>.\n\n⚡ [Читати повністю](https://telegra.ph/p)\n\n[Title 1](https://example.com/1)"))
     }
 
+    // A tech bullet: no **headline**, just an emoji-led lead paragraph, the details and the link.
+    private val techTopic = "⚠️ Оновлення: збій прошивки Samsung виявився масштабнішим, ніж здавалося спочатку — " +
+        "у Південній Кореї масово відмовляють «розумні» холодильники якраз напередодні свята. Техніка не працює.\n\n" +
+        "Клієнти скаржаться на зіпсовану їжу, ремонтні візити переносяться на жовтень.\n\n" +
+        "[Оновлення Samsung вивело з ладу холодильники](https://www.tomshardware.com/x)"
+
+    @Test
+    fun `teaser of a topic without a headline keeps only the lead paragraph`() {
+        assertEquals(
+            techTopic.substringBefore("\n\n") + "\n\n" +
+                "⚡ [Читати повністю](https://telegra.ph/p)\n\n" +
+                "[Оновлення Samsung вивело з ладу холодильники](https://www.tomshardware.com/x)",
+            TelegraphPage.teaser(techTopic, "https://telegra.ph/p")
+        )
+    }
+
+    @Test
+    fun `title of a topic without a headline is the lead's first sentence, cut at a clause break`() {
+        assertEquals(
+            "Оновлення: збій прошивки Samsung виявився масштабнішим, ніж здавалося спочатку",
+            TelegraphPage.title(techTopic)
+        )
+        assertEquals("Вийшов CheatBench", TelegraphPage.title("🧠 Вийшов CheatBench. Деталі далі.\n\nІнше.\n\n[a](https://a.b/c)"))
+        val long = TelegraphPage.title("🔒 " + "слово ".repeat(40) + "кінець.\n\nІнше.")
+        assertTrue(long.length <= TelegraphPage.MAX_LEAD_TITLE + 1 && long.endsWith("…"), long)
+    }
+
     @Test
     fun `a topic without the strict shape keeps its text in teaser mode`() {
         assertEquals(

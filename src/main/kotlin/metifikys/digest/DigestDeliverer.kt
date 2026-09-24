@@ -246,7 +246,12 @@ class DigestDeliverer(
                     "[Category:$categoryName][LongForm] $eventKey: ${outgoing.length} chars as text + " +
                         (if (pageUrl != null) "Telegraph page preview (${telegraphCfg?.mode})" else "image preview")
                 }
-                sender.sendToChannel(channelId, outgoing, disablePreview = true, replyToMessageId = replyTo, previewImageUrl = preview)
+                // A picture preview sits above the text; the Instant View card of a telegra.ph page goes
+                // below it, after the ⚡ link it belongs to.
+                sender.sendToChannel(
+                    channelId, outgoing, disablePreview = true, replyToMessageId = replyTo,
+                    previewImageUrl = preview, previewAboveText = pageUrl == null
+                )
             } else if (image != null) {
                 // Single post: photo + caption. Caption is truncated to Telegram's 1024-char
                 // limit inside TelegramSender (with markdown→plain-text fallback on parse errors).

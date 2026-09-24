@@ -268,7 +268,9 @@ class TelegramSender(
         text: String,
         disablePreview: Boolean = false,
         replyToMessageId: Long? = null,
-        previewImageUrl: String? = null
+        previewImageUrl: String? = null,
+        /** Where the [previewImageUrl] card sits: above the text (a picture) or below it (a telegra.ph page). */
+        previewAboveText: Boolean = true
     ): List<SentRef> {
         val chunks = chunkMessage(text)
         val refs = ArrayList<SentRef>(chunks.size)
@@ -277,11 +279,11 @@ class TelegramSender(
             // The image preview belongs to the first chunk; later chunks keep [disablePreview].
             val preview = if (index == 0) previewImageUrl else null
             val html = TopicFormatter.toHtml(chunk)
-            val ref = when (val res = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview, replyTo = replyTo, previewImageUrl = preview)) {
+            val ref = when (val res = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview, replyTo = replyTo, previewImageUrl = preview, previewAboveText = previewAboveText)) {
                 is SendResult.Ok -> res.ref
                 // BUG-007: fall back to plain text only on a 400 markup error.
                 is SendResult.BadRequest ->
-                    (sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview, replyTo = replyTo, previewImageUrl = preview) as? SendResult.Ok)?.ref
+                    (sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview, replyTo = replyTo, previewImageUrl = preview, previewAboveText = previewAboveText) as? SendResult.Ok)?.ref
                 is SendResult.Transient -> null
             }
             if (ref != null) refs += ref
@@ -399,13 +401,14 @@ class TelegramSender(
         parseMode: String?,
         disablePreview: Boolean = false,
         replyTo: Long? = null,
-        previewImageUrl: String? = null
+        previewImageUrl: String? = null,
+        previewAboveText: Boolean = true
     ): SendResult {
         // An explicit image preview replaces the legacy on/off flag (the two must not conflict).
         val request = if (previewImageUrl != null) {
             SendMessageRequest(
                 chatId, text, parseMode, reply_parameters = replyParams(replyTo),
-                link_preview_options = LinkPreviewOptions(previewImageUrl, prefer_large_media = true, show_above_text = true)
+                link_preview_options = LinkPreviewOptions(previewImageUrl, prefer_large_media = true, show_above_text = previewAboveText)
             )
         } else {
             SendMessageRequest(chatId, text, parseMode, if (disablePreview) true else null, replyParams(replyTo))

@@ -499,7 +499,7 @@ class DigestDelivererTest {
             .deliver("tech", summary, listOf(withImage), listOf(long))
 
         verify(exactly = 0) { sender.sendPhotoToChannel(any(), any(), any(), any()) }
-        verify { sender.sendToChannel("@tech", any(), true, null, "https://img.example/1.jpg") }
+        verify { sender.sendToChannel("@tech", any(), true, null, "https://img.example/1.jpg", true) }
         assertTrue(sent.captured.length > 1024)
         assertTrue("\n\nДругий абзац." in sent.captured)
     }
@@ -849,7 +849,7 @@ class DigestDelivererTest {
         every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
         val sender = mockk<TelegramSender>(relaxed = true)
         val sent = slot<String>()
-        every { sender.sendToChannel(any(), capture(sent), any(), any(), any()) } returns listOf(SentRef(-100L, 41L))
+        every { sender.sendToChannel(any(), capture(sent), any(), any(), any(), any()) } returns listOf(SentRef(-100L, 41L))
         val publisher = mockk<metifikys.telegraph.TelegraphPublisher>()
         every { publisher.publish(any(), any(), any(), any(), any()) } returns pageUrl
         val withImage = article(1).copy(imageUrl = "https://img.example/1.jpg")
@@ -868,7 +868,8 @@ class DigestDelivererTest {
     @Test
     fun `telegraph teaser drops the second paragraph and previews the page`() {
         val (db, sender, sent) = telegraphDelivery("teaser", "https://telegra.ph/Story-09-23")
-        verify { sender.sendToChannel("@tech", any(), true, null, "https://telegra.ph/Story-09-23") }
+        // The page card goes below the teaser, after the ⚡ link it belongs to.
+        verify { sender.sendToChannel("@tech", any(), true, null, "https://telegra.ph/Story-09-23", false) }
         assertFalse("Другий абзац" in sent)
         assertTrue(sent.startsWith("🎮 **Story.**\n\nПерший абзац."))
         assertTrue(sent.endsWith("⚡ [Читати повністю](https://telegra.ph/Story-09-23)\n\n[Title 1](https://example.com/1)\n\n#tech"))

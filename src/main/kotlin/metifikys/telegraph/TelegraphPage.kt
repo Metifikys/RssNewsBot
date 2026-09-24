@@ -47,16 +47,36 @@ object TelegraphPage {
         return Parts(title, body, link)
     }
 
+    /** A title derived from a lead paragraph (no `**headline**`, e.g. tech bullets) stays this short. */
+    const val MAX_LEAD_TITLE = 100
+
+    private val SENTENCE_END = Regex("""[.!?…](?=\s|$)""")
+    private val CLAUSE_BREAKS = listOf(" — ", " – ", ": ", "; ", ", ")
+
     /**
-     * The page title: the `**headline**` without its trailing period (else the first line without
-     * Markdown), whitespace collapsed, at most [MAX_TITLE] characters; never blank.
+     * The page title: the `**headline**` without its trailing period; without one (a tech bullet is
+     * just paragraphs) the first sentence of the lead paragraph, emoji dropped, cut at a clause
+     * break to [MAX_LEAD_TITLE]. Whitespace collapsed, at most [MAX_TITLE] characters; never blank.
      */
     fun title(topic: String): String {
-        val first = parts(topic).title ?: topic.trim().lineSequence().firstOrNull().orEmpty()
-        val raw = BOLD.find(first)?.groupValues?.get(1)?.trim()?.removeSuffix(".")
-            ?: TopicFormatter.MARKDOWN_LINK.replace(first) { it.groupValues[1] }.replace("*", "").replace("`", "")
+        val p = parts(topic)
+        val raw = p.title?.let { BOLD.find(it)?.groupValues?.get(1)?.trim()?.removeSuffix(".") }
+            ?: leadTitle(p.body.firstOrNull() ?: topic.trim().lineSequence().firstOrNull().orEmpty())
         val clean = raw.replace(WHITESPACE, " ").trim().ifEmpty { "Новина" }
         return if (clean.length <= MAX_TITLE) clean else clean.take(MAX_TITLE - 1).trimEnd() + "…"
+    }
+
+    private fun leadTitle(paragraph: String): String {
+        val text = TopicFormatter.MARKDOWN_LINK.replace(paragraph) { it.groupValues[1] }
+            .replace("*", "").replace("`", "").replace(WHITESPACE, " ").trim()
+            .dropWhile { !it.isLetterOrDigit() && it != '«' && it != '"' }
+        val sentence = SENTENCE_END.find(text)?.let { text.substring(0, it.range.first) } ?: text
+        if (sentence.length <= MAX_LEAD_TITLE) return sentence
+        val head = sentence.take(MAX_LEAD_TITLE)
+        val clause = CLAUSE_BREAKS.maxOfOrNull { head.lastIndexOf(it) } ?: -1
+        if (clause >= MAX_LEAD_TITLE / 3) return head.substring(0, clause).trimEnd()
+        val word = head.lastIndexOf(' ')
+        return (if (word > 0) head.substring(0, word) else head).trimEnd(',', ';', ':', ' ') + "…"
     }
 
     /**
@@ -82,13 +102,13 @@ object TelegraphPage {
     }
 
     /**
-     * The `teaser` channel post: the title line, the first body paragraph, [readMoreLine] and the
-     * source link — the rest of the body lives on the page. A topic without that shape keeps its
-     * text and only gains the ⚡ line ([withReadMore]).
+     * The `teaser` channel post: the title line (when the topic has a `**headline**`), the first
+     * body paragraph, [readMoreLine] and the source link — the rest of the body lives on the page.
+     * A topic with nothing to hide (a single paragraph) keeps its text and only gains the ⚡ line.
      */
     fun teaser(topic: String, pageUrl: String): String {
         val p = parts(topic)
-        if (p.title == null || p.body.isEmpty()) return withReadMore(topic, pageUrl)
+        if (p.body.isEmpty() || (p.title == null && p.body.size < 2)) return withReadMore(topic, pageUrl)
         return listOfNotNull(p.title, p.body.first(), readMoreLine(pageUrl), p.link).joinToString("\n\n")
     }
 

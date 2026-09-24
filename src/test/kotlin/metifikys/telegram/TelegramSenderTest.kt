@@ -60,6 +60,13 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `a page preview can sit below the text`() = withFakeApi { s, bodies ->
+        s.sendToChannel("@ch", "teaser", disablePreview = true, previewImageUrl = "https://telegra.ph/p", previewAboveText = false)
+        val preview = """"link_preview_options":{"url":"https://telegra.ph/p","prefer_large_media":true,"show_above_text":false}"""
+        assertTrue(preview in bodies[0], bodies[0])
+    }
+
+    @Test
     fun `only the first chunk of a long message carries the reply`() = withFakeApi { s, bodies ->
         val text = "a".repeat(3000) + "\n" + "b".repeat(3000)
         s.sendToChannel("@ch", text, replyToMessageId = 11L)
