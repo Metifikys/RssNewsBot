@@ -202,7 +202,7 @@ via a `/status` admin snapshot.
     endpoint, `yt-dlp --write-auto-subs`) automates access to YouTube outside its API, which
     YouTube's Terms of Service forbid; the Data API's `captions.download` serves only the video
     owner's own captions; server IPs get bot checks and blocks that would also take out the ▶️
-    trailer badge. See the comment under `longForm` in `config.example.yaml`. How often a long
+    trailer badge. How often a long
     event has a video at all can be read without touching YouTube: the ingest already stores the
     embedded id (`articles.meta_json` → `video.youtubeId`) for categories with the trailer badge.
   - **storyLines** (needs `storyIntel.enabled`) — deterministic footer facts from the story
@@ -957,7 +957,11 @@ variables (they override the file):
 | `OPENROUTER_API_KEY`  | no       | Used only if `openrouter:` block set |
 | `TELEGRAPH_TOKEN`     | no       | telegra.ph token for `post.longForm.telegraph` (else created once, kept in `bot_state`) |
 
-`config.example.yaml` documents every option inline.
+`config.example.yaml` is a complete, working config: every block is present and active, every
+optional feature ships with `enabled: false`, and values that would change behaviour (mute keys,
+LAN hosts, admin chat ids, tokens) are neutral with the example in the trailing comment. A block
+with `enabled: false` behaves exactly like an absent block, dependency checks included. A unit
+test loads it through `--check-config`, so it cannot drift into an example that does not start.
 
 ### 4. Build
 
@@ -1084,7 +1088,7 @@ llm:                      # per-use-case provider+model overrides
   summarize:        { provider: …, model: … }
   batchFallback:    { provider: …, model: … }    # any provider
   persona:          { provider: …, model: … }    # post.persona remark (default: the render route)
-  shadow:           { extract: {…}, render: {…}, promptFile, sampleRate: 1.0, queueSize: 4 }  # 🌓 B next to A, stored only
+  shadow:           { enabled: true, extract: {…}, render: {…}, promptFile, sampleRate: 1.0, queueSize: 4 }  # 🌓 B next to A, stored only
 
 dedup:                    # two-step pipeline opt-in
   promptFile: prompts/X.yaml

@@ -1,770 +1,518 @@
+# A complete, working example: every block is present and loads as is
+# (`java -jar RssNewsBot.jar --check-config config.example.yaml`). Optional features ship with
+# `enabled: false`; switch one on by flipping that line. Details: README → Feature overview /
+# Configuration reference.
+
 telegram:
-  # Set via env var TELEGRAM_BOT_TOKEN or replace the placeholder below
-  botToken: "YOUR_TELEGRAM_BOT_TOKEN"
-  # Start the getUpdates long-poll loop that records channel-post reactions (👍/👎 …) into
-  # `reaction_counts`, surfaced in the /status "Reactions (7d)" section. Off by default.
-  # IMPORTANT: Telegram allows only ONE getUpdates consumer per bot token, and the bot must be
-  # an admin of each channel. Never enable this on two instances sharing the same token (e.g. a
-  # dev box and the production server) — the second one gets an HTTP 409 conflict.
+  botToken: "YOUR_TELEGRAM_BOT_TOKEN"   # env TELEGRAM_BOT_TOKEN wins
+  # getUpdates loop: reactions (/status "Reactions (7d)"), admin commands and buttons. One consumer
+  # per bot token: never on two instances sharing a token (HTTP 409). Bot must be a channel admin.
   updatesPolling: false
 
 openai:
-  # Set via env var OPENAI_API_KEY or replace the placeholder below
-  apiKey: "YOUR_OPENAI_API_KEY"
+  apiKey: "YOUR_OPENAI_API_KEY"         # env OPENAI_API_KEY wins
   model: "gpt-5-mini-2025-08-07"
   batchModel: "gpt-5-mini-2025-08-07"
 
-# Optional OpenRouter provider.
-# Generic sync summarize/render paths switch to OpenRouter when this block is present.
-# Step 1 `eventExtractor` also sends every 2nd request here, so you can A/B test a free model.
-# The Batch API always stays on the `openai:` block above — OpenRouter has no compatible Batch API.
+# ── OpenRouter ─────────────────────────────────────────────────── (optional provider)
+# Present = the default for sync summarize / render, and every 2nd Step 1 request (A/B).
+# No Batch API: batch always stays on `openai:`.
 openrouter:
-  # Set via env var OPENROUTER_API_KEY or replace the placeholder below
-  apiKey: "YOUR_OPENROUTER_API_KEY"
-  model: "provider/your-free-model"      # prefixed model name, e.g. some-provider/free-tier-model
-  # Optional priority ladder for free-tier flakiness. When `models` is set it REPLACES
-  # `model`: every sync call (summarize / render / extract-alternate on the global default)
-  # tries the first entry and walks down on failure — provider error, dead endpoint,
-  # exhausted retries. Max 4 entries, no duplicates or blanks. `/status` still attributes
-  # each call to the model that actually answered. A per-category `llm.*` override that
-  # pins provider+model bypasses the ladder deliberately.
-  # models:
-  #   - nvidia/nemotron-3-ultra-550b-a55b:free
-  #   - minimax/minimax-m3:free
-  #   - dots-studio/dots-3-note-preview:free
-  baseUrl: "https://openrouter.ai/api/v1" # optional; this is the default
-  httpReferer: "https://github.com/your/repo"  # optional attribution header
-  xTitle: "RssNewsBot"                        # optional attribution header
+  apiKey: "YOUR_OPENROUTER_API_KEY"     # env OPENROUTER_API_KEY wins
+  model: "provider/your-free-model"
+  models: []                            # failover ladder, REPLACES model when set (max 4), e.g.
+                                        # [nvidia/nemotron-3-ultra-550b-a55b:free, minimax/minimax-m3:free]
+  baseUrl: "https://openrouter.ai/api/v1"
+  httpReferer: "https://github.com/your/repo"   # attribution header
+  xTitle: "RssNewsBot"                          # attribution header
 
-# Optional Anthropic provider.
-# When this block is present, categories may opt into Anthropic for any LLM use case
-# (extract / render / batch / summarize / batchFallback) via per-category `llm.*` overrides,
-# and feeds may declare `summarize: anthropic`. Unlike OpenRouter, Anthropic exposes a native
-# Message Batches API, so `batch` and `batchFallback` overrides BOTH support provider: anthropic.
+# ── Anthropic ──────────────────────────────────────────────────── (optional provider)
+# Present = `provider: anthropic` in any llm.* slot (batch included: native Message Batches API)
+# and `summarize: anthropic` on feeds.
 anthropic:
-  # Set via env var ANTHROPIC_API_KEY or replace the placeholder below
-  apiKey: "YOUR_ANTHROPIC_API_KEY"
-  model: "claude-sonnet-4-6"               # default sync model
-  batchModel: "claude-sonnet-4-6"          # default batch model (defaults to `model` when omitted)
-  baseUrl: "https://api.anthropic.com/v1"  # optional; this is the default
-  anthropicVersion: "2023-06-01"           # optional; required Anthropic-Version header
-  maxTokens: 4096                          # optional; per-request output cap
+  apiKey: "YOUR_ANTHROPIC_API_KEY"      # env ANTHROPIC_API_KEY wins
+  model: "claude-sonnet-4-6"            # sync model
+  batchModel: "claude-sonnet-4-6"       # default: model
+  baseUrl: "https://api.anthropic.com/v1"
+  anthropicVersion: "2023-06-01"
+  maxTokens: 4096                       # output cap per request
 
-# Optional Claude CLI provider — shells out to the local `claude -p` (Claude Code print mode).
-# There is NO apiKey: the subprocess authenticates with the machine's existing `claude` login
-# (Pro/Max subscription or whatever the CLI is configured with), so this can be far cheaper than
-# per-token API billing. When present, categories may opt in for any SYNC use case
-# (extract / extractAlternate / render / summarize / batchFallback) via `llm.*` overrides
-# (use `provider: claudecli`), and feeds may declare `summarize: claudecli`. There is no Batch
-# API for a CLI, so `llm.batch: claudecli` (and `batch: true` on extract) is rejected at load time.
-# Requires the `claude` binary to be installed, on PATH, and logged in.
-# claudeCli:
-#   command: "claude"      # executable name or absolute path; must be on PATH
-#   model: ""              # blank = let the CLI pick its default model; or e.g. "claude-sonnet-4-6"
-#   timeoutSeconds: 300    # force-kill ceiling for a single invocation
-#
-# Example category usage (model may be left blank to use the CLI default):
-#   llm:
-#     render:    { provider: claudecli, model: "" }
-#     summarize: { provider: claudecli, model: claude-sonnet-4-6 }
-# …or per feed:  - { url: https://example.com/feed, summarize: claudecli }
+# ── Claude CLI / Codex CLI ─────────────────────────────────────── (optional providers)
+# `claude -p` / `codex exec` on this machine, authenticated by its own login (no apiKey). Used only
+# where a category or feed names `claudecli` / `codexcli` (sync slots only, no Batch API).
+claudeCli:
+  command: "claude"                     # executable name (on PATH) or absolute path
+  model: ""                             # "" = the CLI's default model; e.g. "claude-sonnet-4-6"
+  timeoutSeconds: 300                   # force-kill ceiling per invocation
+codexCli:
+  command: "codex"
+  model: ""                             # "" = the CLI's default model; e.g. "gpt-5-codex"
+  timeoutSeconds: 300
 
-# Optional Codex CLI provider — shells out to the local `codex exec` (OpenAI Codex non-interactive
-# mode). There is NO apiKey: the subprocess authenticates with the machine's existing `codex` login
-# (ChatGPT subscription or whatever the CLI is configured with), so this can be far cheaper than
-# per-token API billing. When present, categories may opt in for any SYNC use case
-# (extract / extractAlternate / render / summarize / batchFallback) via `llm.*` overrides
-# (use `provider: codexcli`), and feeds may declare `summarize: codexcli`. There is no Batch
-# API for a CLI, so `llm.batch: codexcli` (and `batch: true` on extract) is rejected at load time.
-# The system prompt is passed via codex's `model_instructions_file` config key and the final answer
-# is read from `--output-last-message`. Requires the `codex` binary installed, on PATH, and logged in.
-# codexCli:
-#   command: "codex"       # executable name or absolute path; must be on PATH
-#   model: ""              # blank = let the CLI pick its default model; or e.g. "gpt-5-codex"
-#   timeoutSeconds: 300    # force-kill ceiling for a single invocation
-#
-# Example category usage (model may be left blank to use the CLI default):
-#   llm:
-#     render:    { provider: codexcli, model: "" }
-#     summarize: { provider: codexcli, model: gpt-5-codex }
-# …or per feed:  - { url: https://example.com/feed, summarize: codexcli }
+# ── CLI login health ─────────────────────────────────────────────
+# Alerts in admin.statusChatId when `claude` / `codex` loses its login, hits a usage limit or loses
+# its model, and when it recovers; /status `CLI:` line. Needs admin.statusChatId.
+health:
+  enabled: false
+  cliProbe:
+    enabled: true                       # (with health.enabled) ping a CLI idle this long:
+    intervalHours: 6
+    timeoutSeconds: 60                  # 5..600
+    claudeModel: ""                     # "" = claudeCli.model
+    codexModel: ""                      # "" = codexCli.model
+  claudeTokenExpires: null              # only for a `claude setup-token` login, e.g. "2027-08-01"
+  warnDaysBefore: 14                    # daily warning this many days before that date
 
-# ── CLI login health ─────────────────────────────────────────── (optional, off)
-# Alerts in admin.statusChatId when `claude` / `codex` loses its login, hits a usage limit or
-# loses its model, and when it recovers. /status line: `CLI: claude ✅ 2h · codex ⛔ auth з 03:10`.
-# Run the bot as the same user / HOME the CLIs are logged in under.
-# health:
-#   enabled: true
-#   cliProbe:
-#     enabled: true
-#     intervalHours: 6                # ping a CLI that had no successful run this long
-#     timeoutSeconds: 60
-#     claudeModel: ""                 # "" = the CLI's default model
-#     codexModel: ""
-#   claudeTokenExpires: "2027-08-01"  # only for a `claude setup-token` login
-#   warnDaysBefore: 14                # daily warning this many days before that date
-
-# ── Feed health ──────────────────────────────────────────────── (optional, off)
+# ── Feed health ──────────────────────────────────────────────────
 # Per-feed quality in /status (📡 Feeds, anomalies only): 💀 dead · 💤 nothing new · 🗑 noisy ·
-# 🪞 mirror. Hints only, no feed is ever disabled. Full table: bench/db-audit/report.mjs.
-# feedHealth:
-#   enabled: true
-#   windowDays: 14                # by fetched_at; max 30
-#   statusSection: true
-#   thresholds:
-#     deadDays: 3                 # 💀 no successful fetch this long…
-#     deadFailStreak: 10          #    …or this many failed passes in a row
-#     staleNewDays: 14            # 💤 nothing new this long
-#     noisyMinArticles: 30        # 🗑 at least this many articles,
-#     noisyMaxPublishedPct: 2     #    under this % published,
-#     noisyMinJunkPct: 80         #    over this % junk
-#     minPublishedForFirst: 5     # 🪞 / ⭐ only for feeds with this many published stories
-#     mirrorMaxFirstPct: 10       # 🪞 first in under this % of its published stories
-#     primaryMinFirstPct: 50      # ⭐ first in at least this %
-#   candidates:                   # candidate NEW feeds, shown in the report as "Кандидати"
-#     enabled: true               # (independent of feedHealth.enabled; the bot never adds a feed)
-#     everyDays: 7
-#     maxProbesPerRun: 10         # hosts probed per run
-#     maxRequestsPerRun: 40       # HTTP requests per run
-#     minPublished: 3             # published links from the domain in windowDays
-#     recheckDays: 30
-#     ignoreDomains: [youtube.com, x.com, twitter.com, reddit.com, t.me, wikipedia.org, github.com]
+# 🪞 mirror · ⭐ first source. Hints only, no feed is ever disabled. Full table: bench/db-audit/report.mjs.
+feedHealth:
+  enabled: false
+  windowDays: 14                        # by fetched_at; max 30
+  statusSection: true
+  thresholds:
+    deadDays: 3                         # 💀 no successful fetch this long…
+    deadFailStreak: 10                  #    …or this many failed passes in a row
+    staleNewDays: 14                    # 💤 nothing new this long
+    noisyMinArticles: 30                # 🗑 at least this many articles,
+    noisyMaxPublishedPct: 2             #    under this % published,
+    noisyMinJunkPct: 80                 #    over this % junk
+    minPublishedForFirst: 5             # 🪞 / ⭐ only for feeds with this many published stories
+    mirrorMaxFirstPct: 10               # 🪞 first in under this %
+    primaryMinFirstPct: 50              # ⭐ first in at least this %
+  candidates:                           # candidate NEW feeds for the report; independent of
+    enabled: false                      # feedHealth.enabled; the bot never adds a feed
+    everyDays: 7
+    maxProbesPerRun: 10                 # hosts probed per run (1..50)
+    maxRequestsPerRun: 40               # HTTP requests per run (1..200)
+    minPublished: 3                     # published links from the domain in windowDays
+    recheckDays: 30
+    ignoreDomains: [youtube.com, youtu.be, x.com, twitter.com, reddit.com, redd.it, t.me, wikipedia.org,
+                    github.com, bsky.app, instagram.com, facebook.com, tiktok.com, store.steampowered.com,
+                    steamcommunity.com, news.ycombinator.com]
 
-# ── Story clusters ───────────────────────────────────────────── (optional, off)
-# Records which articles the dedup folded into which event. Nothing in the channel changes;
-# post.storyLines, weekly.showOutlets / sourceLeaderboard / barometer read this data —
-# switch it on weeks before them.
-# storyIntel:
-#   enabled: true
-#   retentionDays: 180            # event_articles; must be >= weekly.lookbackDays
-#   historyRetentionDays: 1095    # event_history (🌀 vaporware, barometer)
-#   domainAliases:                # sister sites / mirrors counted as one outlet
-#     eurogamer.de: eurogamer.net
+# ── Story clusters ───────────────────────────────────────────────
+# Records which articles the dedup folded into which event; nothing in the channel changes.
+# post.storyLines and weekly showOutlets / sourceLeaderboard / barometer read it — switch it on
+# weeks before them.
+storyIntel:
+  enabled: false
+  retentionDays: 180                    # event_articles; >= weekly.lookbackDays
+  historyRetentionDays: 1095            # event_history (🌀 vaporware, barometer)
+  domainAliases: {}                     # sister sites counted as one outlet, e.g. { eurogamer.de: eurogamer.net }
 
 database:
   path: "news.db"
 
 scheduler:
-  intervalMinutes: 10      # default digest cadence per category + the maintenance/status tick
-  # perCategory: true      # default. false = legacy single global cycle that waits for the
-  #                        # slowest category (processing.categoryDeadlineMinutes /
-  #                        # maxConcurrentCategories apply only there).
-  # Per category: categories.<name>.intervalMinutes overrides the default (e.g. tech 15, science 60).
+  intervalMinutes: 10                   # default digest cadence per category + the maintenance/status tick
+  perCategory: true                     # false = legacy single global cycle that waits for the slowest category
 
-# Optional: RSS fetch stage tuning. All feeds go through one shared bounded queue.
-# fetcher:
-#   maxConcurrentFetches: 3   # simultaneous HTTP requests across ALL categories
-#   maxAttempts: 3            # tries per feed per run (retryable failures re-enter the queue)
-#   retryDelaySeconds: 15     # fallback delay before a retry; a server Retry-After wins
-#   fetchDeadlineSeconds: 240 # wall-clock budget for one run's fetch stage; stragglers defer
-#   intervalMinutes: 10       # DECOUPLED ingestion: fetch → enrich → summarize → insert runs on
-#                             # its own timer at this cadence and the digest run is only
-#                             # Step 1 + Step 2. Unset = ingestion inside the digest run.
-#                             # Per category: categories.<name>.fetchIntervalMinutes.
-#   scrubRulesFile: scrub-rules.yaml  # site-chrome patterns removed from extracted article text
-#                             # (login nudges, share bars). Copy scrub-rules.example.yaml and
-#                             # fill in your sites; unset = nothing is scrubbed.
-#                             # Shape: rules: [{name, regex, host?, dotAll?}]
-#   # A feed converter (RSSHub): each route (/telegram/channel/…) gets its own 429 throttle.
-#   pathScopedThrottleHosts: ["192.168.77.7:1200"]
-#   # SSRF guard: extra LAN hosts that may be fetched (`host`, `host:port` or a URL). Feed hosts
-#   # are trusted automatically, so a LAN RSSHub needs nothing here.
-#   privateHostAllowlist: ["nas.lan"]
+# ── RSS fetch stage ──────────────────────────────────────────────
+# All feeds go through one shared bounded queue.
+fetcher:
+  maxConcurrentFetches: 3               # simultaneous HTTP requests across ALL categories
+  maxAttempts: 3                        # tries per feed per run
+  retryDelaySeconds: 15                 # before a retry; a server Retry-After wins
+  fetchDeadlineSeconds: 240             # budget for one run's fetch stage; stragglers wait for the next run
+  intervalMinutes: null                 # e.g. 10: ingestion on its own timer, digest run = Step 1 + 2 only;
+                                        # null = ingestion inside the digest run
+  scrubRulesFile: null                  # e.g. scrub-rules.yaml (copy scrub-rules.example.yaml): site-chrome
+                                        # patterns removed from article text; null = nothing is scrubbed
+  pathScopedThrottleHosts: []           # converter hosts throttled per route, e.g. ["192.168.77.7:1200"] (RSSHub)
+  privateHostAllowlist: []              # extra LAN hosts the SSRF guard allows, e.g. ["nas.lan"];
+                                        # feed hosts are trusted automatically
 
-# Optional: per-cycle processing knobs.
 processing:
   staleTimeoutHours: 3
   minArticles: 15
-  # Three-tier batch routing thresholds (per category, driven by pending batch count):
-  #   pending <  primaryMaxPending                          → primary batch (`llm.batch`)
-  #   primaryMaxPending ≤ pending < primary + secondary     → `llm.batchFallback` (sync alt LLM, if configured)
-  #   pending ≥ primary + secondary                          → sync render fallback (`llm.render`)
-  # When a category has no `batchFallback`, the secondary band collapses — sync render fires
-  # at primaryMaxPending. Defaults below match the historical hardcoded behaviour.
-  # Set primaryMaxPending: 0 to disable the primary render Batch API entirely — every render
-  # then goes synchronously (via `llm.batchFallback` if configured, else the sync render client).
-  # (The Step-1 extract batch is separate; disable it by using a non-batch extract endpoint.)
-  primaryMaxPending: 2     # primary batch capacity before promoting to fallback (0 = batch off)
-  secondaryMaxPending: 1   # additional capacity on the fallback before sync render
-  # shadowRetentionDays: 30  # how long `llm.shadow` pairs stay in shadow_runs
+  # Render routing by pending batches per category: < primaryMaxPending → Batch API (llm.batch);
+  # then llm.batchFallback (sync) for secondaryMaxPending more; then sync render (llm.render).
+  primaryMaxPending: 2                  # 0 = render Batch API off (always sync)
+  secondaryMaxPending: 1
+  shadowRetentionDays: 30               # llm.shadow pairs in shadow_runs
+  maxConcurrentCategories: 12           # scheduler.perCategory: false only: categories run at once
+  categoryDeadlineMinutes: 0            # scheduler.perCategory: false only: 0 = wait for every category
 
-# ── 🧐 Fact-check of sent posts ──────────────────────────────── (optional, off)
-# A judge model compares a sample of sent posts with the exact sources the render saw.
-# Log-only: fact_checks table + a /status line; no post is ever edited or held back.
-# Review verdicts with bench/factcheck-dump.mjs.
-# factCheck:
-#   enabled: true
-#   sampleRate: 0.2               # share of sent posts that are checked
-#   categories: []                # empty = every category
-#   judge:                        # multilingual model (posts are Ukrainian, sources English)
-#     provider: openrouter
-#     model: "nvidia/nemotron-3-ultra-550b-a55b:free"
-#     fallback: { provider: codexcli, model: gpt-5.4-mini }
-#   promptFile: "prompts/factcheck.yaml"   # omit = built-in prompt (prompts/factcheck.example.yaml)
-#   alert:                        # ⚠️ in /status when, over windowDays…
-#     windowDays: 7
-#     minChecks: 10               # …at least this many checks…
-#     maxUnsupportedRate: 0.15    # …have more than this share unsupported
-#   retentionDays: 90
-#   queueSize: 32                 # checks waiting for the judge; more are dropped
+# ── 🧐 Fact-check of sent posts ──────────────────────────────────
+# A judge model compares a sample of sent posts with the sources the render saw. Log-only:
+# fact_checks table + a /status line. Review: bench/factcheck-dump.mjs.
+factCheck:
+  enabled: false
+  sampleRate: 0.2                       # share of sent posts checked
+  categories: []                        # empty = every category
+  judge:                                # multilingual (posts Ukrainian, sources English)
+    provider: openrouter
+    model: "nvidia/nemotron-3-ultra-550b-a55b:free"
+    fallback: { provider: codexcli, model: gpt-5.4-mini }
+  promptFile: null                      # null = built-in prompt; e.g. "prompts/factcheck.yaml" (copy prompts/factcheck.example.yaml)
+  alert:                                # ⚠️ in /status when, over windowDays…
+    windowDays: 7
+    minChecks: 10                       # …at least this many checks…
+    maxUnsupportedRate: 0.15            # …have more than this share unsupported
+  retentionDays: 90
+  queueSize: 32                         # checks waiting for the judge; more are dropped
 
-# Optional: include previous digest summaries as context to avoid repeating
-# already-covered news. Summaries are stored in the database and injected
-# into the LLM prompt so it can focus on genuinely new developments.
+# Previous digests injected as context so the LLM skips already-covered news.
 summaryHistory:
-  maxCount: 3          # number of previous digests to include (default: 3)
-  retentionDays: 14    # days to keep old summaries in DB (default: 14)
+  maxCount: 3
+  retentionDays: 14
 
-# ── Retention archive ────────────────────────────────────────── (optional, off)
-# Rows past retention are copied to per-month SQLite files (archive/news-archive-2026-09.db)
-# before being deleted, so benchmarks can use more history. Off = plain DELETE, as before.
-# Run one manual VACUUM on news.db after the first archiving pass.
-# archive:
-#   enabled: true
-#   dir: "archive"                # relative = next to the database file; keep on LOCAL disk
-#   rotation: monthly             # monthly | quarterly | yearly
-#   embeddings: labelled          # all (~450 MB/month) | labelled (~250 MB/month) | none
-#   tables: [article_embeddings, event_embeddings, rejected_events, covered_events,
-#            llm_calls, summaries, digest_messages, reaction_counts]
-#   keepFiles: 0                  # archive files kept, oldest removed first; 0 = keep all
-#   minFreeDiskMb: 2048           # below this: warn and plain DELETE
+# ── Retention archive ────────────────────────────────────────────
+# Rows past retention are copied to per-period SQLite files (archive/news-archive-2026-09.db) before
+# deletion. Off = plain DELETE. Run one manual VACUUM on news.db after the first archiving pass.
+archive:
+  enabled: false
+  dir: "archive"                        # relative = next to the database file; LOCAL disk
+  rotation: monthly                     # monthly | quarterly | yearly
+  embeddings: labelled                  # all (~450 MB/month) | labelled (~250 MB/month) | none
+  tables: [article_embeddings, event_embeddings, rejected_events, covered_events,
+           llm_calls, summaries, digest_messages, reaction_counts]
+  keepFiles: 0                          # archive files kept, oldest removed first; 0 = all
+  minFreeDiskMb: 2048                   # below this: warn and plain DELETE
 
-# Optional: weekly "top story of the week" roundup. When enabled, a dedicated scheduler fires
-# once per week at dayOfWeek + time (the bot's local zone). For each participating category it
-# ranks the week's covered events by how many times each story was seen — the canonical coverage
-# plus every later duplicate detection (the "most duplicates / most repeated = most interesting"
-# signal) — merges near-duplicate phrasings via an embedding pass, hands the top candidates to the
-# category's render LLM to pick/order/write, and posts the roundup to that category's own channel.
-# No schema migration: the signal is read from the existing covered_events / rejected_events tables.
-# Categories WITHOUT a `dedup:` block (e.g. a legacy single-step one) have no events, so they fall
-# back automatically to ranking the week's raw ARTICLES — clustered by embedding the same way, with
-# the wider `articleCandidatePoolSize` so a low-duplication (single-source) category still posts a
-# sensible roundup. Off by default — omit the whole block to disable.
+# ── Weekly roundup ───────────────────────────────────────────────
+# Once a week, the most-repeated stories of each category (events, or articles for a category
+# without dedup:) → the render LLM → one post in the category's channel.
 weekly:
   enabled: false
-  dayOfWeek: SUNDAY        # MONDAY..SUNDAY, case-insensitive
-  time: "18:00"            # 24h "HH:mm" in the bot's local time zone
-  lookbackDays: 7          # window over which the week's events are gathered
-  topN: 5                  # how many stories to feature in the roundup
-  candidatePoolSize: 15    # top-by-mention clusters handed to the LLM to choose from (>= topN)
-  articleCandidatePoolSize: 40  # candidate pool for the article-level fallback (see note above);
-                                # wider than candidatePoolSize so low-duplication categories still
-                                # give the LLM a broad weekly sample to pick from (>= topN)
-  minMentions: 2           # a story needs at least this many sightings to qualify (falls back to
-                           # top-by-newsworthiness if nothing repeated, so a post still goes out)
-  clusterThreshold: 0.83   # cosine ≥ this merges two events (different phrasings) into one story
+  dayOfWeek: SUNDAY                     # MONDAY..SUNDAY
+  time: "18:00"                         # 24h HH:mm, bot's local zone
+  lookbackDays: 7
+  topN: 5                               # stories in the roundup
+  candidatePoolSize: 15                 # top clusters handed to the LLM (>= topN)
+  articleCandidatePoolSize: 40          # same for the article fallback (>= topN)
+  minMentions: 2                        # sightings a story needs (else top by newsworthiness)
+  clusterThreshold: 0.83                # cosine that merges two phrasings into one story
   embeddingModel: "text-embedding-3-small"
-  maxEvents: 1000          # cap on event rows scanned per category per run
-  showMentions: true       # append a "🔁 N" badge per bullet (N = how many times the story was
-                           # seen this week); matched to each bullet by URL, so it's always exact
-  showOutlets: false       # needs storyIntel: "🔁 N" becomes "📢 N видань · M першоджерел"
+  maxEvents: 1000                       # rows scanned per category per run
+  showMentions: true                    # "🔁 N" per bullet
+  showOutlets: false                    # needs storyIntel: "📢 N видань · M першоджерел" instead of 🔁 N
+  hashtag: "#головне"                   # last line of the post; null = none
+  categories: []                        # empty = every category with a dedup: block
+  promptFile: null                      # null = built-in prompts; e.g. "prompts/weekly.yaml" (keys weekly.system / weekly.user)
+  prompts:                              # inline text beats promptFile; "" = not set
+    system: ""
+    user: ""
+  # 🥇 Хто пише першим (30 дн.): a.com — 12 з 20 · …   (needs storyIntel)
+  sourceLeaderboard:
+    enabled: false
+    lookbackDays: 30
+    minEvents: 10                       # stories an outlet needs to be ranked
+    top: 3
+    showCopiers: false                  # also name the outlets most often behind (reputational call)
+  # Industry barometer: layoffs & closures vs release news per week (needs storyIntel)
+  barometer:
+    enabled: false
+    categories: [gaming]                # empty = every roundup category
+    weeks: 12
+    minWeeks: 4                         # nothing until the history spans this many weeks
+    format: text                        # text = sparkline in the post; png = chart photo
+    series:                             # one or two
+      - id: layoffs
+        label: "Звільнення і закриття"
+        eventTypes: [layoffs, studio_closure]
+        keywords: [звільн, скорочення штату, скорочення співробітників, закриття студії,
+                   layoff, laid off, job cuts, studio closure]
+      - id: releases
+        label: "Новини про релізи"
+        eventTypes: [release_date, delay]
+        byEventDate: false              # true = by the release's own date (sparse)
+  # Album of the stories' pictures before the roundup text
+  album:
+    enabled: false
+    minPhotos: 2                        # fewer usable pictures → text only
+    maxPhotos: 5
+    timeoutSeconds: 3                   # HEAD check per picture
+    maxBytes: 5242880
 
-  # ── 🥇 Who writes first ── (needs storyIntel) after the bullets:
-  #    🥇 Хто пише першим (30 дн.): a.com — 12 з 20 · …
-  # sourceLeaderboard:
-  #   enabled: true
-  #   lookbackDays: 30
-  #   minEvents: 10            # an outlet needs this many stories to be ranked
-  #   top: 3
-  #   showCopiers: false       # also name the outlets most often behind (reputational call)
+# ── Footer badges: global knobs ──────────────────────────────────
+# Which badges a category shows: `post.badges`. Lookups run under this budget, cached in the DB.
+badges:
+  timeoutSeconds: 5                     # per provider, per bullet
+  maxTotalSeconds: 15                   # per digest
+  githubToken: ""                       # env GITHUB_TOKEN wins; 5000 req/h instead of 60
+  steamCountry: "UA"                    # store region → prices in that currency
+  steamLanguage: "ukrainian"
+  trailerEventTypes: [major_announcement, release_date, major_dlc_expansion, delay]   # ▶️
+  trailerFetchOnDelivery: true          # ▶️ may fetch the article page when the feed had no video
+  ukLocalizationShowMissing: false      # 🇺🇦 also post "Без української"
+  openCriticKey: ""                     # 🏆 RapidAPI key (env OPENCRITIC_RAPIDAPI_KEY); "" = Metacritic only
+  nvdApiKey: ""                         # 🛡 env NVD_API_KEY; 50 instead of 5 requests / 30 s
+  steamTrendTopN: 25                    # 📈 chart places counted (1..100)
 
-  # ── Industry barometer ── (needs storyIntel) weekly chart after the roundup:
-  #    layoffs & closures vs release news per week, last bar = current week.
-  # barometer:
-  #   enabled: true
-  #   categories: [gaming]     # empty = every roundup category
-  #   weeks: 12
-  #   minWeeks: 4              # nothing until the history spans this many weeks
-  #   format: text             # text = sparkline in the post; png = chart photo (needs headless java)
-  #   series:                  # at most two
-  #     - id: layoffs
-  #       label: "Звільнення і закриття"
-  #       eventTypes: [layoffs, studio_closure]
-  #       keywords: [звільн, скорочення штату, скорочення співробітників, закриття студії,
-  #                  layoff, laid off, job cuts, studio closure]
-  #     - id: releases
-  #       label: "Новини про релізи"
-  #       eventTypes: [release_date, delay]
-  #       # byEventDate: true  # count by the release's own date — sparse, keep off
+# ── telegra.ph account ───────────────────────────────────────────
+# For post.longForm.telegraph. Without a token the bot creates an account once and keeps it in the DB.
+telegraph:
+  accessToken: ""                       # env TELEGRAPH_TOKEN wins
+  shortName: "RssNewsBot"               # 1..32 chars
+  authorName: "RSS News"
+  authorUrl: ""                         # "" = the channel link (public @username channels)
+  timeoutSeconds: 10                    # per API call; on failure the post goes out without a page
 
-  # ── Album ── pictures of the week's stories as one album before the roundup text.
-  # album:
-  #   enabled: true
-  #   minPhotos: 2             # fewer usable pictures → text only
-  #   maxPhotos: 5
-  #   timeoutSeconds: 3        # HEAD check per picture
-  #   maxBytes: 5242880
-  hashtag: "#головне"      # optional: appended on its own line at the end of the post (omit = none)
-  # Which categories participate. Omit/empty = every category that has a `dedup:` block.
-  # categories:
-  #   - gaming
-  #   - tech
-  # Optional prompt override. Built-in Ukrainian defaults are used when absent.
-  # promptFile: "prompts/weekly.yaml"      # keys: weekly.system / weekly.user
-  # prompts:                                # inline beats the file
-  #   system: "..."
-  #   user: "..."
-
-# ── Footer badges: global knobs ─────────────────────────────────── (optional)
-# Which badges a category shows is `post.badges` inside the category. Lookups run under this
-# time budget and are cached in the DB, so a slow API never delays a digest.
-# badges:
-#   timeoutSeconds: 5             # per provider, per bullet (8 if the ▶️ trailer badge is on)
-#   maxTotalSeconds: 15           # per digest; ~25 with several gaming badges
-#   githubToken: ""               # env GITHUB_TOKEN wins; 5000 req/h instead of 60
-#   steamCountry: "UA"            # store region → prices in that currency
-#   steamLanguage: "ukrainian"
-#   trailerEventTypes: [major_announcement, release_date, major_dlc_expansion, delay]  # ▶️
-#   trailerFetchOnDelivery: true  # ▶️ may fetch the article page when the feed had no video
-#   ukLocalizationShowMissing: false  # 🇺🇦 also post "Без української"
-#   openCriticKey: ""             # 🏆 RapidAPI key (env OPENCRITIC_RAPIDAPI_KEY); "" = Metacritic only
-#   nvdApiKey: ""                 # 🛡 env NVD_API_KEY; 50 instead of 5 requests / 30 s
-#   steamTrendTopN: 25            # 📈 chart places counted (1..100)
-
-# ── telegra.ph account ───────────────────────────────────────── (optional)
-# For the ⚡ long-form pages (post.longForm.telegraph in a category). Without a token the bot
-# creates an account once and keeps the token in the DB.
-# telegraph:
-#   accessToken: ""               # env TELEGRAPH_TOKEN wins
-#   shortName: "RssNewsBot"
-#   authorName: "RSS News"
-#   authorUrl: ""                 # "" = the channel link (public @username channels)
-#   timeoutSeconds: 10            # per API call; on failure the post goes out without a page
-
-# Optional: reaction-feedback loop (phase 1 — aggregation only). When enabled, the reactions
-# collected by telegram.updatesPolling are periodically rolled up into per-dimension audience
-# affinity scores (franchise / event type / subject / source domain) in the audience_affinity
-# table, surfaced in the /status snapshot. Nothing reads the scores for selection yet — later
-# phases plug them into the shortlist ranker and prompts. Requires telegram.updatesPolling: true
-# to actually accumulate reactions. covered_events supplies the dimensions for every reaction,
-# so while feedback.enabled is true its retention is stretched to max(summaryHistory.retentionDays,
-# lookbackDays) automatically — a 14-day retention used to silently truncate a 90-day lookback and
-# throw away ~72% of the collected reactions. Step-1 context stays bounded by dedup.contextDays,
-# so the only cost of the longer window is disk.
+# ── Reaction feedback ────────────────────────────────────────────
+# Rolls reactions (needs telegram.updatesPolling) into audience affinity per franchise / event type /
+# subject / source (audience_affinity, /status). Read by ranker.reactionWeight and antiBubble.
 feedback:
   enabled: false
-  attributionHours: 36     # posts younger than this are too fresh to learn from
-  lookbackDays: 90         # how far back the aggregation looks (see retention note above)
-  halflifeDays: 45         # exponential time-decay half-life for a post's contribution
-  minSamples: 3.0          # dimension keys with fewer (decayed) posts than this get no score
-  shrinkageK: 5.0          # empirical-Bayes pseudo-count: scores shrink to the category mean
-  minVolume: 1             # a post's tone counts only once it has at least this many reactions;
-                           # 1 suits a single-reader channel (your own 👍/👎 is the signal),
-                           # raise for channels with a real audience
-  recomputeHours: 12       # rebuild cadence (checked at the start of each digest cycle)
-  explicitWeight: 3.0      # one 👍/👎 moderation press (admin.moderation) = this many reactions
-  # Per-emoji valence overrides (-1.0..1.0), merged over the built-in defaults:
-  # valence:
-  #   "🤡": 1.0            # e.g. an audience that uses 🤡 approvingly
-  #   "custom:5368742036018122275": 0.75
+  attributionHours: 36                  # posts younger than this are too fresh to learn from
+  lookbackDays: 90                      # covered_events retention is stretched to this while enabled
+  halflifeDays: 45                      # time-decay half-life of a post's contribution
+  minSamples: 3.0                       # keys with fewer (decayed) posts get no score
+  shrinkageK: 5.0                       # pseudo-count: scores shrink to the category mean
+  minVolume: 1                          # reactions a post needs before its tone counts; raise for a real audience
+  recomputeHours: 12
+  explicitWeight: 3.0                   # one 👍/👎 moderation press = this many reactions
+  valence: {}                           # per-emoji overrides (-1.0..1.0), e.g. { "🤡": 1.0, "custom:5368742036018122275": 0.75 }
 
-# Optional: manual, editor-controlled content preferences — the deterministic counterpart to the
-# learned reaction-feedback loop above. Where `feedback` LEARNS soft nudges from reactions (and can
-# never override newsworthiness), `preferences` are hard rules you set by hand.
-#
-# `mute`: a keyword blocklist applied BEFORE Step-1, so matching articles never reach the LLM at all
-# (saving tokens) and never appear in a digest. Matching is WHOLE-WORD and case-insensitive against
-# each article's title AND description: `cod` matches "CoD" and "CoD: Warzone" but NOT "code" or
-# "codex"; a multi-word entry like `call of duty` matches only that phrase. Applies to EVERY category
-# (global). Omit the block (or use an empty list) to mute nothing — the default.
-# preferences:
-#   mute:
-#     # Prefer specific multi-word keys — they can't collide with unrelated words. Example: drop all
-#     # Call of Duty coverage across every channel.
-#     - call of duty
-#     - black ops
-#     - warzone
-#     - modern warfare
-#     # Single-word keys are fine when distinctive (word-boundary matching prevents "diablo" ⊄ …):
-#     - diablo
-#     - palworld
-#     # Caveat: short/ambiguous keys are risky here BECAUSE this list is global — e.g. `cod` would
-#     # also hit "cod" (the fish) in a science channel, and `lol` would match casual "lol" anywhere.
-#     # Use multi-word keys, or scope the risky key to one channel via a category-level `mute:` list
-#     # (see the gaming category below) — the two lists are merged per category.
+# ── Global mute ──────────────────────────────────────────────────
+# Articles matching a key are dropped before Step 1, in EVERY category. Whole-word, case-insensitive,
+# title + description ("cod" ≠ "code"). Prefer multi-word keys; put risky short ones in a category mute:.
+preferences:
+  mute: []                              # e.g. [call of duty, black ops, warzone, palworld]
 
-# ── Admin chat ───────────────────────────────────────────────── (optional)
-# statusChatId alone = the rolling /status snapshot. Use the PRIVATE chat with the bot (its id is
-# your Telegram user id): commands and buttons do not work in a channel.
-# Commands, mute proposals and moderation need telegram.updatesPolling: true.
-# Commands: /help /status /pause /resume /run /mute /unmute /mutes — see README → "Admin commands".
-# admin:
-#   statusChatId: "123456789"
-#   userIds: [123456789]          # who may run commands and press admin buttons
-#   commands:
-#     enabled: true               # mutes / pauses from Telegram live in the DB, on top of this file
-#   muteSuggestions:              # weekly "mute this?" messages with [in category] [global] [no]
-#     enabled: true
-#     everyDays: 7
-#     maxScore: -0.15             # franchises with affinity at or below this (needs feedback)…
-#     minTone: 2.0                #   …over at least this many reacted posts
-#     minRejected: 20             # …or rejected by Step 1 this often without ever being posted
-#     maxPerRun: 5
-#   moderation:                   # per published post, a silent message in THIS chat with
-#     enabled: true               #   [🗑 delete] [🔇 mute franchise] [👍 more] [👎 less]
-#     categories: []              # empty = every category
+# ── Admin chat ───────────────────────────────────────────────────
+# statusChatId alone = the rolling /status snapshot. Use the PRIVATE chat with the bot (id = your user
+# id): commands and buttons do not work in a channel. Commands, mute proposals and moderation need
+# telegram.updatesPolling. Commands: README → "Admin commands".
+admin:
+  statusChatId: null                    # e.g. "123456789"; null = no status post
+  userIds: []                           # who may run commands / press buttons, e.g. [123456789]
+  commands:
+    enabled: false                      # /help /status /pause /resume /run /mute /unmute /mutes
+  muteSuggestions:                      # weekly "mute this?" with [in category] [global] [no]
+    enabled: false
+    everyDays: 7
+    maxScore: -0.15                     # franchises at or below this affinity (needs feedback)…
+    minTone: 2.0                        #   …over at least this many reacted posts
+    minRejected: 20                     # …or rejected by Step 1 this often, never posted
+    maxPerRun: 5
+  moderation:                           # per published post: [🗑 delete] [🔇 mute] [👍 more] [👎 less]
+    enabled: false
+    categories: []                      # empty = every category
 
 categories:
   tech:
     emoji: "💻"
-    channelId: "@my_tech_channel"    # public channel username or "-1001234567890" for private
+    channelId: "@my_tech_channel"       # public @username or "-1001234567890" for a private channel
     feeds:
       - https://hnrss.org/newest?points=120
       - https://techcrunch.com/feed/
+      # Platform feeds. kind: article | social | release | video (unset = ordinary feed).
+      # RSSHub routes (http://<rsshub>/telegram/channel/<name>) are kind: social too.
+      - url: https://mastodon.social/@Mastodon.rss
+        kind: social
+        label: "Mastodon"               # name in /status 📡 Feeds and the Step 1 source hint
+        minTextChars: 40                # skip shorter items ("🔥", "Анонс!")
+        repointLinks: true              # a short post with ONE article link becomes that article
+      - url: https://github.com/ollama/ollama/releases.atom
+        kind: release
+        titlePrefix: "Ollama "          # "v0.12.3" → "Ollama v0.12.3"
+        exclude: ["-rc", "-beta", "nightly"]   # skip titles containing these
+      - { url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCLA_DiR1FfKNvjuUpBHmylQ", kind: video, label: "NASA" }
+
   gaming:
     emoji: "🎮"
     channelId: "@my_gaming_channel"
-    # Category-scoped keyword mute, MERGED with the global `preferences.mute` above (an article is
-    # dropped before Step-1 if it matches EITHER list). Same whole-word, case-insensitive matching.
-    # Use it for keys you want gone from THIS channel only — e.g. mute the short/ambiguous `cod`
-    # here without risking "cod" (the fish) in a science category.
-    # mute:
-    #   - cod
-    #   - league of legends
-    # When true, each bullet is sent as a Telegram photo+caption (single post) if the
-    # first linked article has an image extracted from RSS. Defaults to false.
-    enableImages: true
-    # When true, this category NEVER uses the Batch API — Step 2 render always runs
-    # synchronously via `llm.render` (or `llm.batchFallback` if configured). Use it for
-    # always-publish-now categories, or one routed through a sync-only provider like the
-    # Claude CLI (provider: claudecli). Cannot be combined with llm.batch or `batch: true`
-    # on extract/extractAlternate (rejected at load). Defaults to false.
-    # skipBatch: true
-    # Optional presentation of this category's posts. Everything here touches ONLY the text
-    # that goes to Telegram — the stored summary and the reaction-attribution rows keep the
-    # clean bullet. Omit the block (or any sub-block) to leave posts exactly as before.
+    mute: []                            # keys muted in THIS channel only (merged with preferences.mute), e.g. [cod]
+    enableImages: true                  # photo + caption when the article has an image
+    skipBatch: false                    # true = never a Batch API (CLI-only category); conflicts with llm.batch / batch: true
+    intervalMinutes: null               # digest cadence, e.g. 15; null = scheduler.intervalMinutes
+    fetchIntervalMinutes: null          # ingestion cadence, e.g. 10; null = fetcher.intervalMinutes
+    # Presentation of the posts; touches only the text sent to Telegram.
     post:
-      # A `meaningful_update` bullet is sent as a Telegram REPLY to the previous post about
-      # the same story (found in digest_messages by the item's related/own event key), so the
-      # channel shows a quote header that jumps to it — the story reads as a thread.
+      # meaningful_update → a reply to the previous post about the story
       threads:
         enabled: true
-        maxAgeDays: 30            # don't reply to a post older than this
-      # Hashtag line under every bullet: static tags for the category plus tags derived from
-      # Step 1's fields (franchise by default; event type and subject opt-in). Tapping a tag in
-      # Telegram lists every post of the channel carrying it. A category without `dedup:` gets
-      # the static tags only.
+        maxAgeDays: 30                  # don't reply to older posts
+      # Hashtag line: static tags + tags from Step 1 fields
       hashtags:
-        category: "#gaming"       # static tags, space-separated; each `#` + letters/digits/_
-        fromFranchise: true       # e.g. #silksong
-        fromEventType: false      # e.g. #release_date (a fixed enum, the most stable tag)
-        fromSubject: false        # off by default: tech subjects are free-text that changes every cycle
-        max: 3                    # cap on generated (non-static) tags per bullet
-      # Live-data badge lines from public APIs, cached in the DB (time budget: top-level `badges:`).
+        category: "#gaming"             # static, space-separated
+        fromFranchise: true             # #silksong
+        fromEventType: false            # #release_date
+        fromSubject: false              # tech subjects are free text, off
+        max: 3                          # generated tags per bullet
+      # Live-data badge lines (budget: top-level badges:)
       badges:
-        steam: true           # 🎮 Steam: ₴899 (−20%) · 92% позитивних (12 345) · реліз …
-        ukLocalization: false # 🇺🇦 Українська: інтерфейс і субтитри, без озвучки
-        deck: false           # 🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum (354 звіти)
-        critic: false         # 🏆 Metacritic: 90   (+ OpenCritic with badges.openCriticKey)
-        steamTrend: false     # 📈 Steam: №4 у хітах продажу · №12 серед найочікуваніших
-        hn: false             # 🔥 HN: 512 · 340 коментарів   (hnrss.org feeds)
-        github: false         # ⭐ GitHub: 12.3k · Rust · оновлено …   (repository links)
-        trailer: false        # ▶️ Трейлер   (YouTube video the article embeds)
-        cve: false            # 🛡 CVE-2021-44228: CVSS 10.0, критична · експлуатується   (tech)
-      # One Wikipedia line the FIRST time a franchise (else subject) appears in this category:
-      #   📚 Team Cherry: австралійська студія відеоігор · Вікіпедія
-      # The page's short description when it has one, else the first sentence of the summary —
-      # an encyclopedia fact, not the LLM. Remembered in entity_intros (misses too), so a name is
-      # introduced once per repeatAfterDays and an unknown name is not searched every digest.
+        steam: true                     # 🎮 Steam: ₴899 (−20%) · 92% позитивних (12 345) · реліз …
+        ukLocalization: false           # 🇺🇦 Українська: інтерфейс і субтитри, без озвучки
+        deck: false                     # 🕹 Steam Deck: ✅ перевірено · ProtonDB: Platinum
+        critic: false                   # 🏆 Metacritic: 90 (+ OpenCritic with badges.openCriticKey)
+        steamTrend: false               # 📈 Steam: №4 у хітах продажу
+        hn: false                       # 🔥 HN: 512 · 340 коментарів (hnrss.org feeds)
+        github: false                   # ⭐ GitHub: 12.3k · Rust (repository links)
+        trailer: false                  # ▶️ Трейлер (YouTube video the article embeds)
+        cve: false                      # 🛡 CVE-2021-44228: CVSS 10.0, критична (tech)
+      # 📚 Team Cherry: австралійська студія відеоігор · Вікіпедія — first mention of a name
       intro:
         enabled: true
-        languages: [uk]           # Wikipedia languages to try, in order; text is printed as found
+        languages: [uk]                 # Wikipedia languages, in order
         maxPerDigest: 2
         repeatAfterDays: 365
-      # Longer posts for the strongest stories. After ranking, the first `maxPerDigest` events
-      # whose composite score (newsworthiness/digestFit, weighted as in dedup.digest.ranker)
-      # reaches `minComposite` are sent to render with "depth": "long" and the article page
-      # refetched (up to `sourceChars`), so the two-paragraph body is written from the article,
-      # not padded from the RSS blurb. The render prompt must know `depth` — see the LONG-FORM
-      # ITEMS block in prompts/games-dedup.example.yaml. A long post longer than a photo caption
-      # (1024 chars) goes out as text with the image as a large preview above it.
+      # Two-paragraph posts for the top events, written from the refetched article. The render
+      # prompt must know `depth` (LONG-FORM ITEMS in prompts/games-dedup.example.yaml).
       longForm:
         enabled: true
         maxPerDigest: 1
-        minComposite: 8.0
-        sourceChars: 5000
-        # ⚡ Also publish the long post as a telegra.ph Instant View page (account: top-level
-        # `telegraph:`). Pages are public and cannot be deleted.
-        # telegraph:
-        #   mode: teaser        # teaser = headline + first paragraph + ⚡ link; full = whole post + ⚡ link
-        # (No video-transcript option: every keyless way breaks YouTube's ToS — see README.)
-      # ── Story lines ── (needs top-level storyIntel.enabled) facts about the story behind a
-      #    post, computed without an LLM. Each line is off unless listed.
-      # storyLines:
-      #   hype:                      # 📢 9 видань · 1 першоджерело
-      #     enabled: true
-      #     minOutlets: 4            # show from this many distinct outlets
-      #     reprintSimilarity: 0.95  # cosine at which an article counts as a copy
-      #   first:                     # 🥇 першим був insider-gaming.com (+2 год)
-      #     enabled: true
-      #     minOutlets: 3
-      #     minLeadMinutes: 30       # smaller lead over the second outlet = a tie, no line
-      #   conflicts:                 # ⚖️ Джерела розходяться: дата 14.10 (ign.com) чи 21.10 (pcgamer.com)
-      #     enabled: true
-      #     mode: log                # log = only [StoryConflict] in the log; post = footer line
-      #     minSupport: 1            # outlets that must state a value; use 2 with mode: post
-      #     dateToleranceDays: 1
-      #   vaporware:                 # 🌀 анонсовано вчетверте, дати досі немає
-      #     enabled: true
-      #     announceTypes: [major_announcement, rumor, leak, dev_quote]
-      #     minAnnouncements: 3      # show from the Nth announcement
-      #     minGapDays: 30           # silence that makes the next one a new announcement
-      #     softDatesStop: false     # true = a year / quarter date ("2027") also stops the count
-
-      # ── 📰 Також: [IGN](…) · [PC Gamer](…) ── other outlets the dedup folded into this story.
-      # also:
-      #   logOnly: true              # first week: only [Also] in the log
-      #   max: 3
-      #   names: { ign.com: IGN, pcgamer.com: PC Gamer, eurogamer.net: Eurogamer }  # else feed label / domain
-
-      # ── Official sources first ── link the press release instead of a retelling when it is
-      #    in the story's cluster (needs dedup:).
-      # official:
-      #   domains: [blog.playstation.com, news.xbox.com, nintendo.com, steampowered.com, ea.com, ubisoft.com]
-      #   matchEntityDomain: false   # true = also hollowknight.com for "Hollow Knight"
-
-      # ── Better pictures ── (needs enableImages) no logos / avatars / pixels.
-      # images:
-      #   ogFirst: true              # try the article's og:image first
-      #   fromCluster: true          # else pictures of the story's other articles
-      #   minWidth: 400
-      #   probe: false               # true = measure pictures without a declared size
-      #   ignore: []                 # URL substrings to skip (a site's branded fallback image)
-      #   timeoutSeconds: 5          # per page
-      #   maxTotalSeconds: 20        # per digest
-
-      # ── 🔗 У 🖥 Tech: [<subject>](t.me/…) ── the same story's post in another channel.
-      #    Needs semanticDedup.eventEnabled here and in every listed category.
-      # crossLinks:
-      #   categories: [tech]
-      #   minSimilarity: 0.82
-      #   maxAgeDays: 3
-      #   logOnly: true              # first: only [CrossLink] in the log, to tune minSimilarity
-
-      # ── 💬 Editor persona ── one remark under the top event, A/B-tested against no remark;
-      #    /status compares reactions (🧪 Variants). One extra LLM call per digest (llm.persona).
-      # persona:
-      #   promptFile: prompts/persona-gaming.yaml   # required: copy prompts/persona.example.yaml
-      #   share: 0.5                 # share of digests that get the remark
-      #   maxChars: 160
-      #   timeoutSeconds: 60
-      #   bannedPhrases: ["це важливо", "варто звернути увагу", "чому це цікаво",
-      #                   "як редактор", "як штучний інтелект"]
-    # Living pinned messages maintained from this category's events. After every digest the
-    # bot upserts one line per shortlisted event of a listed type (keyed by the Step 1 subject,
-    # dated by its `eventDate` — see the extraction schema in prompts/games-dedup.example.yaml),
-    # re-renders the message and edits it in place only when something changed; a deleted
-    # message is posted (and pinned) again. Past-date entries move to a "released this week"
-    # section, entries beyond horizonDays are kept but hidden. Requires a dedup: block.
-    #   📅 Найближчі релізи · оновлено 12.09 14:30
-    #   14.10.2026 · Hollow Knight: Silksong ⏳ було 24.09.2026 · пост
-    #   Q1 2027 · GTA VI
-    #   TBA · Half-Life 3
+        minComposite: 8.0               # ranker composite score (0..10) an event needs
+        sourceChars: 5000               # article text passed to the render
+        # ⚡ also a telegra.ph Instant View page (account: top-level telegraph:). Public, undeletable.
+        telegraph:
+          enabled: false
+          mode: teaser                  # teaser = headline + first paragraph + ⚡ link; full = whole post + ⚡ link
+      # ── Story lines ── facts about the story, no LLM (need storyIntel.enabled)
+      storyLines:
+        hype:                           # 📢 9 видань · 1 першоджерело
+          enabled: false
+          minOutlets: 4                 # show from this many distinct outlets
+          reprintSimilarity: 0.95       # cosine at which an article counts as a copy
+        first:                          # 🥇 першим був insider-gaming.com (+2 год)
+          enabled: false
+          minOutlets: 3
+          minLeadMinutes: 30            # smaller lead over the second outlet = a tie, no line
+        conflicts:                      # ⚖️ Джерела розходяться: дата 14.10 (ign.com) чи 21.10 (pcgamer.com)
+          enabled: false
+          mode: log                     # log = only [StoryConflict] in the log; post = footer line
+          minSupport: 1                 # outlets that must state a value; 2 with mode: post
+          dateToleranceDays: 1
+        vaporware:                      # 🌀 анонсовано вчетверте, дати досі немає
+          enabled: false
+          announceTypes: [major_announcement, rumor, leak, dev_quote]
+          minAnnouncements: 3           # show from the Nth announcement
+          minGapDays: 30                # silence that makes the next one a new announcement
+          softDatesStop: false          # true = a year / quarter date also stops the count
+      # ── 📰 Також: [IGN](…) · [PC Gamer](…) ── other outlets folded into the story
+      also:
+        enabled: false
+        logOnly: true                   # first week: only [Also] in the log
+        max: 3
+        names: { ign.com: IGN, pcgamer.com: PC Gamer, eurogamer.net: Eurogamer }   # else feed label / domain
+      # ── Official sources first ── link the press release when it is in the story's cluster (needs dedup:)
+      official:
+        enabled: false
+        domains: [blog.playstation.com, news.xbox.com, nintendo.com, steampowered.com, ea.com, ubisoft.com]
+        matchEntityDomain: false        # true = also hollowknight.com for "Hollow Knight"
+      # ── Better pictures ── no logos / avatars / pixels (needs enableImages)
+      images:
+        enabled: false
+        ogFirst: true                   # the article's og:image first
+        fromCluster: true               # else pictures of the story's other articles
+        minWidth: 400
+        probe: false                    # true = measure pictures without a declared size
+        ignore: []                      # URL substrings to skip, e.g. ["default-og.png"]
+        timeoutSeconds: 5               # per page
+        maxTotalSeconds: 20             # per digest
+      # ── 🔗 У 🖥 Tech: [<subject>](t.me/…) ── the story's post in another channel
+      #    (needs semanticDedup.eventEnabled here and in every listed category)
+      crossLinks:
+        enabled: false
+        categories: [tech]
+        minSimilarity: 0.82
+        maxAgeDays: 3
+        logOnly: true                   # first: only [CrossLink] in the log, to tune minSimilarity
+      # ── 💬 Editor persona ── one remark under the top event, A/B against none (/status 🧪 Variants);
+      #    one extra LLM call per digest (llm.persona)
+      persona:
+        enabled: false
+        promptFile: "prompts/persona-gaming.yaml"   # required: copy prompts/persona.example.yaml
+        share: 0.5                      # share of digests that get the remark
+        maxChars: 160
+        timeoutSeconds: 60
+        bannedPhrases: ["це важливо", "варто звернути увагу", "чому це цікаво",
+                        "як редактор", "як штучний інтелект"]
+    # Pinned message kept up to date from this category's events (needs dedup: and eventDate in the
+    # extract prompt):  📅 Найближчі релізи · 14.10.2026 · Hollow Knight: Silksong …
     trackers:
       - id: releases
         title: "📅 Найближчі релізи"
         eventTypes: [release_date, delay]
         horizonDays: 120
         maxEntries: 20
-        pinned: true              # needs the bot's "edit messages" admin right in the channel
+        pinned: true                    # needs the bot's "edit messages" right in the channel
         releasedRetentionDays: 7
-        showUndated: false        # true = list TBA entries too; needs eventDate in the prompt to mean anything
+        showUndated: false              # true = list TBA entries too
     feeds:
       - https://kotaku.com/feed
-    # Optional: per-use-case provider+model overrides. The provider name points at one of
-    # the top-level blocks (`openai:` / `openrouter:` / `anthropic:` / `claudeCli:`) which
-    # carries the credentials/baseUrl (or, for claudecli, the CLI command); the override only
-    # swaps the model and (for sync paths) the endpoint.
-    # Any key may be omitted — omitted use cases fall back to the global defaults:
-    #   extract → openai.model + openrouter.model alternating every 2nd request
-    #   extractAlternate → optional explicit "B" side of the Step 1 A/B pair. Requires `extract`
-    #     to be set. When both are present, every 2nd extract request is routed here instead of
-    #     the auto-derived openrouter default. When only `extract` is set, alternation is
-    #     suppressed (legacy behaviour). Setting this without `extract` is rejected at load time.
-    #   render  → openrouter.model when openrouter: is set, else openai.model
-    #   batch   → openai.batchModel (provider must be 'openai' for now — OpenRouter has no Batch API)
-    #   summarize → per-feed `summarize:` provider with that provider's global model
-    #   batchFallback → optional sync override; when set AND one batch is already pending for this
-    #     category, the next cycle bypasses batch submission and uses this LLM synchronously.
-    #     Layered on top of the existing >=2 backpressure logic; any provider is valid here.
-    #
-    # On-failure `fallback` (nested on any sync slot — extract / extractAlternate / render /
-    # summarize / batchFallback):
-    #   Add `fallback: { provider, model }` to a slot and, when the primary call FAILS (usage/
-    #   credit limit, expired login, bad model, or an exhausted-retry timeout), the SAME call is
-    #   retried against the fallback. Sync-only; may chain (depth <= 3); each link must differ
-    #   from the others; `batch: true` is rejected on a fallback and on the `batch` slot. This is
-    #   distinct from the A/B `extractAlternate` and the backpressure `batchFallback`.
-    #
-    # `batch` flag on extract / extractAlternate:
-    #   Adding `batch: true` to an `extract` or `extractAlternate` entry opts Step 1 into the
-    #   provider's Batch API (50 % cheaper, async). The cycle loop is NOT blocked — submit returns
-    #   immediately and Step 2 fires later via callback once the batch result arrives. Other
-    #   categories in the same cycle proceed normally.
-    #   - Requires provider: openai or provider: anthropic (OpenRouter has no Batch API).
-    #   - Mixed mode is valid: `extract.batch=true` + `extractAlternate.batch=false` alternates
-    #     between cheap async cycles and fast sync cycles. Note: two distinct events can land in
-    #     quick succession when a previous async batch completes while a sync cycle is running.
-    #   - `batch: true` on render / batch / summarize / batchFallback is silently ignored.
-    # Example:
+    # Per-use-case provider + model (provider = a top-level block). Omitted slots use the defaults.
+    # README → "LLM routing" explains each slot, A/B, fallback and batch.
     llm:
       extract:          { provider: openai,     model: gpt-5-mini-2025-08-07 }
-      extractAlternate: { provider: anthropic,  model: claude-haiku-4-5-20251001, batch: true }
-      render:           { provider: openrouter, model: x-ai/grok-4 }
-      batch:            { provider: openai,     model: gpt-5-mini-2025-08-07 }
+      extractAlternate: { provider: anthropic,  model: claude-haiku-4-5-20251001, batch: true }   # B side of Step 1 A/B
+      render:           { provider: openrouter, model: x-ai/grok-4,
+                          fallback: { provider: anthropic, model: claude-haiku-4-5-20251001 } }  # on failure only
+      batch:            { provider: openai,     model: gpt-5-mini-2025-08-07 }                   # openai | anthropic
       summarize:        { provider: openai,     model: gpt-5-mini-2025-08-07 }
-      batchFallback:    { provider: anthropic,  model: claude-haiku-4-5-20251001 }
-      # persona:        { provider: openrouter, model: … }   # post.persona remark; default: the render route
-      # On-failure fallback (nested, sync slots). E.g. primary Claude CLI, fall back to Codex CLI:
-      #   render: { provider: claudecli, model: "", fallback: { provider: codexcli, model: "" } }
-      # 🌓 Shadow run (needs dedup:): model / prompt "B" gets exactly A's input, only A is posted,
-      # both are stored in shadow_runs. Compare: node bench/shadow-dump.mjs.
-      # shadow:
-      #   extract: { provider: openrouter, model: "minimax/minimax-m3:free" }  # omit = no Step 1 B
-      #   render:  { provider: claudecli, model: claude-sonnet-4-6 }           # omit = no render B
-      #   promptFile: "prompts/games-dedup.shadow.yaml"  # omit = A's prompts
-      #   sampleRate: 1.0            # share of A's calls that get a B run (lower it for a CLI B)
-      #   queueSize: 4               # B runs waiting per category; more are dropped
-    # Optional: this category's own cadences (per-category scheduler mode).
-    # intervalMinutes: 15        # digest run every 15 min (default: scheduler.intervalMinutes)
-    # fetchIntervalMinutes: 10   # ingestion every 10 min (default: fetcher.intervalMinutes)
-    # Optional: two-step dedup pipeline. Step 1 (sync JSON-mode) extracts structured events
-    # and shortlists only new/updated ones; Step 2 (Batch API) renders only the shortlist.
-    # Remove this block to fall back to the legacy single-step flow.
+      batchFallback:    { provider: anthropic,  model: claude-haiku-4-5-20251001 }               # sync, under backpressure
+      persona:          { provider: openrouter, model: "provider/your-free-model" }              # post.persona remark
+      # 🌓 Shadow: B gets exactly A's input, only A is posted, both stored in shadow_runs
+      #    (node bench/shadow-dump.mjs). Needs dedup:.
+      shadow:
+        enabled: false
+        extract: { provider: openrouter, model: "minimax/minimax-m3:free" }   # null = no Step 1 B
+        render:  { provider: claudecli, model: claude-sonnet-4-6 }            # null = no render B
+        promptFile: null                # null = A's prompts; e.g. "prompts/games-dedup.shadow.yaml"
+        sampleRate: 1.0                 # share of A's calls that get a B run (lower it for a CLI B)
+        queueSize: 4                    # B runs waiting per category; more are dropped
+    # Two-step pipeline: Step 1 extracts events and shortlists new ones, Step 2 renders the shortlist.
+    # Without dedup: the category uses the legacy single-step flow.
     dedup:
-      # Path to the YAML file with extract + render prompts (relative to the working directory).
-      # Copy prompts/games-dedup.example.yaml to prompts/games-dedup.yaml and customise it.
-      promptFile: "prompts/games-dedup.yaml"
-      # How many days of already-covered events to inject as Step 1 context.
-      contextDays: 7
-      # Maximum number of covered-event rows embedded in Step 1. Keep under ~150 for cost.
+      promptFile: "prompts/games-dedup.example.yaml"   # copy to prompts/games-dedup.yaml to customise
+      prompts:                          # inline text beats promptFile; "" = not set
+        extractSystem: ""
+        extractUser: ""
+        renderSystem: ""
+        renderUser: ""
+      contextDays: 7                    # days of covered events shown to Step 1
       maxContextEvents: 200
-      # Bounds on one Step-1 extract call: the newest articles by pubDate within both budgets go
-      # in, the rest stay UNPROCESSED for the next run. Defaults 100 / 80000. For a CLI-backed
-      # extract (codex exec / claude -p) ~40 articles keeps the call in the low minutes; prompts
-      # above ~110 KB total ran 10–60 min or hit the CLI timeout.
-      # extractMaxArticles: 40
-      # extractMaxPromptChars: 80000
-      # Optional: editorial-quality gate applied AFTER Step 1 and BEFORE Step 2 render.
-      # See telegram_posting_improvement_plan.md §4 for rationale. Leave ranker.enabled=false
-      # to keep the legacy behaviour (Step 1's raw shortlist is passed straight to render).
+      extractMaxArticles: 100           # newest articles per Step 1 call; ~40 for a CLI extract
+      extractMaxPromptChars: 80000      # char budget of the article batch; the rest waits
       digest:
         ranker:
           enabled: true
           newsworthinessWeight: 0.6     # digestFit weight is (1 - this)
-          # Reaction-feedback term (phase 2; requires feedback.enabled). An item's audience
-          # affinity (±~0.5, from audience_affinity) adds reactionWeight×10×score composite
-          # points, clamped to ±maxAffinityBoost. Roll out in two steps:
-          #   1. reactionWeight: 0.15 with reactionLogOnly: true — watch [AffinityRank][LOG-ONLY]
-          #      lines for a few cycles (they show exactly what WOULD change and why);
-          #   2. flip reactionLogOnly: false — the same lines switch to [APPLIED].
-          reactionWeight: 0.0           # 0 = term off (default)
-          reactionLogOnly: true         # true = compute + log, but publish the baseline ranking
+          reactionWeight: 0.0           # audience-affinity term, e.g. 0.15 (needs feedback.enabled)
+          reactionLogOnly: true         # true = log [AffinityRank][LOG-ONLY], publish the baseline
           maxAffinityBoost: 1.0         # max composite points affinity may move one item
         minStrongItems: 4               # skip publish if fewer strong items survive
-        maxDigestItems: 6               # hard cap on final shortlist
-        maxWaitHours: 4                 # if no digest for this long, relax minStrongItems
-        minItemsOnForcePublish: 2       # minimum used after maxWaitHours has elapsed
-        maxPerFranchise: 2              # diversity cap per franchise
-        maxPerSubject: 1                # diversity cap per game/subject
-        minDigestFit: 3                 # drop items below this digestFit score
-        newsworthinessOverride: 8       # …unless their newsworthiness >= this
-        meaningfulUpdateCooldownMinutes: 90  # suppress near-immediate follow-ups unless they are truly major
-        # Breaking lane: if any post-ranker item scores newsworthiness >= this, the hold-back
-        # above (minStrongItems / maxWaitHours / minItemsOnForcePublish) is skipped and the
-        # whole shortlist goes out now — a lone top story no longer waits for company.
-        # Raw Step 1 score, 1..10; omit to disable. Note the pre-Step-1 `minArticles` gate
-        # still applies — lower it per category (`minArticles: 2` next to `emoji:`) if needed.
-        # breakingNewsworthiness: 9
-        # Hard cap on posts about one story: a meaningful_update is dropped once the channel
-        # carries this many posts (original + updates, by the item's own and related event key)
-        # within updateWindowDays. No newsworthiness override — the repeats this targets all
-        # scored above it. Omit to disable.
-        # maxPostsPerEvent: 2
-        # updateWindowDays: 7
-        # 🧭 Anti-bubble: once per intervalDays, an important event the ranker left out because
-        # it is outside the channel's usual taste. Needs ranker.enabled and feedback.enabled.
-        # antiBubble:
-        #   intervalDays: 7
-        #   minNewsworthiness: 8     # only this important or more
-        #   maxAffinity: -0.05       # only this far outside the audience's taste or more
-        #   label: "🧭 Поза звичним вибором"
-      # Optional: inline prompt overrides — any non-null field takes priority over the file.
-      # prompts:
-      #   extractSystem: "..."
-      #   extractUser: "..."
-      #   renderSystem: "..."
-      #   renderUser: "..."
+        maxDigestItems: 6
+        maxWaitHours: 4                 # no digest this long → relax minStrongItems…
+        minItemsOnForcePublish: 2       # …down to this
+        maxPerFranchise: 2
+        maxPerSubject: 1
+        minDigestFit: 3                 # drop items below this digestFit…
+        newsworthinessOverride: 8       # …unless newsworthiness >= this
+        meaningfulUpdateCooldownMinutes: 90
+        breakingNewsworthiness: null    # e.g. 9: an item this newsworthy skips the hold-back; null = off
+        maxPostsPerEvent: null          # e.g. 2: cap on posts about one story in updateWindowDays; null = off
+        updateWindowDays: 7
+        # 🧭 Anti-bubble: once per intervalDays an important event outside the channel's usual taste
+        #    (needs ranker.enabled and feedback.enabled)
+        antiBubble:
+          enabled: false
+          intervalDays: 7
+          minNewsworthiness: 8          # only this important or more
+          maxAffinity: -0.05            # only this far outside the audience's taste or more
+          label: "🧭 Поза звичним вибором"
+
   politics:
     emoji: "🏛️"
     channelId: "@my_politics_channel"
-    # Optional: system prompt for per-article LLM summarization (used by feeds with `summarize:` set).
-    # Falls back to a generic built-in default ("Summarize in 3-5 sentences...") when absent.
-    # summarizePrompt: "Stisle resume na ukrainskiy v 3-5 rechen, zberihai tsifry ta nazvy."
-    #
-    # Optional: log-only embedding-based dedup detector. Embeds each new article via
-    # OpenAI text-embedding-3-small and brute-force-scans recent vectors in the same
-    # category. Above-threshold matches surface in the log as `[SemanticDedup][HIT]`
-    # lines — the detector NEVER mutates article state, NEVER filters the digest. Use
-    # it to collect real similarity stats on your corpus before deciding the right
-    # threshold. Off by default; opt in per category. Cost is ~$0.02/1M tokens.
+    summarizePrompt: null               # system prompt for feeds with summarize:; null = built-in
+    # Embedding dedup (text-embedding-3-small, ~$0.02/1M tokens). Thresholds are cosine.
     semanticDedup:
-      enabled: true
-      model: "text-embedding-3-small"   # OpenAI embeddings model id
-      windowDays: 14                    # lookback window for candidate neighbours
-      threshold: 0.92                   # cosine ≥ this → [HIT] marker in the log
-      topK: 5                           # log this many nearest neighbours per article
-      maxRecent: 2000                   # cap on recent vectors loaded per cycle per category
-      # Optional log-only EVENT-level pass (Layer 3.5). Runs AFTER Step 1 event extraction:
-      # embeds each shortlisted event (subject + coreFact) by `event_key` and brute-force
-      # cosine-scans recently-covered events in the same category. Surfaces
-      # `[EventSemanticDedup][HIT]` lines when cosine >= eventThreshold. Log-only until you set
-      # eventHardThreshold below (calibrate eventThreshold first, like the article-level pass
-      # above). Reuses model/windowDays/topK/maxRecent. Off by default.
-      eventEnabled: true
-      eventThreshold: 0.92              # cosine ≥ this → [EventSemanticDedup][HIT] in the log
-      # Optional event-level hard filter. When set, a shortlist event with status=="new" whose
-      # top covered-event cosine ≥ this is DROPPED before Step 2 renders (logged
-      # `[EventSemanticDedup][REJECT]`). meaningful_update follow-ups are never dropped.
-      # Cosine-only, per-category — there is deliberately NO subject gate: tech subjects are
-      # free-text and rephrased each cycle, so subject equality would gut recall (a week of logs
-      # showed gaming 65% / tech 7% same-subject among hits). Must be ≥ eventThreshold.
-      # Suggested ~0.80 (precision ~100% there). Leave unset to stay log-only.
-      eventHardThreshold: 0.80
-      # Optional hard-filter: when set, a new article whose top-1 neighbour is already in
-      # status PROCESSED (i.e. was sent to Telegram in a previous digest) AND whose cosine
-      # meets `hardThreshold` is marked DUPLICATE (with `duplicate_of` pointing at the
-      # canonical row) and skipped before the LLM ever sees it. Matches against UNPROCESSED
-      # or PROCESSING neighbours are NOT rejected — the Step 1 event extractor still owns
-      # within-batch dedup of unsent articles. Leave null to keep detector log-only.
-      # Must be >= `threshold`. Suggested production values from the stat-collection phase:
-      #   gaming / tech: 0.85
-      #   politics:      0.78
-      hardThreshold: 0.85
+      enabled: true                     # article level: [SemanticDedup][HIT] log lines
+      model: "text-embedding-3-small"
+      windowDays: 14
+      threshold: 0.75                   # ≥ this → [HIT] in the log
+      topK: 5
+      maxRecent: 2000                   # recent vectors loaded per run
+      hardThreshold: 0.78               # ≥ this AND the neighbour already sent → DUPLICATE; null = log only
+                                        # (suggested: gaming / tech 0.85, politics 0.78)
+      eventEnabled: true                # event level after Step 1: [EventSemanticDedup][HIT]
+      eventThreshold: 0.75              # ≥ this → [EventSemanticDedup][HIT] in the log
+      eventHardThreshold: 0.80          # ≥ this drops a "new" event before render; null = log only
     feeds:
-      # Plain-string form: just the URL, no extras.
-      - https://www.pravda.com.ua/rss/
-      # Object form: enable per-article LLM summary using the OpenRouter provider.
-      # The summary is stored on the `articles.summary` column and used in place of the
-      # raw RSS description for downstream digest prompts.
-      # - url: https://example.com/feed
-      #   fetchFullContent: true       # optional: fetch the full article body before summarizing
-      #   summarize: openrouter         # one of: openai | openrouter
-      #   label: "Example News"         # optional: name in the /status 📡 Feeds section and the report
-      #
-      # Converted / platform feeds (RSSHub, Mastodon, GitHub releases, YouTube). `kind`:
-      # article | social | release | video; unset = an ordinary feed. With a kind, an item
-      # without a title gets its first line, and Step 1 sees "official account: <label>".
-      # - url: http://192.168.77.7:1200/telegram/channel/some_studio/includeFwd=0&includeServiceMsg=0
-      #   kind: social
-      #   label: "Some Studio TG"
-      #   minTextChars: 40                    # skip shorter items ("🔥", "Анонс!")
-      #   repointLinks: true                  # a short post with ONE article link becomes that article
-      # - url: https://github.com/ollama/ollama/releases.atom
-      #   kind: release
-      #   titlePrefix: "Ollama "              # "v0.12.3" → "Ollama v0.12.3"
-      #   exclude: ["-rc", "-beta", "nightly"]  # skip titles containing these
-      # - url: https://www.youtube.com/feeds/videos.xml?channel_id=UCLA_DiR1FfKNvjuUpBHmylQ
-      #   kind: video
-      #   label: "NASA"
-      # - { url: "https://mastodon.gamedev.place/@some_studio.rss", kind: social, label: "Some Studio" }
+      - url: https://www.pravda.com.ua/rss/
+        label: "Українська правда"
+        fetchFullContent: false         # true = fetch the article body before summarizing
+        summarize: ""                   # per-article summary: openai | openrouter | anthropic | claudecli | codexcli; "" = RSS text
