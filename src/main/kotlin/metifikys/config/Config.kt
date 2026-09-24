@@ -1442,7 +1442,12 @@ data class BadgeSettings(
     /** Optional NVD API key (env `NVD_API_KEY` wins) for `post.badges.cve`: 50 requests / 30 s instead of 5. */
     val nvdApiKey: String? = null,
     /** `post.badges.steamTrend`: a chart rank counts up to this place (1..100). */
-    val steamTrendTopN: Int = 25
+    val steamTrendTopN: Int = 25,
+    /**
+     * `post.badges.hn`: no badge below this many points — a fresh or ignored submission (hnrss
+     * `newest?q=…` feeds bring those) would show "🔥 HN: 1 · 0 коментарів". Re-checked hourly.
+     */
+    val hnMinPoints: Int = 10
 )
 
 data class ThreadsConfig(
@@ -2103,6 +2108,7 @@ object ConfigLoader {
         require(badges.steamLanguage.isNotBlank()) { "badges.steamLanguage must not be blank" }
         require(badges.trailerEventTypes.none { it.isBlank() }) { "badges.trailerEventTypes must not contain blank entries" }
         require(badges.steamTrendTopN in 1..100) { "badges.steamTrendTopN must be in 1..100 (got ${badges.steamTrendTopN})" }
+        require(badges.hnMinPoints >= 0) { "badges.hnMinPoints must be >= 0 (got ${badges.hnMinPoints})" }
 
         // Validate database path — no traversal, must not be blank
         val dbPath = config.database.path

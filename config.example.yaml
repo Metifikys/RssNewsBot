@@ -240,6 +240,7 @@ badges:
   openCriticKey: ""                     # 🏆 RapidAPI key (env OPENCRITIC_RAPIDAPI_KEY); "" = Metacritic only
   nvdApiKey: ""                         # 🛡 env NVD_API_KEY; 50 instead of 5 requests / 30 s
   steamTrendTopN: 25                    # 📈 chart places counted (1..100)
+  hnMinPoints: 10                       # 🔥 no HN badge below this many points
 
 # ── telegra.ph account ───────────────────────────────────────────
 # For post.longForm.telegraph. Without a token the bot creates an account once and keeps it in the DB.

@@ -21,7 +21,9 @@ private val logger = KotlinLogging.logger {}
 class HackerNewsBadgeProvider(
     private val http: BadgeHttp,
     private val cache: BadgeCache,
-    private val apiBaseUrl: String = "https://hacker-news.firebaseio.com"
+    private val apiBaseUrl: String = "https://hacker-news.firebaseio.com",
+    /** Below this score the badge is left out (and re-checked after [TTL]): "🔥 1" advertises nothing. */
+    private val minPoints: Int = 0
 ) : BadgeProvider {
 
     override val id: String = ID
@@ -48,6 +50,10 @@ class HackerNewsBadgeProvider(
             logger.debug { "[Badge:hn] live counts unavailable for ${hn.id}, using fetch-time values: ${e.message}" }
         }
         val points = score ?: return null
+        if (points < minPoints) {
+            cache.put(id, key, "")
+            return null
+        }
         val text = buildString {
             append("🔥 [HN](").append(hn.discussionUrl).append("): ").append(points)
             comments?.let { append(" · ").append(ukPlural(it, "коментар", "коментарі", "коментарів")) }

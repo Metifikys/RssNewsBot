@@ -156,7 +156,8 @@ via a `/status` admin snapshot.
   - **hashtags** — static category tags plus tags from Step 1's franchise / event type /
     subject (`#gaming #silksong`), Latin diacritics folded, Cyrillic kept.
   - **badges** — deterministic live-data lines from public APIs, cached with a hard time
-    budget: Steam price / review score / release date, Hacker News points and comments,
+    budget: Steam price / review score / release date, Hacker News points and comments
+    (only from `badges.hnMinPoints`, default 10 — a fresh `newest?q=` submission shows nothing),
     GitHub stars, and `▶️ [Трейлер](https://youtu.be/…)` (`trailer`, event types `badges.trailerEventTypes`): the
     YouTube video the article embeds ([`VideoLinks`](src/main/kotlin/metifikys/fetch/VideoLinks.kt) — the feed item at
     ingest, else the post page at delivery with `trailerFetchOnDelivery`; article body only, no

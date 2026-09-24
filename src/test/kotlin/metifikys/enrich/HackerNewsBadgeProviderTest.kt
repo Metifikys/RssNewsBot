@@ -18,6 +18,16 @@ class HackerNewsBadgeProviderTest {
         HackerNewsBadgeProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), cache, apiBaseUrl = api.baseUrl)
 
     @Test
+    fun `no badge below minPoints, re-checked after the cache hour`() {
+        val cache = MemoryBadgeCache()
+        FakeApi().route("/v0/item/49829454.json", """{"id":49829454,"score":1,"descendants":0,"type":"story"}""").start().use { api ->
+            val p = HackerNewsBadgeProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), cache, apiBaseUrl = api.baseUrl, minPoints = 10)
+            assertNull(p.badge(null, listOf(article(ArticleMeta(HnMeta(49829454, 1, 0))))))
+            assertEquals("", cache.get(HackerNewsBadgeProvider.ID, "49829454", java.time.Duration.ofHours(1)))
+        }
+    }
+
+    @Test
     fun `live score and comment count from the item endpoint`() {
         FakeApi().route("/v0/item/41234567.json", """{"id":41234567,"score":612,"descendants":401,"type":"story"}""").start().use { api ->
             val badge = provider(api).badge(null, listOf(article(ArticleMeta(HnMeta(41234567, 512, 340)))))
