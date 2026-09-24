@@ -115,7 +115,7 @@ class PromptValidator(
      * and at most WARN: a broken shadow prompt only means no shadow run, the live pipeline is fine.
      */
     private fun validateShadow(name: String, cat: CategoryConfig, config: AppConfig): List<PromptFinding> {
-        val file = cat.llm?.shadow?.promptFile ?: return emptyList()
+        val file = cat.llm?.shadow?.takeIf { it.enabled }?.promptFile ?: return emptyList()
         val dedup = cat.dedup ?: return emptyList()
         val shadowCat = cat.copy(dedup = dedup.copy(promptFile = file, prompts = null), llm = cat.llm.copy(shadow = null))
         return validateCategory(name, shadowCat, config).map {

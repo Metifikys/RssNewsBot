@@ -260,7 +260,7 @@ class NewsBot(
         DigestDeliverer(
             config, db, sender, badgeResolver, introProvider, trackerUpdater, moderationNotifier,
             PostImages.forConfig(config, db, articleFetcher),
-            telegraph = if (config.categories.values.any { it.post?.longForm?.telegraph?.enabled == true }) {
+            telegraph = if (config.categories.values.any { it.post?.longForm?.takeIf { l -> l.enabled }?.telegraph?.enabled == true }) {
                 TelegraphPublisher(config.telegraph, db)
             } else null,
             personaWriter = if (config.categories.values.any { it.post?.persona?.enabled == true }) {
@@ -271,7 +271,7 @@ class NewsBot(
 
     /** `llm.shadow` B runs; only when some category configures a shadow. */
     private val shadowRunner: ShadowRunner? =
-        if (config.categories.values.any { it.llm?.shadow != null }) ShadowRunner(db) else null
+        if (config.categories.values.any { it.llm?.shadow?.enabled == true }) ShadowRunner(db) else null
 
     private val categoryProcessor = CategoryProcessor(
         config = config,

@@ -848,6 +848,15 @@ $shadow
     }
 
     @Test
+    fun `shadow enabled defaults to true, enabled false skips its validation`() {
+        val on = load(shadowYaml("                render: { provider: openrouter, model: m }"))
+        assertEquals(true, on.categories["gaming"]?.llm?.shadow?.enabled)
+        // Everything that would be rejected on a live shadow: no dedup, nothing to run, a missing provider block.
+        val off = load(shadowYaml("                enabled: false\n                render: { provider: claudecli, model: \"\" }\n                sampleRate: 1.5", dedup = false))
+        assertEquals(false, off.categories["gaming"]?.llm?.shadow?.enabled)
+    }
+
+    @Test
     fun `shadow rejects batch, a missing dedup block and an empty shadow`() {
         assertThrows<IllegalArgumentException> {
             load(shadowYaml("                extract: { provider: openai, model: m, batch: true }"))

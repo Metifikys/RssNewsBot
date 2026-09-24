@@ -523,7 +523,8 @@ class WeeklyDigest(
         if (!cfg.enabled || bulletUrls.size < cfg.minPhotos) return null
         return try {
             val imageByLink = db.fetchArticlesByLinks(bulletUrls.distinct()).mapNotNull { a -> a.imageUrl?.let { a.link to it } }.toMap()
-            val picker = ImagePicker(catCfg.post?.images?.minWidth ?: 0, catCfg.post?.images?.ignore.orEmpty())
+            val images = catCfg.post?.images?.takeIf { it.enabled }
+            val picker = ImagePicker(images?.minWidth ?: 0, images?.ignore.orEmpty())
             val photos = mutableListOf<String>()
             for (image in bulletUrls.mapNotNull { imageByLink[it] }.distinct()) {
                 if (photos.size >= cfg.maxPhotos) break

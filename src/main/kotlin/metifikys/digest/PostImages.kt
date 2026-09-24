@@ -117,11 +117,11 @@ class PostImages(
     companion object {
         /** Ingest-time pickers for the categories with `post.images` (the RSS fetcher's `imagePickers`). */
         fun ingestPickers(config: AppConfig): Map<String, ImagePicker> =
-            config.categories.mapNotNull { (name, c) -> c.post?.images?.let { name to ImagePicker(it.minWidth, it.ignore) } }.toMap()
+            config.categories.mapNotNull { (name, c) -> c.post?.images?.takeIf { it.enabled }?.let { name to ImagePicker(it.minWidth, it.ignore) } }.toMap()
 
         /** The delivery-side chooser, or null when no category with `enableImages` sets `post.images`. */
         fun forConfig(config: AppConfig, db: NewsDatabase, articleFetcher: ArticleFetcher): PostImages? {
-            val configs = config.categories.values.filter { it.enableImages }.mapNotNull { it.post?.images }
+            val configs = config.categories.values.filter { it.enableImages }.mapNotNull { it.post?.images?.takeIf { i -> i.enabled } }
             if (configs.isEmpty()) return null
             val probe = ImageProbe(UrlGuard.forConfig(config), timeoutSeconds = configs.maxOf { it.timeoutSeconds })
             return PostImages(articleFetcher::fetchPreviewImage, probe::dimensions, DbBadgeCache(db))

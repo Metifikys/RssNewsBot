@@ -674,4 +674,12 @@ class LlmClientsFactoryTest {
         assertFalse(client is FallbackLlmClient)
         assertEquals("or/pinned", client.endpoint.model)
     }
+
+    @Test
+    fun `forShadow builds B only while the shadow is enabled`() {
+        val shadow = metifikys.config.ShadowConfig(render = LlmOverride("openrouter", "or/b"))
+        val factory = LlmClientsFactory(config(), db)
+        assertNotNull(factory.forShadow(cat(CategoryLlmOverrides(shadow = shadow)), LlmUseCase.SHADOW_RENDER))
+        assertNull(factory.forShadow(cat(CategoryLlmOverrides(shadow = shadow.copy(enabled = false))), LlmUseCase.SHADOW_RENDER))
+    }
 }

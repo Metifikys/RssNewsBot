@@ -238,6 +238,10 @@ class PromptValidatorTest {
         val findings = PromptValidator(PromptLoader(tmp.toFile()), tmp.toFile()).validate(config(shadowCat))
         assertTrue(findings.none { it.level == Level.ERROR }, findings.toString())
         assertTrue(findings.any { it.level == Level.WARN && it.slot == "shadow:promptFile" }, findings.toString())
+
+        val disabled = shadowCat.copy(llm = shadowCat.llm!!.copy(shadow = shadowCat.llm!!.shadow!!.copy(enabled = false)))
+        val none = PromptValidator(PromptLoader(tmp.toFile()), tmp.toFile()).validate(config(disabled))
+        assertTrue(none.none { it.slot.startsWith("shadow:") }, "a disabled shadow is not checked: $none")
     }
 
     @Test

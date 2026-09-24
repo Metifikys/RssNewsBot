@@ -203,6 +203,44 @@ class PostConfigTest {
     }
 
     @Test
+    fun `images enabled defaults to true, enabled false is not validated and builds no picker`() {
+        val on = load(yaml("enableImages: true\npost:\n  images:\n    minWidth: 500"))
+        assertTrue(on.categories.getValue("gaming").post!!.images!!.enabled)
+        assertEquals(setOf("gaming"), metifikys.digest.PostImages.ingestPickers(on).keys)
+
+        // No enableImages and a broken budget: both rejected on a live block.
+        val off = load(yaml("post:\n  images:\n    enabled: false\n    timeoutSeconds: 10\n    maxTotalSeconds: 5"))
+        assertEquals(false, off.categories.getValue("gaming").post!!.images!!.enabled)
+        assertTrue(metifikys.digest.PostImages.ingestPickers(off).isEmpty())
+    }
+
+    @Test
+    fun `disabled post blocks skip their dependency checks`() {
+        // Each of these fails when the block is on: no dedup block, no domains, unknown / own
+        // category without event vectors, no persona prompt file.
+        val config = load(
+            yaml(
+                """
+                post:
+                  official: { enabled: false, domains: [] }
+                  crossLinks: { enabled: false, categories: [gaming] }
+                  persona: { enabled: false }
+                  also: { enabled: false, logOnly: true }
+                  longForm:
+                    enabled: false
+                    telegraph: { enabled: false, mode: teaser }
+                """.trimIndent()
+            )
+        )
+        val post = config.categories.getValue("gaming").post!!
+        assertEquals(false, post.official!!.enabled)
+        assertEquals(false, post.crossLinks!!.enabled)
+        assertEquals(false, post.persona!!.enabled)
+        assertEquals(false, post.also!!.enabled)
+        assertEquals(false, post.longForm!!.telegraph!!.enabled)
+    }
+
+    @Test
     fun `crossLinks block is parsed and needs known categories with event vectors`() {
         val sd = "semanticDedup:\n  eventEnabled: true"
         val ok = load(

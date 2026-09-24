@@ -167,7 +167,7 @@ class DigestDeliverer(
         val sentAt = LocalDateTime.now()
 
         // post.images: one og:image / probe budget per delivered digest.
-        val imagesCfg = postCfg?.images?.takeIf { categoryConfig.enableImages && postImages != null }
+        val imagesCfg = postCfg?.images?.takeIf { it.enabled && categoryConfig.enableImages && postImages != null }
         val imageDeadline = imagesCfg?.let { postImages?.newDeadline(it) } ?: 0L
 
         // post.persona: the digest's top event (first in ranker order; never the anti-bubble pick).
@@ -659,7 +659,7 @@ class DigestDeliverer(
         feedLabels: Map<String, String>
     ): String? {
         val publisher = telegraph ?: return null
-        val names = categoryConfig.post?.also?.names.orEmpty()
+        val names = categoryConfig.post?.also?.takeIf { it.enabled }?.names.orEmpty()
         val others = item.sourceLinks.map { link ->
             val host = AlsoLine.hostOf(link)
             val feedLabel = articleByLink[link]?.feedUrl?.let { feed -> feedLabels[feed]?.takeIf { AlsoLine.hostOf(feed) == host } }

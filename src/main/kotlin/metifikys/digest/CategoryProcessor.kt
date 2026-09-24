@@ -495,7 +495,7 @@ open class CategoryProcessor(
         // highest-confidence cross-cycle dupes. Fail-open — returns the input on any error.
         val analyzedShortlist: List<ShortlistItem>? =
             if (shortlist != null) (eventSemanticAnalyzer?.analyzeAndFilter(name, shortlist) ?: shortlist) else null
-        val longForm = categoryConfig.post?.longForm
+        val longForm = categoryConfig.post?.longForm?.takeIf { it.enabled }
         // Long-form: mark the top events on the final render set (after Layer 3.5 drops), so the
         // cap counts only events that can actually be posted.
         // Official sources (post.official): an event whose batch cluster holds the press release /
@@ -694,7 +694,7 @@ open class CategoryProcessor(
      */
     private fun step1Shadow(name: String, categoryConfig: CategoryConfig, resolvedDedup: ResolvedDedupPrompts): Step1Shadow? {
         val runner = shadowRunner ?: return null
-        val cfg = categoryConfig.llm?.shadow ?: return null
+        val cfg = categoryConfig.llm?.shadow?.takeIf { it.enabled } ?: return null
         val client = llmClientsFactory.forShadow(categoryConfig, LlmUseCase.SHADOW_EXTRACT) ?: return null
         val prompts = shadowPrompts(name, categoryConfig, resolvedDedup) ?: return null
         return Step1Shadow(runner, cfg, client, prompts)
@@ -702,7 +702,7 @@ open class CategoryProcessor(
 
     /** B's prompt set: `shadow.promptFile` resolved like `dedup.promptFile`, or A's [resolvedDedup]. */
     private fun shadowPrompts(name: String, categoryConfig: CategoryConfig, resolvedDedup: ResolvedDedupPrompts): ResolvedDedupPrompts? {
-        val file = categoryConfig.llm?.shadow?.promptFile ?: return resolvedDedup
+        val file = categoryConfig.llm?.shadow?.takeIf { it.enabled }?.promptFile ?: return resolvedDedup
         val dedup = categoryConfig.dedup ?: return null
         return promptLoader.resolve(categoryConfig.copy(dedup = dedup.copy(promptFile = file, prompts = null)))
             ?: run {
@@ -726,7 +726,7 @@ open class CategoryProcessor(
     ): ShadowRunner.Handle? {
         val runner = shadowRunner ?: return null
         if (shortlist.isNullOrEmpty() || resolvedDedup == null) return null
-        val cfg = categoryConfig.llm?.shadow?.takeIf { it.render != null } ?: return null
+        val cfg = categoryConfig.llm?.shadow?.takeIf { it.enabled && it.render != null } ?: return null
         return try {
             val client = llmClientsFactory.forShadow(categoryConfig, LlmUseCase.SHADOW_RENDER) ?: return null
             val prompts = shadowPrompts(name, categoryConfig, resolvedDedup) ?: return null

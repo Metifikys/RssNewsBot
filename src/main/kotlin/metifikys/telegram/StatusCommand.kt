@@ -200,7 +200,7 @@ class StatusCommand(
 
     /** `llm.shadow`: one line over the last 24h of `shadow_runs`; omitted without runs or on a query failure. */
     private fun appendShadowLine(sb: StringBuilder) {
-        if (config.categories.values.none { it.llm?.shadow != null }) return
+        if (config.categories.values.none { it.llm?.shadow?.enabled == true }) return
         val runs = try {
             db.fetchShadowRuns(LocalDateTime.now().minusHours(24))
         } catch (e: Exception) {

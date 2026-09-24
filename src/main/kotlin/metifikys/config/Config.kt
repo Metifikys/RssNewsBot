@@ -1059,7 +1059,7 @@ data class TrackerConfig(
 
 /**
  * Per-category post presentation. Every sub-block is optional; a missing block leaves that
- * aspect exactly as before. See `.claude/plans/2026-09-chains-hashtags-breaking.md`.
+ * aspect exactly as before, and so does a block with `enabled: false`. See `.claude/plans/2026-09-chains-hashtags-breaking.md`.
  */
 data class PostConfig(
     /** Send a `meaningful_update` bullet as a Telegram reply to the previous post about the same event. */
@@ -1150,8 +1150,10 @@ data class CrossLinksConfig(
  * the topic articles' stored images, then with [fromCluster] the images of the other articles of
  * the event's cluster. With [probe] a candidate of unknown size is sized from its first 64 KB
  * (a `Range` GET, header only) within the same budget. No acceptable picture → a text post.
+ * [enabled] `false` = exactly as if the block were absent.
  */
 data class PostImagesConfig(
+    val enabled: Boolean = true,
     val ogFirst: Boolean = true,
     val fromCluster: Boolean = true,
     val minWidth: Int = 400,
@@ -1536,8 +1538,10 @@ data class CategoryLlmOverrides(
  * on its own single thread per category with a queue of [queueSize]; when that is full the run is
  * dropped (`[Shadow] dropped (busy)`) — B never delays A. A CLI shadow doubles that quota's use:
  * lower [sampleRate] for an expensive B. Needs `dedup:`; `batch: true` is not allowed here.
+ * [enabled] `false` = exactly as if the block were absent (nothing runs, nothing is validated).
  */
 data class ShadowConfig(
+    val enabled: Boolean = true,
     /** B for Step 1; null = no Step 1 shadow. */
     val extract: LlmOverride? = null,
     /** B for the render; null = no render shadow. */
@@ -2229,7 +2233,7 @@ object ConfigLoader {
                         }
                     }
                 }
-                post.images?.let { i ->
+                post.images?.takeIf { it.enabled }?.let { i ->
                     require(category.enableImages) { "Category '$name' post.images needs enableImages: true" }
                     require(i.minWidth >= 0) { "Category '$name' post.images.minWidth must be >= 0 (got ${i.minWidth})" }
                     require(i.timeoutSeconds >= 1) { "Category '$name' post.images.timeoutSeconds must be >= 1 (got ${i.timeoutSeconds})" }
@@ -2351,7 +2355,7 @@ object ConfigLoader {
                 validateOverride(name, "summarize", ovr.summarize, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "batchFallback", ovr.batchFallback, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "persona", ovr.persona, openRouter, anthropic, config.claudeCli, config.codexCli)
-                ovr.shadow?.let { s ->
+                ovr.shadow?.takeIf { it.enabled }?.let { s ->
                     require(s.extract != null || s.render != null) {
                         "Category '$name' llm.shadow needs extract and/or render — without either nothing runs in the shadow"
                     }

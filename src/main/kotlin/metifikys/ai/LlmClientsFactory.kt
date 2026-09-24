@@ -57,7 +57,7 @@ class LlmClientsFactory(
      * sync client (config validation rejects `batch: true` there), with its own `fallback` chain.
      */
     fun forShadow(category: CategoryConfig?, useCase: LlmUseCase): LlmClient? {
-        val shadow = category?.llm?.shadow ?: return null
+        val shadow = category?.llm?.shadow?.takeIf { it.enabled } ?: return null
         val ovr = when (useCase) {
             LlmUseCase.SHADOW_EXTRACT -> shadow.extract
             LlmUseCase.SHADOW_RENDER -> shadow.render
