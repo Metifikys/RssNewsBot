@@ -1555,4 +1555,38 @@ class ConfigLoaderBranchesTest {
         }
         assertTrue("categories.sports.feeds[0].fetchFullcontent" in e.message!!, e.message)
     }
+
+    // ─── Type mismatches: a single value for a list is accepted, other errors are readable ───
+
+    @Test
+    fun `a single number where a list is expected reads as a one-element list`() {
+        val cfg = load(strictBase + "\nadmin:\n  statusChatId: \"42\"\n  userIds: 296937693\n")
+        assertEquals(listOf(296937693L), cfg.admin.userIds)
+    }
+
+    @Test
+    fun `a list of numbers still works`() {
+        val cfg = load(strictBase + "\nadmin:\n  userIds: [1, 2]\n")
+        assertEquals(listOf(1L, 2L), cfg.admin.userIds)
+    }
+
+    @Test
+    fun `a wrong value type names the key, its position and what was expected`() {
+        val e = assertThrows<IllegalArgumentException> {
+            load(strictBase + "\nadmin:\n  userIds: [abc]\n")
+        }
+        assertTrue("Config key 'admin.userIds[0]'" in e.message!!, e.message)
+        assertTrue("line " in e.message!!, e.message)
+        assertTrue("expected a whole number" in e.message!!, e.message)
+        assertTrue("got 'abc'" in e.message!!, e.message)
+    }
+
+    @Test
+    fun `a missing required key is reported as missing`() {
+        val e = assertThrows<IllegalArgumentException> {
+            load(strictBase.replace("    emoji: \"⚽\"\n", ""))
+        }
+        assertTrue("categories.sports.emoji" in e.message!!, e.message)
+        assertTrue("required, but missing" in e.message!!, e.message)
+    }
 }

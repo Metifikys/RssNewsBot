@@ -2,9 +2,13 @@ package metifikys.config
 
 import com.fasterxml.jackson.core.JsonParser
 import com.fasterxml.jackson.databind.DeserializationContext
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonDeserializer
+import com.fasterxml.jackson.databind.JsonMappingException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import com.fasterxml.jackson.databind.exc.InvalidFormatException
+import com.fasterxml.jackson.databind.exc.MismatchedInputException
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException
 import com.fasterxml.jackson.databind.node.TextNode
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
@@ -1762,7 +1766,11 @@ private val logger = KotlinLogging.logger {}
 object ConfigLoader {
     /** Max links in an `llm.<slot>.fallback` chain (primary + up to this many fallbacks). */
     private const val MAX_FALLBACK_DEPTH = 3
+    private val MISSING_PARAMETER = Regex("""missing \(therefore NULL\) value for creator parameter (\w+)""")
+
+    // A single value where a list is expected (`userIds: 296937693`) reads as a one-element list.
     private val mapper = ObjectMapper(YAMLFactory()).registerKotlinModule()
+        .enable(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY)
 
     fun load(path: String): AppConfig {
         val file = File(path)
@@ -1771,8 +1779,49 @@ object ConfigLoader {
             mapper.readValue(file, AppConfig::class.java)
         } catch (e: UnrecognizedPropertyException) {
             throw IllegalArgumentException(unknownKeyMessage(e), e)
+        } catch (e: MismatchedInputException) {
+            throw IllegalArgumentException(wrongTypeMessage(e), e)
         }
         return applyEnvOverrides(config)
+    }
+
+    /** `admin.userIds`, `categories.gaming.feeds[2].kind` — the key path of a Jackson error. */
+    private fun keyPath(e: JsonMappingException): String = e.path.joinToString("") { ref ->
+        when {
+            ref.fieldName != null -> ".${ref.fieldName}"
+            ref.index >= 0 -> "[${ref.index}]"
+            else -> ".?"
+        }
+    }.removePrefix(".")
+
+    /**
+     * Human form of Jackson's type-mismatch error: `Config key 'admin.userIds' (line 6, column 12):
+     * expected a list of whole numbers, e.g. [123456789]` instead of the raw deserializer message.
+     */
+    internal fun wrongTypeMessage(e: MismatchedInputException): String {
+        val where = e.location?.let { " (line ${it.lineNr}, column ${it.columnNr})" } ?: ""
+        // jackson-module-kotlin reports a missing non-null parameter this way (its dedicated
+        // exception type is deprecated), and the path stops at the enclosing block.
+        MISSING_PARAMETER.find(e.originalMessage.orEmpty())?.let { m ->
+            val name = m.groupValues[1]
+            val path = keyPath(e).let { if (it.isEmpty()) name else if (it.endsWith(".$name")) it else "$it.$name" }
+            return "Config key '$path'$where: required, but missing or null"
+        }
+        val type = e.targetType
+        val expected = when {
+            type == null -> "a different value"
+            Collection::class.java.isAssignableFrom(type) -> "a list, e.g. [a, b]"
+            type == java.lang.Long::class.java || type == java.lang.Long.TYPE ||
+                type == java.lang.Integer::class.java || type == Integer.TYPE -> "a whole number"
+            type == java.lang.Double::class.java || type == java.lang.Double.TYPE -> "a number"
+            type == java.lang.Boolean::class.java || type == java.lang.Boolean.TYPE -> "true or false"
+            type == String::class.java -> "a text value"
+            type.isEnum -> "one of ${type.enumConstants.joinToString(" | ")}"
+            Map::class.java.isAssignableFrom(type) -> "a key: value block"
+            else -> "a `${type.simpleName}` block"
+        }
+        val value = (e as? InvalidFormatException)?.value?.let { " — got '$it'" } ?: ""
+        return "Config key '${keyPath(e)}'$where: expected $expected$value"
     }
 
     /**
@@ -1781,13 +1830,8 @@ object ConfigLoader {
      * hashtags, intro, longForm, threads (did you mean hashtags?)`.
      */
     internal fun unknownKeyMessage(e: UnrecognizedPropertyException): String {
-        val path = e.path.joinToString("") { ref ->
-            when {
-                ref.fieldName != null -> ".${ref.fieldName}"
-                ref.index >= 0 -> "[${ref.index}]"
-                else -> ".?"
-            }
-        }.removePrefix(".").let { if (it.endsWith(e.propertyName)) it else if (it.isEmpty()) e.propertyName else "$it.${e.propertyName}" }
+        val path = keyPath(e)
+            .let { if (it.endsWith(e.propertyName)) it else if (it.isEmpty()) e.propertyName else "$it.${e.propertyName}" }
         val known = e.knownPropertyIds.orEmpty().map { it.toString() }.sorted()
         val name = e.propertyName
         val guess = known.minByOrNull { editDistance(it.lowercase(), name.lowercase()) }
