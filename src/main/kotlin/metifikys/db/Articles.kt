@@ -18,7 +18,9 @@ object ArticlesTable : Table("articles") {
     val title = varchar("title", 1000)
     val link = varchar("link", 2000).uniqueIndex()
     val description = text("description")
-    val pubDate = datetime("pub_date")
+    // Indexed: the retention DELETE (`pub_date < cutoff`) otherwise scans every article while it
+    // holds SQLite's write lock — tens of seconds on the Pi, SQLITE_BUSY for every other writer.
+    val pubDate = datetime("pub_date").index()
     val status = varchar("status", 20).default(ArticleStatus.UNPROCESSED.name).index()
     val processingStartedAt = datetime("processing_started_at").nullable().index()
     val imageUrl = text("image_url").nullable()

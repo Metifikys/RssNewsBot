@@ -29,6 +29,9 @@ private const val REJECTED_EVENTS_RETENTION_DAYS = 30L
 /** `digest_messages` / `reaction_counts` retention (reaction attribution). */
 private const val REACTION_RETENTION_DAYS = 90L
 
+/** A retention step at least this slow is logged — it held SQLite's write lock the whole time. */
+private const val SLOW_CLEANUP_STEP_MS = 2_000L
+
 /**
  * The digest pipeline: RSS fetch → link-dedup → enrich → summarize per feed → insert → fetch
  * ready batches → delegate to [CategoryProcessor].
@@ -396,8 +399,8 @@ class DigestCycle(
             logger.info { "[Cleanup] Skipping retention cleanup — batch(es) still pending." }
             return
         }
-        db.deleteOlderThan(config.processing.articleRetentionDays)
-        db.deleteOldFeedSightings(config.processing.articleRetentionDays)
+        timed("articles") { db.deleteOlderThan(config.processing.articleRetentionDays) }
+        timed("feed_sightings") { db.deleteOldFeedSightings(config.processing.articleRetentionDays) }
         // Embeddings go before the event tables: `archive.embeddings: labelled` keeps only vectors
         // whose article still has a covered/rejected row in the main DB.
         retain("article_embeddings", config.processing.embeddingRetentionDays) { db.pruneOldEmbeddings(it) }
@@ -407,16 +410,27 @@ class DigestCycle(
         retain("rejected_events", REJECTED_EVENTS_RETENTION_DAYS) { db.deleteOldRejectedEvents(it) }
         retain("digest_messages", REACTION_RETENTION_DAYS) { db.deleteOldDigestMessages(it) }
         retain("reaction_counts", REACTION_RETENTION_DAYS) { db.deleteOldReactionCounts(it) }
-        db.deleteOldAdminFeedback(REACTION_RETENTION_DAYS)
+        timed("admin_feedback") { db.deleteOldAdminFeedback(REACTION_RETENTION_DAYS) }
         retain("llm_calls", config.processing.llmCallRetentionDays) { db.deleteOldLlmCalls(it) }
-        db.deleteOldBadgeCache()
-        db.deleteOldEntityIntros()
-        db.deleteOldTrackerEntries()
+        timed("badge_cache") { db.deleteOldBadgeCache() }
+        timed("entity_intros") { db.deleteOldEntityIntros() }
+        timed("tracker_entries") { db.deleteOldTrackerEntries() }
         // Unconditional: rows recorded while storyIntel was on still age out after it is switched off.
-        db.deleteOldEventArticles(config.storyIntel.retentionDays)
-        db.deleteOldEventHistory(config.storyIntel.historyRetentionDays)
-        db.deleteOldShadowRuns(config.processing.shadowRetentionDays)
-        db.deleteOldFactChecks(config.factCheck.retentionDays)
+        timed("event_articles") { db.deleteOldEventArticles(config.storyIntel.retentionDays) }
+        timed("event_history") { db.deleteOldEventHistory(config.storyIntel.historyRetentionDays) }
+        timed("shadow_runs") { db.deleteOldShadowRuns(config.processing.shadowRetentionDays) }
+        timed("fact_checks") { db.deleteOldFactChecks(config.factCheck.retentionDays) }
+    }
+
+    /**
+     * Runs one retention step and logs it when it was slow: a cleanup DELETE holds SQLite's write
+     * lock for its whole run, so a slow one shows up elsewhere as SQLITE_BUSY in other threads.
+     */
+    private inline fun timed(table: String, step: () -> Unit) {
+        val started = System.nanoTime()
+        step()
+        val ms = (System.nanoTime() - started) / 1_000_000
+        if (ms >= SLOW_CLEANUP_STEP_MS) logger.warn { "[Cleanup] $table retention took ${ms} ms (holds the write lock)" }
     }
 
     /**
@@ -424,15 +438,15 @@ class DigestCycle(
      * (or when the archive disk is short) with the plain [delete]. An archiving failure leaves the
      * rows in place — the next cleanup retries — instead of deleting what was not archived.
      */
-    private fun retain(table: String, days: Long, delete: (Long) -> Unit) {
+    private fun retain(table: String, days: Long, delete: (Long) -> Unit) = timed(table) {
         val archiver = retentionArchiver
         if (archiver != null && archiver.handles(table)) {
             try {
-                if (archiver.archiveAndDelete(table, LocalDateTime.now().minusDays(days))) return
+                if (archiver.archiveAndDelete(table, LocalDateTime.now().minusDays(days))) return@timed
             } catch (e: Exception) {
                 errorLog.recordError(null, "[Archive]", e)
                 logger.error(e) { "[Archive] $table: archiving failed — rows kept in the main DB until the next cleanup" }
-                return
+                return@timed
             }
         }
         delete(days)
