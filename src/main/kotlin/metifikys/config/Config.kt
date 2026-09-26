@@ -1321,7 +1321,9 @@ data class LongFormConfig(
  * every paragraph, the sources, a link to the channel), which Telegram opens with ⚡ Instant View.
  * [mode] `teaser`: the channel post keeps the headline, the first paragraph, `⚡ [Читати
  * повністю](…)`, the source and the footer, with the page as its large link preview; `full`: the
- * post stays as it is and only gains the ⚡ line. Any Telegraph failure or timeout (the global
+ * post stays as it is and only gains the ⚡ line; `link`: the channel post is only the page itself —
+ * its Instant View card, no text, no source link, no footer (the page carries the text and the
+ * sources). Any Telegraph failure or timeout (the global
  * [TelegraphConfig.timeoutSeconds]) sends today's long post instead. Pages are public and can't be
  * deleted through the API, only edited.
  */
@@ -1332,6 +1334,7 @@ data class LongFormTelegraphConfig(
     companion object {
         const val MODE_TEASER = "teaser"
         const val MODE_FULL = "full"
+        const val MODE_LINK = "link"
     }
 }
 
@@ -2212,8 +2215,8 @@ object ConfigLoader {
                     require(l.minComposite in 0.0..10.0) { "Category '$name' post.longForm.minComposite must be within 0..10 (got ${l.minComposite})" }
                     require(l.sourceChars >= 500) { "Category '$name' post.longForm.sourceChars must be >= 500 (got ${l.sourceChars})" }
                     l.telegraph?.let { t ->
-                        require(t.mode in setOf(LongFormTelegraphConfig.MODE_TEASER, LongFormTelegraphConfig.MODE_FULL)) {
-                            "Category '$name' post.longForm.telegraph.mode must be teaser or full (got '${t.mode}')"
+                        require(t.mode in setOf(LongFormTelegraphConfig.MODE_TEASER, LongFormTelegraphConfig.MODE_FULL, LongFormTelegraphConfig.MODE_LINK)) {
+                            "Category '$name' post.longForm.telegraph.mode must be teaser, full or link (got '${t.mode}')"
                         }
                     }
                 }

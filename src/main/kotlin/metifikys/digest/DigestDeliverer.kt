@@ -227,7 +227,11 @@ class DigestDeliverer(
             val pageUrl = if (telegraphCfg != null && telegraph != null && item != null) {
                 publishPage(categoryName, categoryConfig, item, topic, image, articleByLink, feedLabels)
             } else null
-            val longOutgoing = if (pageUrl != null) {
+            val linkOnly = pageUrl != null && telegraphCfg?.mode == LongFormTelegraphConfig.MODE_LINK
+            val longOutgoing = if (pageUrl != null && linkOnly) {
+                // The page is the post: its Instant View card alone, no text, no link, no footer.
+                TelegraphPage.linkOnly(pageUrl)
+            } else if (pageUrl != null) {
                 val body = if (telegraphCfg?.mode == LongFormTelegraphConfig.MODE_FULL) {
                     TelegraphPage.withReadMore(topic, pageUrl)
                 } else {
@@ -250,7 +254,7 @@ class DigestDeliverer(
                 // below it, after the ⚡ link it belongs to.
                 sender.sendToChannel(
                     channelId, outgoing, disablePreview = true, replyToMessageId = replyTo,
-                    previewImageUrl = preview, previewAboveText = pageUrl == null
+                    previewImageUrl = preview, previewAboveText = pageUrl == null || linkOnly
                 )
             } else if (image != null) {
                 // Single post: photo + caption. Caption is truncated to Telegram's 1024-char

@@ -885,6 +885,14 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `telegraph link mode posts only the page card — no text, no source, no footer`() {
+        val (db, sender, sent) = telegraphDelivery("link", "https://telegra.ph/Story-09-23")
+        assertEquals("[​](https://telegra.ph/Story-09-23)", sent)
+        verify { sender.sendToChannel("@tech", any(), true, null, "https://telegra.ph/Story-09-23", true) }
+        verify { db.saveSummary("tech", match { "Другий абзац" in it && "telegra.ph" !in it }, 1) }
+    }
+
+    @Test
     fun `a failed telegraph page sends the long post as before`() {
         val (_, sender, sent) = telegraphDelivery("teaser", null)
         verify { sender.sendToChannel("@tech", any(), true, null, "https://img.example/1.jpg") }

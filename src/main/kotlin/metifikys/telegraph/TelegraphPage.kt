@@ -29,6 +29,12 @@ object TelegraphPage {
 
     fun readMoreLine(pageUrl: String): String = "⚡ [Читати повністю]($pageUrl)"
 
+    /** Invisible link text: a message that is only a hidden link shows nothing but the link's preview card. */
+    const val HIDDEN_LINK_TEXT = "​"
+
+    /** The `link` channel post: the page's Instant View card and nothing else (a hidden link to it). */
+    fun linkOnly(pageUrl: String): String = "[$HIDDEN_LINK_TEXT]($pageUrl)"
+
     /** The topic cut into its title line, body paragraphs and trailing source-link block (if any). */
     private data class Parts(val title: String?, val body: List<String>, val link: String?)
 

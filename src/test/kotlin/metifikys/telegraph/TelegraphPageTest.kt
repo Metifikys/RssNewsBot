@@ -100,6 +100,13 @@ class TelegraphPageTest {
     }
 
     @Test
+    fun `link mode is a hidden link that renders as an empty anchor`() {
+        val post = TelegraphPage.linkOnly("https://telegra.ph/p")
+        assertEquals("[​](https://telegra.ph/p)", post)
+        assertEquals("<a href=\"https://telegra.ph/p\">​</a>", metifikys.format.TopicFormatter.toHtml(post))
+    }
+
+    @Test
     fun `a topic without the strict shape keeps its text in teaser mode`() {
         assertEquals(
             "Just text\n\n⚡ [Читати повністю](https://telegra.ph/p)\n\n[a](https://a.b/c)",

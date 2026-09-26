@@ -360,7 +360,8 @@ categories:
         # ⚡ also a telegra.ph Instant View page (account: top-level telegraph:). Public, undeletable.
         telegraph:
           enabled: false
-          mode: teaser                  # teaser = headline + first paragraph + ⚡ link; full = whole post + ⚡ link
+          mode: teaser                  # teaser = lead paragraph + ⚡ link; full = whole post + ⚡ link;
+                                        # link = only the page's Instant View card, no text
       # ── Story lines ── facts about the story, no LLM (need storyIntel.enabled)
       storyLines:
         hype:                           # 📢 9 видань · 1 першоджерело

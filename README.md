@@ -195,7 +195,8 @@ via a `/status` admin snapshot.
     «Джерела», channel link; [`TelegraphPage`](src/main/kotlin/metifikys/telegraph/TelegraphPage.kt))
     that Telegram opens with ⚡ Instant View: `mode: teaser` posts the headline, the first
     paragraph, `⚡ [Читати повністю](…)`, the source and the footer with the page as the preview;
-    `full` keeps the post and adds the ⚡ line. Any Telegraph failure or timeout sends the long post
+    `full` keeps the post and adds the ⚡ line; `link` posts only the page — a hidden link, so the
+    channel shows just its Instant View card (no text, source or footer). Any Telegraph failure or timeout sends the long post
     as before. The account (`telegraph:` at the top level) uses `TELEGRAPH_TOKEN` / `accessToken`,
     else a token created once and kept in `bot_state`; pages are recorded in `telegraph_pages`.
     *Not implemented, by decision:* feeding a long post from the transcript of the video it embeds
