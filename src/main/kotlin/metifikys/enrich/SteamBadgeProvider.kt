@@ -54,7 +54,7 @@ class SteamBadgeProvider(
         val key = Hashtags.entityKey(item.subject) ?: return null
         cache.get(id, key, TTL)?.let { cached -> return cached.takeIf { it.isNotEmpty() }?.let(::Badge) }
         val text = try {
-            lookup(item.subject)
+            lookup(item)
         } catch (e: Exception) {
             logger.warn { "[Badge:steam] lookup failed for '${item.subject}': ${e.message}" }
             return null   // transient: do not cache
@@ -64,8 +64,8 @@ class SteamBadgeProvider(
     }
 
     /** Null = no confident match (cacheable). Throws on transport / API failure. */
-    private fun lookup(subject: String): String? {
-        val appId = resolver.appIdFor(subject) ?: return null
+    private fun lookup(item: ShortlistItem): String? {
+        val appId = resolver.appId(item, EVENT_TYPES) ?: return null
         val data = resolver.details(appId)
         val reviews = try {
             http.getJson("$storeBaseUrl/appreviews/$appId?json=1&language=all&purchase_type=all&num_per_page=0")

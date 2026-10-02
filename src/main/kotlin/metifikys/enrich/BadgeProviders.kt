@@ -34,7 +34,7 @@ object BadgeProviders {
                 add(SteamTrendBadgeProvider(http, cache, steamApps, settings.steamTrendTopN, settings.steamCountry))
             }
             if (HackerNewsBadgeProvider.ID in needed) add(HackerNewsBadgeProvider(http, cache, minPoints = settings.hnMinPoints))
-            if (GitHubBadgeProvider.ID in needed) add(GitHubBadgeProvider(http, cache, token = settings.githubToken))
+            if (GitHubBadgeProvider.ID in needed) add(GitHubBadgeProvider(http, cache, token = settings.githubToken, minStars = settings.githubMinStars.toLong()))
             if (TrailerBadgeProvider.ID in needed) {
                 val fetchPage = pageHtml.takeIf { settings.trailerFetchOnDelivery }
                 add(TrailerBadgeProvider(http, cache, settings.trailerEventTypes, fetchPage))

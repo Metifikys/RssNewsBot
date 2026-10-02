@@ -1382,8 +1382,23 @@ data class IntroConfig(
     /** Cap on intro lines per delivered digest. */
     val maxPerDigest: Int = 2,
     /** A name introduced less than this many days ago is not introduced again. */
-    val repeatAfterDays: Long = 365
-)
+    val repeatAfterDays: Long = 365,
+    /**
+     * An article counts only when its title, description or opening sentence contains one of these
+     * (case-insensitive substrings) — "Rust" the game is not Rust the language, "Entropy" the game is
+     * not entropy. Off-topic hits trigger one more search with a "відеогра" / "video game" hint.
+     * Empty = no check. The default fits a games category.
+     */
+    val topicWords: List<String> = DEFAULT_TOPIC_WORDS
+) {
+    companion object {
+        val DEFAULT_TOPIC_WORDS = listOf(
+            "відеогр", "комп'ютерн", "ігор", "гра ", "гру ", "ігрова", "ігрове", "розробник", "видав", "студі",
+            "video game", "videogame", "game developer", "game publisher", "developer", "publisher", "studio",
+            "franchise", "role-playing game", "mmorpg", "esports"
+        )
+    }
+}
 
 /**
  * Which footer badges a category shows. Each is a deterministic line built from a public API
@@ -1466,7 +1481,12 @@ data class BadgeSettings(
      * `post.badges.hn`: no badge below this many points — a fresh or ignored submission (hnrss
      * `newest?q=…` feeds bring those) would show "🔥 HN: 1 · 0 коментарів". Re-checked hourly.
      */
-    val hnMinPoints: Int = 10
+    val hnMinPoints: Int = 10,
+    /**
+     * `post.badges.github`: no badge below this many stars — a fresh "Show HN" repo would show
+     * "⭐ 1". Re-checked daily, so a repo that takes off gets it later.
+     */
+    val githubMinStars: Int = 50
 )
 
 data class ThreadsConfig(
@@ -2165,6 +2185,7 @@ object ConfigLoader {
         require(badges.trailerEventTypes.none { it.isBlank() }) { "badges.trailerEventTypes must not contain blank entries" }
         require(badges.steamTrendTopN in 1..100) { "badges.steamTrendTopN must be in 1..100 (got ${badges.steamTrendTopN})" }
         require(badges.hnMinPoints >= 0) { "badges.hnMinPoints must be >= 0 (got ${badges.hnMinPoints})" }
+        require(badges.githubMinStars >= 0) { "badges.githubMinStars must be >= 0 (got ${badges.githubMinStars})" }
 
         // Validate database path — no traversal, must not be blank
         val dbPath = config.database.path

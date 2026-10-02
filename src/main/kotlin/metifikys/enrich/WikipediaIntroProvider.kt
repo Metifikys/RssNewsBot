@@ -85,6 +85,47 @@ class WikipediaIntroProvider(
 
         /** `Super Smash Bros. (серія відеоігор)` → key of `Super Smash Bros.`; Wikipedia's disambiguators are not part of the name. */
         internal fun titleKey(title: String): String? = Hashtags.entityKey(TRAILING_PAREN.replace(title, ""))
+
+        /** Words every other studio name has — they tell no studio apart. */
+        private val STUDIO_FILLER = setOf(
+            "studio", "studios", "games", "game", "entertainment", "interactive", "software", "productions",
+            "digital", "publishing", "inc", "ltd", "llc", "the", "and", "co"
+        )
+
+        /** `Titan Quest` of a `Titan Quest / THQ Nordic` franchise; null without a studio segment. */
+        internal fun gameOf(item: ShortlistItem): String? =
+            item.franchise.takeIf { '/' in it }?.substringBefore('/')?.let { TRAILING_PAREN.replace(it, "").trim() }?.takeIf { it.isNotEmpty() }
+
+        /** `THQ Nordic` of a `Titan Quest / THQ Nordic` franchise; null without one. */
+        internal fun studioOf(item: ShortlistItem): String? =
+            item.franchise.takeIf { '/' in it }?.substringAfter('/')?.substringBefore('/')
+                ?.let { TRAILING_PAREN.replace(it, "").trim() }?.takeIf { it.length >= 2 }
+
+        /** True when [text] names [studio] by one of its distinctive words (no distinctive word = cannot tell = true). */
+        internal fun mentions(text: String, studio: String): Boolean {
+            val words = words(studio).filter { it.length >= 3 && it !in STUDIO_FILLER }
+            if (words.isEmpty()) return true
+            val haystack = words(text).toSet()
+            return words.any { it in haystack }
+        }
+
+        private val MARKS = Regex("""\p{M}+""")
+        private val NOT_WORD = Regex("""[^\p{L}\p{N}]+""")
+
+        /** Lower-case words with Latin diacritics folded ("Pokémon" → "pokemon"); not length-capped like entity keys. */
+        private fun words(text: String): List<String> =
+            MARKS.replace(java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKD), "")
+                .lowercase().split(NOT_WORD).filter { it.isNotEmpty() }
+
+        /** The search hint added when the plain name finds only off-topic articles. */
+        internal val TOPIC_HINTS = mapOf("uk" to "відеогра", "ru" to "видеоигра", "en" to "video game")
+
+        /** True when the article reads as on-topic: one of [topicWords] in its title, description or opening. */
+        internal fun onTopic(title: String, description: String, extract: String, topicWords: List<String>): Boolean {
+            if (topicWords.isEmpty()) return true
+            val text = "$title $description ${extract.take(300)}".lowercase()
+            return topicWords.any { it.isNotBlank() && it.lowercase() in text }
+        }
     }
 
     /**
@@ -95,8 +136,12 @@ class WikipediaIntroProvider(
      * to the next one. Every looked-up candidate is remembered under its own key.
      */
     fun intro(category: String, item: ShortlistItem, config: IntroConfig, now: LocalDateTime = LocalDateTime.now()): String? {
+        val studio = studioOf(item)
         for (name in entityCandidates(item)) {
             val key = Hashtags.entityKey(name) ?: continue
+            // The game of a `Game / Studio` franchise must be the studio's game: two games share
+            // a name ("Entropy" the 2011 MMORPG vs Lovely Hellplace's), the studio tells them apart.
+            val corroborate = studio?.takeIf { gameOf(item)?.equals(name, ignoreCase = true) == true }
             val known = store.get(category, key)
             if (known != null) {
                 val age = Duration.between(known.introducedAt, now).toDays()
@@ -107,7 +152,7 @@ class WikipediaIntroProvider(
                 }
             }
             val found = try {
-                config.languages.firstNotNullOfOrNull { lang -> lookup(name, key, lang) }
+                config.languages.firstNotNullOfOrNull { lang -> lookup(name, key, lang, config.topicWords, corroborate) }
             } catch (e: Exception) {
                 logger.warn { "[Intro] Wikipedia lookup failed for '$name': ${e.message}" }
                 return null
@@ -131,12 +176,29 @@ class WikipediaIntroProvider(
 
     private data class Found(val title: String, val line: String, val url: String, val lang: String)
 
-    /** Null = no matching, non-disambiguation article in this language (cacheable). Throws on transport failure. */
-    private fun lookup(name: String, key: String, lang: String): Found? {
+    /**
+     * Null = no matching, on-topic, non-disambiguation article in this language (cacheable).
+     * The plain name first; when that finds nothing on-topic, the name with the language's
+     * [TOPIC_HINTS] word ("Rust відеогра" → "Rust (відеогра)"). Throws on transport failure.
+     */
+    private fun lookup(name: String, key: String, lang: String, topicWords: List<String>, studio: String?): Found? {
+        val plain = search(name, key, lang, topicWords, studio)
+        plain.found?.let { return it }
+        // Only a name Wikipedia knows as something else is worth a second, hinted search.
+        if (!plain.offTopic) return null
+        val hint = TOPIC_HINTS[lang] ?: return null
+        return search("$name $hint", key, lang, topicWords, studio).found
+    }
+
+    /** [found] = the article; [offTopic] = a title-matching article was skipped by the topic check. */
+    private class SearchResult(val found: Found?, val offTopic: Boolean)
+
+    private fun search(query: String, key: String, lang: String, topicWords: List<String>, studio: String?): SearchResult {
+        var offTopic = false
         val base = baseUrlFor(lang)
-        val q = URLEncoder.encode(name, Charsets.UTF_8)
+        val q = URLEncoder.encode(query, Charsets.UTF_8)
         val search = http.getJson("$base/w/api.php?action=query&list=search&srsearch=$q&srlimit=3&srprop=&format=json")
-            ?.jsonObject?.get("query")?.jsonObject?.get("search")?.jsonArray ?: return null
+            ?.jsonObject?.get("query")?.jsonObject?.get("search")?.jsonArray ?: return SearchResult(null, false)
         for (hit in search) {
             val title = hit.jsonObject["title"]?.jsonPrimitive?.contentOrNull ?: continue
             if (!TitleMatch.similar(titleKey(title), key)) continue
@@ -150,6 +212,15 @@ class WikipediaIntroProvider(
             val extract = summary["extract"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
             val url = summary["content_urls"]?.jsonObject?.get("desktop")?.jsonObject?.get("page")?.jsonPrimitive?.contentOrNull
                 ?: "$base/wiki/${encodeTitle(title)}"
+            if (!onTopic(pageTitle, description, extract, topicWords)) {
+                logger.debug { "[Intro] '$pageTitle' ($lang) is off-topic for '$query' — skipped" }
+                offTopic = true
+                continue
+            }
+            if (studio != null && !mentions("$pageTitle $description $extract", studio)) {
+                logger.debug { "[Intro] '$pageTitle' ($lang) does not mention '$studio' — another work of that name, skipped" }
+                continue
+            }
             val sentence = extract.takeIf { it.isNotEmpty() }?.let { firstSentence(it) }
             // A short opening sentence says more than the one-line description ("відеогра 2016
             // року"); a long one is cut mid-thought, so then the description wins.
@@ -159,9 +230,9 @@ class WikipediaIntroProvider(
                 sentence != null -> clip(sentence)
                 else -> continue
             }
-            return Found(pageTitle, line, url, lang)
+            return SearchResult(Found(pageTitle, line, url, lang), offTopic)
         }
-        return null
+        return SearchResult(null, offTopic)
     }
 
     /**

@@ -70,4 +70,16 @@ class GitHubBadgeProviderTest {
         assertEquals("12.3k", GitHubBadgeProvider.formatStars(12345))
         assertEquals("1.2M", GitHubBadgeProvider.formatStars(1_234_567))
     }
+
+    @Test
+    fun `no badge below minStars, the miss is cached for the day`() {
+        val cache = MemoryBadgeCache()
+        FakeApi().route("/repos/rijuld/soothsay", """{"stargazers_count":2,"language":"Rust","pushed_at":"2026-10-01T10:00:00Z"}""").start().use { api ->
+            val p = GitHubBadgeProvider(BadgeHttp(timeoutSeconds = 3, guard = UrlGuard.OFF), cache, apiBaseUrl = api.baseUrl, minStars = 50)
+            val a = metifikys.model.Article(category = "tech", title = "t", link = "https://github.com/rijuld/soothsay", description = "d")
+            assertNull(p.badge(null, listOf(a)))
+            assertNull(p.badge(null, listOf(a)))
+            assertEquals(1, api.hits.get())
+        }
+    }
 }

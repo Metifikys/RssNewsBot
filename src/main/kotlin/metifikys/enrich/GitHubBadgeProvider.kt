@@ -25,7 +25,9 @@ class GitHubBadgeProvider(
     private val http: BadgeHttp,
     private val cache: BadgeCache,
     private val token: String? = null,
-    private val apiBaseUrl: String = "https://api.github.com"
+    private val apiBaseUrl: String = "https://api.github.com",
+    /** Below this many stars the badge is left out (re-checked after the cache day): "⭐ 1" advertises nothing. */
+    private val minStars: Long = 0
 ) : BadgeProvider {
 
     override val id: String = ID
@@ -84,6 +86,10 @@ class GitHubBadgeProvider(
             return null
         }
         val stars = json["stargazers_count"]?.jsonPrimitive?.longOrNull ?: return null
+        if (stars < minStars) {
+            cache.put(id, key, NEGATIVE)
+            return null
+        }
         val parts = mutableListOf(formatStars(stars))
         json["language"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { parts += it }
         json["pushed_at"]?.jsonPrimitive?.contentOrNull?.let { raw ->

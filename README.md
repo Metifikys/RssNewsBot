@@ -158,13 +158,16 @@ via a `/status` admin snapshot.
   - **badges** — deterministic live-data lines from public APIs, cached with a hard time
     budget: Steam price / review score / release date, Hacker News points and comments
     (only from `badges.hnMinPoints`, default 10 — a fresh `newest?q=` submission shows nothing),
-    GitHub stars, and `▶️ [Трейлер](https://youtu.be/…)` (`trailer`, event types `badges.trailerEventTypes`): the
+    GitHub stars (only from `badges.githubMinStars`, default 50), and `▶️ [Трейлер](https://youtu.be/…)` (`trailer`, event types `badges.trailerEventTypes`): the
     YouTube video the article embeds ([`VideoLinks`](src/main/kotlin/metifikys/fetch/VideoLinks.kt) — the feed item at
     ingest, else the post page at delivery with `trailerFetchOnDelivery`; article body only, no
     sidebars / related blocks), shown only when YouTube's oEmbed knows it and its title names the
     subject or franchise, so a site's promo clip gets no line; cached 7 days.
     Steam-based badges, each its own flag, share one store search + `appdetails` per game
-    ([`SteamAppResolver`](src/main/kotlin/metifikys/enrich/SteamAppResolver.kt), appid cached 7 days):
+    ([`SteamAppResolver`](src/main/kotlin/metifikys/enrich/SteamAppResolver.kt), appid cached 7 days). Step 1's
+    subject is a Ukrainian topic, so the store is searched for the Latin titles inside it that share a word
+    with the franchise's game ("Titan Quest II" from "Вихід Titan Quest II з раннього доступу"), then for
+    the franchise's game with an exact title match only (no "Grand Theft Auto V" for a GTA 6 story):
     `ukLocalization` — `🇺🇦 Українська: інтерфейс і субтитри, без озвучки` from Steam's
     `IStoreBrowseService/GetItems` (Ukrainian = language 26; the `appdetails` language list as the
     fallback), no line without Ukrainian unless `badges.ukLocalizationShowMissing`;
@@ -186,6 +189,9 @@ via a `/status` admin snapshot.
     *This product uses the NVD API but is not endorsed or certified by the NVD.*
   - **intro** — the first time a franchise appears in the category, one Wikipedia line
     (`📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`), remembered in `entity_intros`.
+    An article counts only when it is on topic (`intro.topicWords`: video game / developer / studio …;
+    an off-topic hit retries the name with "відеогра" / "video game" — Rust the game, not the language)
+    and, for the game of a `Game / Studio` franchise, names that studio (not another game of that name).
   - **longForm** — the top-ranked events of a digest (composite ≥ `minComposite`, at most
     `maxPerDigest`) go to render marked `"depth": "long"`, with the article page refetched as
     source text, and come back as a two-paragraph post; one longer than a photo caption is sent

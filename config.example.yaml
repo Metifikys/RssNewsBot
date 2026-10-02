@@ -241,6 +241,7 @@ badges:
   nvdApiKey: ""                         # 🛡 env NVD_API_KEY; 50 instead of 5 requests / 30 s
   steamTrendTopN: 25                    # 📈 chart places counted (1..100)
   hnMinPoints: 10                       # 🔥 no HN badge below this many points
+  githubMinStars: 50                    # ⭐ no GitHub badge below this many stars
 
 # ── telegra.ph account ───────────────────────────────────────────
 # For post.longForm.telegraph. Without a token the bot creates an account once and keeps it in the DB.
@@ -352,6 +353,11 @@ categories:
         languages: [uk]                 # Wikipedia languages, in order
         maxPerDigest: 2
         repeatAfterDays: 365
+        # An article counts only when its title / description / opening has one of these words
+        # (so the game Rust is not the programming language); [] = no check. Default shown.
+        topicWords: [відеогр, "комп'ютерн", ігор, "гра ", "гру ", ігрова, ігрове, розробник, видав, студі,
+                     video game, videogame, game developer, game publisher, developer, publisher, studio,
+                     franchise, role-playing game, mmorpg, esports]
       # Two-paragraph posts for the top events, written from the refetched article. The render
       # prompt must know `depth` (LONG-FORM ITEMS in prompts/games-dedup.example.yaml).
       longForm:

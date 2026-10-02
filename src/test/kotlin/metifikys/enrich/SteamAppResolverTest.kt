@@ -96,4 +96,55 @@ class SteamAppResolverTest {
             assertNull(cache.get(SteamAppResolver.APP_NS, "cyberpunk_2077", Duration.ofHours(1)))
         }
     }
+
+    // ── title candidates: Step 1's subject is a Ukrainian topic, the game title sits inside it ──
+
+    private fun titles(subject: String, franchise: String) =
+        SteamAppResolver.candidates(subject, franchise).map { it.title to it.allowExtension }
+
+    @Test
+    fun `candidates are the subject's Latin titles that share a word with the franchise, then the franchise exactly`() {
+        assertEquals(
+            listOf("Titan Quest II" to true, "Titan Quest" to false),
+            titles("Вихід Titan Quest II з раннього доступу", "Titan Quest / THQ Nordic")
+        )
+        assertEquals(listOf("Doom: The Dark Ages" to true, "Doom" to false), titles("Slaughter Mode для Doom: The Dark Ages", "Doom / id Software"))
+        assertEquals(listOf("Frutiger Home" to true), titles("Frutiger Home", "Frutiger Home"))
+        assertEquals(listOf("Signal Veil" to true), titles("Signal Veil", ""))
+        assertEquals(listOf("Rust" to true), titles("Оновлення Rust з коровами й вівцями", "Rust / Facepunch Studios"))
+    }
+
+    @Test
+    fun `a run naming something else is not searched, and a franchise is never extended`() {
+        // "Valentine's Day" is not the Pokémon game; "One Piece" is the other side of a crossover.
+        assertEquals(listOf("Pokémon TCG" to true, "Pokémon" to false), titles("Перший Valentine's Day сет Pokémon TCG", "Pokémon / The Pokémon Company"))
+        assertEquals(listOf("Spider-Man" to true), titles("Кросовер Spider-Man і One Piece", "Spider-Man / One Piece"))
+        // No Latin run of the game: only the franchise, exact — "GTA 6" news is not about GTA V.
+        assertEquals(listOf("Grand Theft Auto" to false), titles("GTA 6 отримала рейтинг ESRB M", "Grand Theft Auto / Rockstar Games"))
+        // "The" alone does not tie "The Boba Teashop" to "The Elder Scrolls".
+        assertEquals(listOf("The Elder Scrolls" to false), titles("The Boba Teashop: Refill", "The Elder Scrolls / Bethesda"))
+    }
+
+    @Test
+    fun `the franchise fallback needs the same words, not one more`() {
+        assertTrue(!SteamAppResolver.matches("warhammer_40_000_darktide", "warhammer_40_000", allowExtension = false))
+        assertTrue(SteamAppResolver.matches("warhammer_40_000_darktide", "warhammer_40_000"))
+        assertTrue(SteamAppResolver.matches("rust", "rust", allowExtension = false))
+    }
+
+    @Test
+    fun `an event resolves through its Latin title, and the franchise fallback rejects a longer store title`() {
+        val titanQuest = """{"total":1,"items":[{"type":"app","name":"Titan Quest II","id":1154030}]}"""
+        val gtaV = """{"total":1,"items":[{"type":"app","name":"Grand Theft Auto V Enhanced","id":3240220}]}"""
+        FakeApi()
+            .route("/api/storesearch/?term=Titan+Quest+II", titanQuest)
+            .route("/api/storesearch/?term=Grand+Theft+Auto", gtaV)
+            .start().use { api ->
+                val r = resolver(api)
+                val titan = item("Вихід Titan Quest II з раннього доступу").copy(franchise = "Titan Quest / THQ Nordic")
+                assertEquals(1154030L, r.appId(titan))
+                val gta6 = item("GTA 6 отримала рейтинг ESRB M").copy(franchise = "Grand Theft Auto / Rockstar Games")
+                assertNull(r.appId(gta6))
+            }
+    }
 }

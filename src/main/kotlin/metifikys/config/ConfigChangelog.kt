@@ -65,6 +65,7 @@ object ConfigChangelog {
         Entry("badges.nvdApiKey", "2026-09-23", "optional NVD API key (env NVD_API_KEY): 50 instead of 5 CVE lookups per 30 s"),
         Entry("categories.*.post.badges.steamTrend", "2026-09-23", "📈 Steam chart rank: top sellers / most wishlisted / popular upcoming / most played (badges.steamTrendTopN)"),
         Entry("categories.*.llm.shadow", "2026-09-23", "🌓 shadow run of a B model / prompt next to the live Step 1 / render, stored in shadow_runs (bench/shadow-dump.mjs)"),
+        Entry("badges.githubMinStars", "2026-10-02", "⭐ GitHub badge only from this many stars (default 50): no \"⭐ 1\" for fresh Show HN repos"),
         Entry("badges.hnMinPoints", "2026-09-24", "🔥 HN badge only from this many points (default 10): no \"🔥 1 · 0 коментарів\" for fresh hnrss newest?q= items"),
         Entry("factCheck", "2026-09-23", "🧐 sampled log-only LLM judge of sent posts vs. their sources, fact_checks + /status line (needs judge; prompts/factcheck.example.yaml)"),
         Entry("admin.inspect", "2026-10-02", "/inspect, pasted post links and forwards → a card about the post with 🔇 keyword / event-type buttons (on with admin.commands)"),

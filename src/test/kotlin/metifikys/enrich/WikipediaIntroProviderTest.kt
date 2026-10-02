@@ -177,4 +177,65 @@ class WikipediaIntroProviderTest {
         assertTrue(TitleMatch.similar("the_witcher_3_wild_hunt", "witcher_3_wild_hunt"))
         assertTrue(!TitleMatch.similar("cherry_band", "team_cherry"))
     }
+
+    // ── topic check: the game Rust is not the programming language ──
+
+    @Test
+    fun `an off-topic article is skipped and the name is searched again with the topic hint`() {
+        val langSearch = """{"query":{"search":[{"title":"Rust (мова програмування)"}]}}"""
+        val langSummary = """{"type":"standard","title":"Rust (мова програмування)","description":"мова програмування",
+            "extract":"Rust — сучасна багатопарадигмова мова програмування загального призначення.",
+            "content_urls":{"desktop":{"page":"https://uk.wikipedia.org/wiki/Rust_(мова_програмування)"}}}"""
+        val gameSearch = """{"query":{"search":[{"title":"Rust (відеогра)"}]}}"""
+        val gameSummary = """{"type":"standard","title":"Rust (відеогра)","description":"відеогра 2018 року",
+            "extract":"Rust — відеогра жанру survival, розроблена британською студією Facepunch Studios.",
+            "content_urls":{"desktop":{"page":"https://uk.wikipedia.org/wiki/Rust_(відеогра)"}}}"""
+        FakeApi()
+            .route("/w/api.php?action=query&list=search&srsearch=Rust+відеогра", gameSearch)
+            .route("/w/api.php?action=query&list=search&srsearch=Rust", langSearch)
+            .route("/api/rest_v1/page/summary/Rust_(відеогра)", gameSummary)
+            .route("/api/rest_v1/page/summary/Rust_(мова_програмування)", langSummary)
+            .start().use { api ->
+                val line = provider(api).intro("gaming", item(franchise = "Rust / Facepunch Studios"), IntroConfig(languages = listOf("uk")))
+                assertEquals("📚 Rust — відеогра жанру survival, розроблена британською студією Facepunch Studios · [Вікіпедія](https://uk.wikipedia.org/wiki/Rust_(відеогра))", line)
+            }
+    }
+
+    @Test
+    fun `topic words decide what counts, an empty list checks nothing`() {
+        val words = IntroConfig().topicWords
+        assertTrue(!WikipediaIntroProvider.onTopic("Entropy", "", "Entropy is a thermodynamic state variable", words))
+        assertTrue(!WikipediaIntroProvider.onTopic("Transit", "", "Transit — перша в світі супутникова система навігації", words))
+        assertTrue(WikipediaIntroProvider.onTopic("Media Molecule", "", "Media Molecule Ltd. is a British video game developer", words))
+        assertTrue(WikipediaIntroProvider.onTopic("Team Cherry", "Австралійська студія відеоігор", "", words))
+        assertTrue(WikipediaIntroProvider.onTopic("Entropy", "", "Entropy is a thermodynamic state variable", emptyList()))
+    }
+
+    @Test
+    fun `the game of a Game - Studio franchise must be the studio's game, else the studio is introduced`() {
+        val oldGame = """{"query":{"search":[{"title":"Entropy (video game)"}]}}"""
+        val oldSummary = """{"type":"standard","title":"Entropy (video game)","description":"2011 video game",
+            "extract":"Entropy was a space MMORPG video game developed by the Norwegian game studio Artplant.",
+            "content_urls":{"desktop":{"page":"https://en.wikipedia.org/wiki/Entropy_(video_game)"}}}"""
+        val studioSearch = """{"query":{"search":[{"title":"Lovely Hellplace"}]}}"""
+        val studioSummary = """{"type":"standard","title":"Lovely Hellplace","description":"British video game developer",
+            "extract":"Lovely Hellplace is an independent video game studio based in London.",
+            "content_urls":{"desktop":{"page":"https://en.wikipedia.org/wiki/Lovely_Hellplace"}}}"""
+        FakeApi()
+            .route("/w/api.php?action=query&list=search&srsearch=Lovely+Hellplace", studioSearch)
+            .route("/w/api.php?action=query&list=search&srsearch=Entropy", oldGame)
+            .route("/api/rest_v1/page/summary/Lovely_Hellplace", studioSummary)
+            .route("/api/rest_v1/page/summary/Entropy_(video_game)", oldSummary)
+            .start().use { api ->
+                val line = provider(api).intro("gaming", item(franchise = "Entropy / Lovely Hellplace"), IntroConfig(languages = listOf("en")))
+                assertEquals("📚 Lovely Hellplace is an independent video game studio based in London · [Вікіпедія](https://en.wikipedia.org/wiki/Lovely_Hellplace)", line)
+            }
+    }
+
+    @Test
+    fun `a studio is mentioned by a distinctive word, filler words prove nothing`() {
+        assertTrue(WikipediaIntroProvider.mentions("Rust — відеогра, розроблена студією Facepunch Studios.", "Facepunch Studios"))
+        assertTrue(!WikipediaIntroProvider.mentions("developed by the Norwegian game studio Artplant", "Lovely Hellplace"))
+        assertTrue(WikipediaIntroProvider.mentions("Octopath Traveler is a 2018 game developed by Square Enix and Acquire", "Square Enix"))
+    }
 }
