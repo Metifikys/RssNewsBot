@@ -26,7 +26,8 @@ object CoveredEventsTable : Table("covered_events") {
     val newsworthiness = integer("newsworthiness").default(0)
     /** Editorial-fit weight 0–10 emitted by Step 1. 0 for rows written before the split. */
     val digestFit = integer("digest_fit").default(0)
-    val url = varchar("url", 2000).default("")
+    // Indexed: the archive's `embeddings: labelled` check looks articles up here by link.
+    val url = varchar("url", 2000).default("").index()
     val coveredAt = datetime("covered_at").index()
 
     override val primaryKey = PrimaryKey(id)

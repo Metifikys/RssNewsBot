@@ -19,7 +19,8 @@ object RejectedEventsTable : Table("rejected_events") {
     val importance = integer("importance").default(0)
     val newsworthiness = integer("newsworthiness").default(0)
     val digestFit = integer("digest_fit").default(0)
-    val url = varchar("url", 2000).default("")
+    // Indexed: the archive's `embeddings: labelled` check looks articles up here by link.
+    val url = varchar("url", 2000).default("").index()
     val status = varchar("status", 50)
     val relatedPreviousEventKey = varchar("related_previous_event_key", 3000).nullable()
     val articleIndex = integer("article_index").default(-1)

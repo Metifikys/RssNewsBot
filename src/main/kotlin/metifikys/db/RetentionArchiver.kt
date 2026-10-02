@@ -151,12 +151,12 @@ class RetentionArchiver(
             val inBatch = "rowid IN (${rowIds.joinToString(",")})"
             val keep = if (spec.table == "article_embeddings" && config.embeddings == "labelled") " AND $LABELLED" else ""
             val archived = st.executeUpdate(
-                "INSERT OR IGNORE INTO arch.$t ($cols) SELECT $cols FROM main.$t WHERE $inBatch$keep"
+                "INSERT OR IGNORE INTO arch.$t ($cols) SELECT $cols FROM main.$t AS e WHERE $inBatch$keep"
             )
             when (spec.articleRef) {
                 ArticleRef.BY_ID -> st.executeUpdate(
                     "INSERT OR IGNORE INTO arch.articles ($articleCols) SELECT $articleCols FROM main.articles " +
-                        "WHERE id IN (SELECT article_id FROM main.$t WHERE $inBatch$keep)"
+                        "WHERE id IN (SELECT article_id FROM main.$t AS e WHERE $inBatch$keep)"
                 )
                 ArticleRef.BY_URL -> st.executeUpdate(
                     "INSERT OR IGNORE INTO arch.articles ($articleCols) SELECT $articleCols FROM main.articles " +
@@ -252,10 +252,16 @@ class RetentionArchiver(
                     "articles" to listOf("link")
                 )
 
-        /** `embeddings: labelled` — only vectors whose article reached Step 1 (the benches' labels). */
+        /**
+         * `embeddings: labelled` — only vectors whose article reached Step 1 (the benches' labels).
+         * Per row (`e` = the batch's embedding row) through the url indexes: the old
+         * `link IN (SELECT url … UNION …)` built and sorted both event tables on every batch while
+         * holding the write lock — 35 s on average on the Pi, SQLITE_BUSY for every other writer.
+         */
         private const val LABELLED =
-            "article_id IN (SELECT a.id FROM main.articles a WHERE a.link IN " +
-                "(SELECT url FROM main.covered_events UNION SELECT url FROM main.rejected_events))"
+            "EXISTS (SELECT 1 FROM main.articles a WHERE a.id = e.article_id AND (" +
+                "EXISTS (SELECT 1 FROM main.covered_events c WHERE c.url = a.link) OR " +
+                "EXISTS (SELECT 1 FROM main.rejected_events r WHERE r.url = a.link)))"
 
         private fun q(identifier: String) = "\"" + identifier.replace("\"", "\"\"") + "\""
 
