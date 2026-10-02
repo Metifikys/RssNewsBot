@@ -52,6 +52,21 @@ class LlmClientsFactory(
     }
 
     /**
+     * The update diff (`dedup.digest.updateDiff`): `llm.updateDiff`, else the `llm.render` override,
+     * else the global sync default — always a sync client, metered as [LlmUseCase.UPDATE_DIFF] so
+     * its calls show apart from the render ones in `llm_calls`.
+     */
+    fun forUpdateDiff(category: CategoryConfig?): LlmClient {
+        val ovr = category?.llm?.updateDiff ?: category?.llm?.render
+        if (ovr == null) {
+            forOpenRouterDefault(category, LlmUseCase.UPDATE_DIFF)?.let { return it }
+            return meter(client(LlmEndpoint.forOpenAI(config), batchCapable = false), category, LlmUseCase.UPDATE_DIFF)
+        }
+        val primary = meter(client(overrideEndpoint(ovr), batchCapable = false), category, LlmUseCase.UPDATE_DIFF)
+        return withFallback(ovr, primary, category, LlmUseCase.UPDATE_DIFF)
+    }
+
+    /**
      * The B side of `llm.shadow` for Step 1 ([LlmUseCase.SHADOW_EXTRACT]) or the render
      * ([LlmUseCase.SHADOW_RENDER]); null when the category shadows nothing at that stage. Always a
      * sync client (config validation rejects `batch: true` there), with its own `fallback` chain.

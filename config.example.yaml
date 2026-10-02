@@ -446,6 +446,7 @@ categories:
       summarize:        { provider: openai,     model: gpt-5-mini-2025-08-07 }
       batchFallback:    { provider: anthropic,  model: claude-haiku-4-5-20251001 }               # sync, under backpressure
       persona:          { provider: openrouter, model: "provider/your-free-model" }              # post.persona remark
+      updateDiff:       { provider: openrouter, model: "provider/your-free-model" }              # dedup.digest.updateDiff check
       # 🌓 Shadow: B gets exactly A's input, only A is posted, both stored in shadow_runs
       #    (node bench/shadow-dump.mjs). Needs dedup:.
       shadow:
@@ -495,6 +496,15 @@ categories:
           minNewsworthiness: 8          # only this important or more
           maxAffinity: -0.05            # only this far outside the audience's taste or more
           label: "🧭 Поза звичним вибором"
+        # 🔁 Update diff: a meaningful_update goes out only with facts the earlier posts of the story lack
+        #    (one LLM call per update, llm.updateDiff; the render prompt needs the newFacts rule)
+        updateDiff:
+          enabled: false
+          logOnly: true                 # true = log [UpdateDiff][LOG-ONLY], post as before
+          maxPreviousPosts: 3           # earlier posts of the story the model compares against
+          windowDays: 14
+          timeoutSeconds: 60            # no answer in time → the update is kept as is
+          maxSourceChars: 4000          # source-article text of the update
 
   politics:
     emoji: "🏛️"

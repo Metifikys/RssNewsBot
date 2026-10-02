@@ -151,6 +151,10 @@ render:
                  **Black Flag повертається!**
       - For items with status == "meaningful_update", phrase the body as an update:
           "оновлення: …", "нові деталі: …", "перенос: …". Never frame an update as breaking.
+      - UPDATES WITH "newFacts": a "meaningful_update" item that carries "newFacts" is posted as a
+        reply to the channel's earlier post about the story. Keep the template, but the body is
+        ONLY those new facts, 1–2 sentences, starting with "Оновлення:". Do not retell the story,
+        do not repeat what the earlier post said, add no background and no facts outside "newFacts".
       - 1–2 sentences per bullet. Hard cap ~300 Ukrainian characters per bullet.
         Exception: items with "depth": "long" — see LONG-FORM ITEMS below.
       - Exactly one link per bullet, in the form [джерело](url), using ONLY the `url` for that item.

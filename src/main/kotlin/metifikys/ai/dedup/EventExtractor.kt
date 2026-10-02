@@ -393,6 +393,8 @@ class EventExtractor(
         }.map { item -> guardEventDate(tag, item, articles) }
             // `lane` is code's field (the anti-bubble pick below), never the model's.
             .map { item -> if (item.lane == null) item else item.copy(lane = null) }
+            // Likewise `newFacts` (dedup.digest.updateDiff, right before render).
+            .map { item -> if (item.newFacts.isEmpty()) item else item.copy(newFacts = emptyList()) }
             .let { list ->
                 // Article → event, resolved once while `articles` is still the prompt's list: the
                 // shortlist carries its sources to delivery, and (storyIntel) the clusters are stored.

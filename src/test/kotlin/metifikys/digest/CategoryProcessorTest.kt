@@ -904,4 +904,122 @@ class CategoryProcessorTest {
             runner.shutdown()
         }
     }
+
+    // ── dedup.digest.updateDiff ───────────────────────────────────────────────
+
+    private val diffUpdate = ShortlistItem(
+        eventKey = "k2-update",
+        coreFact = "same story again",
+        newsworthiness = 9,
+        digestFit = 9,
+        url = "https://example.com/2",
+        status = "meaningful_update",
+        relatedPreviousEventKey = "k2",
+        articleIndices = listOf(1)
+    )
+
+    private fun diffCat(logOnly: Boolean = false, longForm: Boolean = false) = cat(
+        dedup = DedupConfig(promptFile = "x.yaml", digest = DigestConfig(updateDiff = metifikys.config.UpdateDiffConfig(logOnly = logOnly)))
+    ).let { if (longForm) it.copy(post = metifikys.config.PostConfig(longForm = metifikys.config.LongFormConfig(minComposite = 0.0))) else it }
+
+    /** An UpdateDiff over its own DB mock (one earlier post of the story) whose model answers [answer]. */
+    private fun updateDiff(answer: String, client: LlmClient = mockk()): Pair<UpdateDiff, LlmClient> {
+        val diffDb = mockk<NewsDatabase>()
+        every { diffDb.fetchStoryPosts(any(), any(), any(), any()) } returns
+            listOf(metifikys.db.StoryPost("k2", LocalDateTime.now().minusDays(1), "• **Тема.** Те саме."))
+        every { diffDb.fetchCoveredEventsByKeys(any(), any(), any()) } returns emptyList()
+        every { client.completeJson(any(), any(), any()) } returns answer
+        return UpdateDiff(diffDb, { client }) to client
+    }
+
+    private fun diffProcessor(cat: CategoryConfig, diff: UpdateDiff, shortlist: List<ShortlistItem>): Tuple {
+        val extractor = mockk<EventExtractor>()
+        val config = cfg(minArticles = 1, category = cat)
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val promptLoader = mockk<PromptLoader>()
+        val factory = mockk<LlmClientsFactory>()
+        val deliverer = mockk<DigestDeliverer>(relaxed = true)
+        every { db.countPendingBatchesForCategory(any()) } returns 0
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { promptLoader.resolve(any()) } returns resolvedDedup
+        every { extractor.extract(any(), any(), any()) } returns ExtractOutcome.Ready(ExtractionResult(shortlist = shortlist))
+        val processor = CategoryProcessor(config, db, factory, promptLoader, deliverer, extractor, updateDiff = diff)
+        return Tuple(processor, db, factory, promptLoader, deliverer)
+    }
+
+    @Test
+    fun `an update without new facts is dropped and its articles are marked processed`() {
+        val (diff, _) = updateDiff("""{"useful": false, "newFacts": [], "reason": "retelling"}""")
+        val (p, db, factory) = diffProcessor(diffCat(), diff, listOf(diffUpdate))
+
+        p.process(mapOf("tech" to (1..3).map { article(it) }))
+
+        verify { db.markProcessed((1..3).map { "https://example.com/$it" }) }
+        verify(exactly = 0) { factory.forBatch(any()) }
+    }
+
+    @Test
+    fun `a dropped update leaves the shortlist while its articles still go to delivery for reconciliation`() {
+        val (diff, _) = updateDiff("""{"useful": false, "newFacts": [], "reason": "retelling"}""")
+        val (p, _, factory, _, deliverer) = diffProcessor(diffCat(), diff, listOf(shortlistItem(1), diffUpdate))
+        val client = mockk<LlmClient>()
+        every { factory.forBatch(any()) } returns client
+        val input = slot<metifikys.model.CategoryInput>()
+        every { client.submitCategoryBatch(any(), capture(input)) } returns CompletableFuture.completedFuture("digest")
+        val delivered = slot<List<Article>>()
+        every { deliverer.deliver(any(), any(), capture(delivered), any()) } just Runs
+
+        p.process(mapOf("tech" to (1..3).map { article(it) }))
+
+        assertEquals(listOf("k1"), input.captured.shortlist!!.map { it.eventKey })
+        assertTrue("https://example.com/2" in delivered.captured.map { it.link })
+    }
+
+    @Test
+    fun `a useful update carries newFacts into the render input and is never long-form`() {
+        val (diff, _) = updateDiff("""{"useful": true, "newFacts": ["Контракти — у грудні."], "reason": "date"}""")
+        val (p, _, factory) = diffProcessor(diffCat(longForm = true), diff, listOf(diffUpdate))
+        val client = mockk<LlmClient>()
+        every { factory.forBatch(any()) } returns client
+        val input = slot<metifikys.model.CategoryInput>()
+        every { client.submitCategoryBatch(any(), capture(input)) } returns CompletableFuture.completedFuture("digest")
+
+        p.process(mapOf("tech" to (1..3).map { article(it) }))
+
+        val item = input.captured.shortlist!!.single()
+        assertEquals(listOf("Контракти — у грудні."), item.newFacts)
+        assertEquals(false, item.isLongForm)
+    }
+
+    @Test
+    fun `logOnly update diff leaves the render shortlist as it was`() {
+        val (diff, diffClient) = updateDiff("""{"useful": false, "newFacts": [], "reason": "retelling"}""")
+        val (p, _, factory) = diffProcessor(diffCat(logOnly = true, longForm = true), diff, listOf(diffUpdate))
+        val client = mockk<LlmClient>()
+        every { factory.forBatch(any()) } returns client
+        val input = slot<metifikys.model.CategoryInput>()
+        every { client.submitCategoryBatch(any(), capture(input)) } returns CompletableFuture.completedFuture("digest")
+
+        p.process(mapOf("tech" to (1..3).map { article(it) }))
+
+        val item = input.captured.shortlist!!.single()
+        assertEquals("k2-update", item.eventKey)
+        assertTrue(item.newFacts.isEmpty())
+        assertEquals(true, item.isLongForm)  // unchanged: long-form picks it as before
+        verify(exactly = 1) { diffClient.completeJson(any(), any(), any()) }
+    }
+
+    @Test
+    fun `without an updateDiff block no diff call is made`() {
+        val (diff, diffClient) = updateDiff("""{"useful": false}""")
+        val (p, _, factory) = diffProcessor(cat(dedup = DedupConfig(promptFile = "x.yaml")), diff, listOf(diffUpdate))
+        val client = mockk<LlmClient>()
+        every { factory.forBatch(any()) } returns client
+        every { client.submitCategoryBatch(any(), any()) } returns CompletableFuture.completedFuture("digest")
+
+        p.process(mapOf("tech" to (1..3).map { article(it) }))
+
+        verify(exactly = 0) { diffClient.completeJson(any(), any(), any()) }
+        verify { client.submitCategoryBatch("tech", any()) }
+    }
 }

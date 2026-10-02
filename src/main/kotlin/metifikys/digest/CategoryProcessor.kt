@@ -68,7 +68,9 @@ open class CategoryProcessor(
     /** Effective mute lists (YAML + DB overlay); null = the YAML lists only. */
     muteRegistry: MuteRegistry? = null,
     /** `llm.shadow` B runs next to Step 1 and the render; null when no category configures one. */
-    private val shadowRunner: ShadowRunner? = null
+    private val shadowRunner: ShadowRunner? = null,
+    /** `dedup.digest.updateDiff` check of the render shortlist's updates; null when no category enables it. */
+    private val updateDiff: UpdateDiff? = null
 ) {
 
     private companion object {
@@ -493,8 +495,15 @@ open class CategoryProcessor(
         // shortlist passes through (sync Ready, extract-batch callback, and startup resume all
         // converge here). Logs near-duplicates; when eventHardThreshold is set, also drops the
         // highest-confidence cross-cycle dupes. Fail-open — returns the input on any error.
-        val analyzedShortlist: List<ShortlistItem>? =
+        val semanticShortlist: List<ShortlistItem>? =
             if (shortlist != null) (eventSemanticAnalyzer?.analyzeAndFilter(name, shortlist) ?: shortlist) else null
+        // dedup.digest.updateDiff, at the same chokepoint and on the final set (after Layer 3.5,
+        // before long-form): a meaningful_update stays only with facts the channel has not posted.
+        // A dropped update's articles stay in `articles` — delivery marks them PROCESSED with the
+        // rest of the batch, like any event that left the shortlist (all dropped → the branch below).
+        val analyzedShortlist: List<ShortlistItem>? = semanticShortlist?.let { list ->
+            updateDiff?.apply(name, categoryConfig, list, articles, updateDiffPrompts(resolvedDedup)) ?: list
+        }
         val longForm = categoryConfig.post?.longForm?.takeIf { it.enabled }
         // Long-form: mark the top events on the final render set (after Layer 3.5 drops), so the
         // cap counts only events that can actually be posted.
@@ -510,11 +519,12 @@ open class CategoryProcessor(
             logger.info { "[Category:$name]$chunkLabel[LongForm] long=${longKeys.ifEmpty { "none" }} (minComposite=${longForm.minComposite})" }
         }
 
-        // Every event was hard-rejected as a cross-cycle duplicate → nothing left to render.
+        // Every event was hard-rejected as a cross-cycle duplicate (or an update without new
+        // facts) → nothing left to render.
         if (shortlist != null && renderShortlist != null && renderShortlist.isEmpty()) {
             db.markProcessed(articles.map { it.link })
             logger.info {
-                "[Category:$name]$chunkLabel All shortlist events hard-rejected as duplicates — " +
+                "[Category:$name]$chunkLabel All shortlist events dropped (cross-cycle duplicates / updates without new facts) — " +
                     "marking ${articles.size} article(s) PROCESSED, skipping submission."
             }
             return
@@ -686,6 +696,13 @@ open class CategoryProcessor(
         } finally {
             if (aSummary == null) shadow?.finish(null)
         }
+    }
+
+    /** The prompt file's `updateDiff.system` / `.user` when both are set; null = the built-in prompts. */
+    private fun updateDiffPrompts(resolvedDedup: ResolvedDedupPrompts?): UpdateDiff.Prompts? {
+        val system = resolvedDedup?.updateDiffSystem ?: return null
+        val user = resolvedDedup.updateDiffUser ?: return null
+        return UpdateDiff.Prompts(system, user)
     }
 
     /**

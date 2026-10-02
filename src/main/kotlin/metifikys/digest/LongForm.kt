@@ -24,13 +24,16 @@ object LongForm {
     /**
      * Marks the long-form items of [shortlist]. The shortlist is already in ranker order, so the
      * first [LongFormConfig.maxPerDigest] items with a composite >= [LongFormConfig.minComposite]
-     * win (never the anti-bubble pick, which only rides along). Every other item's `depth` is
+     * win (never the anti-bubble pick, which only rides along, nor an update carrying `newFacts`,
+     * which is written as a short reply). Every other item's `depth` is
      * cleared — it is code's field, never Step 1's.
      */
     fun mark(shortlist: List<ShortlistItem>, config: LongFormConfig, digestConfig: DigestConfig?): List<ShortlistItem> {
         var left = config.maxPerDigest
         return shortlist.map { item ->
-            val long = config.enabled && left > 0 && !item.isExplore &&
+            // An update that carries `newFacts` (dedup.digest.updateDiff) is a short reply with
+            // only the new facts — retelling the story in full is what the diff exists to stop.
+            val long = config.enabled && left > 0 && !item.isExplore && item.newFacts.isEmpty() &&
                 ShortlistRanker.compositeScore(item, digestConfig) >= config.minComposite
             if (long) left--
             val depth = if (long) ShortlistItem.DEPTH_LONG else null

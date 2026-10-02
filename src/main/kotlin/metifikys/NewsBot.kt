@@ -25,6 +25,7 @@ import metifikys.digest.LongForm
 import metifikys.digest.MuteRegistry
 import metifikys.digest.PauseStore
 import metifikys.digest.PersonaWriter
+import metifikys.digest.UpdateDiff
 import metifikys.digest.ShadowRunner
 import metifikys.digest.FactChecker
 import metifikys.digest.PostImages
@@ -284,7 +285,10 @@ class NewsBot(
         eventSemanticAnalyzer = eventSemanticAnalyzer,
         longFormTextFetcher = LongForm.TextFetcher(articleFetcher::fetchFullText),
         muteRegistry = muteRegistry,
-        shadowRunner = shadowRunner
+        shadowRunner = shadowRunner,
+        updateDiff = if (config.categories.values.any { it.dedup?.digest?.updateDiff?.enabled == true }) {
+            UpdateDiff(db, { llmClientsFactory.forUpdateDiff(it) })
+        } else null
     )
 
     private val digestCycle = DigestCycle(

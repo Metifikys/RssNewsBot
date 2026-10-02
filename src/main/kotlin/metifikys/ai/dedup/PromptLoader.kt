@@ -20,7 +20,11 @@ data class ResolvedDedupPrompts(
     val renderSystem: String,
     val renderUser: String,
     val contextDays: Long,
-    val maxContextEvents: Int
+    val maxContextEvents: Int,
+    /** Optional `updateDiff.system` of the prompt file (`dedup.digest.updateDiff`); null = the built-in prompt. */
+    val updateDiffSystem: String? = null,
+    /** Optional `updateDiff.user` of the prompt file; null = the built-in prompt. */
+    val updateDiffUser: String? = null
 )
 
 /**
@@ -34,7 +38,10 @@ data class PromptInspection(
     val extractSystem: String?,
     val extractUser: String?,
     val renderSystem: String?,
-    val renderUser: String?
+    val renderUser: String?,
+    /** Optional `updateDiff.system` / `updateDiff.user` (file only); null = not set. */
+    val updateDiffSystem: String? = null,
+    val updateDiffUser: String? = null
 )
 
 /**
@@ -48,6 +55,9 @@ data class PromptInspection(
  *   3. Otherwise unresolved → [resolve] returns null and the caller falls back to the
  *      legacy single-step flow for that category.
  *
+ * Optional keys of the same file: `updateDiff.system` / `updateDiff.user` override the built-in
+ * prompts of `dedup.digest.updateDiff` (both or neither; see [metifikys.digest.UpdateDiff]).
+ *
  * Files are cached by (absolutePath, lastModified). Paths containing `..` are rejected.
  * A file edited in place is picked up on its next use (hot reload); [onReload] then gets the
  * reloaded file so the caller can re-validate it.
@@ -60,7 +70,9 @@ class PromptLoader(
         val extractSystem: String?,
         val extractUser: String?,
         val renderSystem: String?,
-        val renderUser: String?
+        val renderUser: String?,
+        val updateDiffSystem: String? = null,
+        val updateDiffUser: String? = null
     )
 
     private data class CacheEntry(val lastModified: Long, val doc: YamlDoc)
@@ -105,7 +117,9 @@ class PromptLoader(
             renderSystem = renderSystem,
             renderUser = renderUser,
             contextDays = dedup.contextDays,
-            maxContextEvents = dedup.maxContextEvents
+            maxContextEvents = dedup.maxContextEvents,
+            updateDiffSystem = p.updateDiffSystem,
+            updateDiffUser = p.updateDiffUser
         )
     }
 
@@ -121,7 +135,9 @@ class PromptLoader(
             extractSystem = inline?.extractSystem?.nonBlank() ?: fileDoc?.extractSystem?.nonBlank(),
             extractUser = inline?.extractUser?.nonBlank() ?: fileDoc?.extractUser?.nonBlank(),
             renderSystem = inline?.renderSystem?.nonBlank() ?: fileDoc?.renderSystem?.nonBlank(),
-            renderUser = inline?.renderUser?.nonBlank() ?: fileDoc?.renderUser?.nonBlank()
+            renderUser = inline?.renderUser?.nonBlank() ?: fileDoc?.renderUser?.nonBlank(),
+            updateDiffSystem = fileDoc?.updateDiffSystem?.nonBlank(),
+            updateDiffUser = fileDoc?.updateDiffUser?.nonBlank()
         )
     }
 
@@ -162,7 +178,9 @@ class PromptLoader(
                 extractSystem = root.at("/extract/system").asText(null)?.takeIf { !it.isNullOrEmpty() },
                 extractUser = root.at("/extract/user").asText(null)?.takeIf { !it.isNullOrEmpty() },
                 renderSystem = root.at("/render/system").asText(null)?.takeIf { !it.isNullOrEmpty() },
-                renderUser = root.at("/render/user").asText(null)?.takeIf { !it.isNullOrEmpty() }
+                renderUser = root.at("/render/user").asText(null)?.takeIf { !it.isNullOrEmpty() },
+                updateDiffSystem = root.at("/updateDiff/system").asText(null)?.takeIf { !it.isNullOrEmpty() },
+                updateDiffUser = root.at("/updateDiff/user").asText(null)?.takeIf { !it.isNullOrEmpty() }
             )
         } catch (e: Exception) {
             logger.warn(e) { "[Dedup] Failed to parse prompt file ${file.absolutePath}" }

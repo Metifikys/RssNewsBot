@@ -87,7 +87,14 @@ data class ShortlistItem(
      * `maxDigestItems`; null for every ordinary item. Travels with the shortlist through a pending
      * batch, so delivery can mark the post `🧭` and tag it `variant = explore`.
      */
-    val lane: String? = null
+    val lane: String? = null,
+    /**
+     * Set by code right before render (`dedup.digest.updateDiff`), never by Step 1: for a
+     * `meaningful_update`, the concrete facts absent from every earlier post about the story (in
+     * Ukrainian). The render writes only these, and such an item is never long-form. Empty for
+     * every other item. Travels with the shortlist through a pending batch.
+     */
+    val newFacts: List<String> = emptyList()
 ) {
     val isLongForm: Boolean get() = depth == DEPTH_LONG
 

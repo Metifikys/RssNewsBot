@@ -303,6 +303,16 @@ via a `/status` admin snapshot.
   звичним вибором` line and `digest_messages.variant = explore`, does not count toward the
   hold-back or the breaking lane, never goes long-form; the interval (`bot_state`) starts only
   once the post was sent. Logs `[AntiBubble] <key> nw=9 affinity=-0.21 (dropped: maxDigestItems)`.
+- **Update diff** (opt-in, `dedup.digest.updateDiff`) — every `meaningful_update` in the final
+  render shortlist goes, in one LLM call (`llm.updateDiff`, else the render route; metered as
+  `UPDATE_DIFF`), to a model together with the story's last posts as the channel published them
+  (`digest_messages.text`, the clean topic without footer; the chain follows `related_event_key`;
+  older posts fall back to the covered event's subject + coreFact) and the update's source
+  articles. No fact absent from every earlier post → the update is dropped (`[UpdateDiff] skip
+  <key>: <reason>`); otherwise it carries `newFacts`, the render writes only those (`Оновлення: …`,
+  as a reply) and it never goes long-form ([`UpdateDiff`](src/main/kotlin/metifikys/digest/UpdateDiff.kt)).
+  Fail-open; `logOnly` (default) only logs `[UpdateDiff][LOG-ONLY]`. Prompts: built-in, or
+  `updateDiff.system` / `.user` in the dedup prompt file; the render prompt needs a `newFacts` rule.
 
 ### Observability
 - **Logback** with day-rolling, gzipped archive; structured `[Category:foo]` /
@@ -1090,6 +1100,7 @@ llm:                      # per-use-case provider+model overrides
   summarize:        { provider: …, model: … }
   batchFallback:    { provider: …, model: … }    # any provider
   persona:          { provider: …, model: … }    # post.persona remark (default: the render route)
+  updateDiff:       { provider: …, model: … }    # dedup.digest.updateDiff check (default: the render route)
   shadow:           { enabled: true, extract: {…}, render: {…}, promptFile, sampleRate: 1.0, queueSize: 4 }  # 🌓 B next to A, stored only
 
 dedup:                    # two-step pipeline opt-in
@@ -1124,6 +1135,12 @@ dedup:                    # two-step pipeline opt-in
       minNewsworthiness: 8
       maxAffinity: -0.05
       label: "🧭 Поза звичним вибором"
+    updateDiff:           # 🔁 an update goes out only with facts the earlier posts lack (start logOnly)
+      logOnly: true
+      maxPreviousPosts: 3
+      windowDays: 14
+      timeoutSeconds: 60
+      maxSourceChars: 4000
 
 semanticDedup:            # embedding detector opt-in
   enabled: true

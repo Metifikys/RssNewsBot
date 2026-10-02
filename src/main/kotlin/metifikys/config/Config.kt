@@ -1533,6 +1533,12 @@ data class CategoryLlmOverrides(
      * to the [render] override, then to the global sync default; metered as `PERSONA` either way.
      */
     val persona: LlmOverride? = null,
+    /**
+     * The update diff (`dedup.digest.updateDiff`), one short sync call per `meaningful_update` in
+     * the render shortlist. Null falls back to the [render] override, then to the global sync
+     * default; metered as `UPDATE_DIFF` either way.
+     */
+    val updateDiff: LlmOverride? = null,
     /** Shadow run of a second model / prompt next to the live one, stored for comparison only; see [ShadowConfig]. */
     val shadow: ShadowConfig? = null
 )
@@ -1652,7 +1658,38 @@ data class DigestConfig(
     /** Window for [maxPostsPerEvent], days. */
     val updateWindowDays: Long = 7,
     /** Once a week one important event the audience's taste would have left out; see [AntiBubbleConfig]. */
-    val antiBubble: AntiBubbleConfig? = null
+    val antiBubble: AntiBubbleConfig? = null,
+    /** A `meaningful_update` is posted only with facts the channel has not posted yet; see [UpdateDiffConfig]. */
+    val updateDiff: UpdateDiffConfig? = null
+)
+
+/**
+ * Update diff (`dedup.digest.updateDiff`): every `meaningful_update` in the final render shortlist
+ * is compared, in one LLM call (`llm.updateDiff`, else the render route; metered as `UPDATE_DIFF`),
+ * with what the channel already posted about the story — the last [maxPreviousPosts] posts of the
+ * story chain within [windowDays] (`digest_messages.text`; older posts without text fall back to
+ * the covered event's subject + coreFact) — against the item's source articles (at most
+ * [maxSourceChars]). The model lists only the concrete facts absent from every previous post:
+ *
+ *  - none → the update is dropped (`[UpdateDiff] skip <key>: <reason>`), its articles reconciled
+ *    like any other event that left the shortlist;
+ *  - some → the item carries them as `newFacts`, the render writes only those as a reply to the
+ *    earlier post (the render prompt has to say so — PromptValidator warns), never long-form.
+ *
+ * Step 1 alone labels retellings as updates (27.09: an itc.ua copy of a story posted the day
+ * before, "up to 12 companies via the Avengers Labs contest", came out as a third post), and
+ * the cooldown lets anything with newsworthiness >= `newsworthinessOverride` through. Fail-open:
+ * an LLM failure, a timeout ([timeoutSeconds]) or an unparseable answer keeps the item as it was.
+ * [logOnly] (default) makes the call and logs `[UpdateDiff][LOG-ONLY]` but changes nothing.
+ * Prompts: built-in, or `updateDiff.system` / `updateDiff.user` in the category's dedup promptFile.
+ */
+data class UpdateDiffConfig(
+    val enabled: Boolean = true,
+    val logOnly: Boolean = true,
+    val maxPreviousPosts: Int = 3,
+    val windowDays: Long = 14,
+    val timeoutSeconds: Long = 60,
+    val maxSourceChars: Int = 4000
 )
 
 /**
@@ -2331,6 +2368,16 @@ object ConfigLoader {
                         "Category '$name' digest.antiBubble needs feedback.enabled — without the affinity table nothing is ever picked"
                     }
                 }
+                d.updateDiff?.takeIf { it.enabled }?.let { u ->
+                    require(u.maxPreviousPosts in 1..10) {
+                        "Category '$name' digest.updateDiff.maxPreviousPosts must be in 1..10 (got ${u.maxPreviousPosts})"
+                    }
+                    require(u.windowDays >= 1) { "Category '$name' digest.updateDiff.windowDays must be >= 1 (got ${u.windowDays})" }
+                    require(u.timeoutSeconds >= 1) { "Category '$name' digest.updateDiff.timeoutSeconds must be >= 1 (got ${u.timeoutSeconds})" }
+                    require(u.maxSourceChars >= 500) {
+                        "Category '$name' digest.updateDiff.maxSourceChars must be >= 500 (got ${u.maxSourceChars})"
+                    }
+                }
             }
             category.minArticles?.let { m ->
                 require(m >= 1) { "Category '$name' minArticles must be >= 1 (got $m)" }
@@ -2408,6 +2455,7 @@ object ConfigLoader {
                 validateOverride(name, "summarize", ovr.summarize, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "batchFallback", ovr.batchFallback, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "persona", ovr.persona, openRouter, anthropic, config.claudeCli, config.codexCli)
+                validateOverride(name, "updateDiff", ovr.updateDiff, openRouter, anthropic, config.claudeCli, config.codexCli)
                 ovr.shadow?.takeIf { it.enabled }?.let { s ->
                     require(s.extract != null || s.render != null) {
                         "Category '$name' llm.shadow needs extract and/or render — without either nothing runs in the shadow"

@@ -4,6 +4,7 @@ import metifikys.ai.PromptBuilder
 import metifikys.config.AppConfig
 import metifikys.config.CategoryConfig
 import metifikys.digest.FactChecker
+import metifikys.digest.UpdateDiff
 import metifikys.digest.WeeklyDigest
 import java.io.File
 
@@ -106,7 +107,41 @@ class PromptValidator(
                 "trackers are configured but the extract prompt never asks for eventDate — every tracker row stays undated"
             )
         }
+        out += validateUpdateDiff(name, cat, p, render)
         out += validateShadow(name, cat, config)
+        return out
+    }
+
+    /**
+     * `dedup.digest.updateDiff`: the optional `updateDiff.system` / `.user` keys of the prompt file
+     * (both or neither; must show the earlier posts and the new sources), and — once the diff is
+     * applied (not `logOnly`) — a render prompt that knows what to do with `newFacts`.
+     */
+    private fun validateUpdateDiff(name: String, cat: CategoryConfig, p: PromptInspection, render: String): List<PromptFinding> {
+        val cfg = cat.dedup?.digest?.updateDiff?.takeIf { it.enabled } ?: return emptyList()
+        val out = mutableListOf<PromptFinding>()
+        fun add(level: PromptFinding.Level, slot: String, msg: String) = out.add(PromptFinding(level, name, slot, msg))
+        val system = p.updateDiffSystem
+        val user = p.updateDiffUser
+        if ((system == null) != (user == null)) {
+            add(
+                PromptFinding.Level.WARN, "updateDiff",
+                "only one of updateDiff.system / updateDiff.user is set — the built-in prompts are used"
+            )
+        } else if (system != null && user != null) {
+            val both = system + "\n" + user
+            listOf("{{PREVIOUS_POSTS}}", "{{NEW_SOURCES}}").filter { it !in both }.takeIf { it.isNotEmpty() }?.let {
+                add(PromptFinding.Level.WARN, "updateDiff", "no ${it.joinToString(" / ")} — the diff cannot compare the update with the earlier posts")
+            }
+            unknownIn(system, UpdateDiff.PLACEHOLDERS)?.let { add(PromptFinding.Level.WARN, "updateDiff.system", it) }
+            unknownIn(user, UpdateDiff.PLACEHOLDERS)?.let { add(PromptFinding.Level.WARN, "updateDiff.user", it) }
+        }
+        if (!cfg.logOnly && render.isNotEmpty() && "newFacts" !in render) {
+            add(
+                PromptFinding.Level.WARN, "render",
+                "digest.updateDiff is applied but the render prompt never mentions \"newFacts\" — updates would still retell the story"
+            )
+        }
         return out
     }
 

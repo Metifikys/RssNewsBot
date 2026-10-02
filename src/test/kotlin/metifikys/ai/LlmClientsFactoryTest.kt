@@ -100,6 +100,20 @@ class LlmClientsFactoryTest {
     }
 
     @Test
+    fun `forUpdateDiff uses its own override, else the render one, else the sync default — metered as UPDATE_DIFF`() {
+        val recorder = mockk<LlmCallRecorder>(relaxed = true)
+        val own = cat(CategoryLlmOverrides(updateDiff = LlmOverride("openai", "gpt-mini"), render = LlmOverride("openai", "gpt-render")))
+        val render = cat(CategoryLlmOverrides(render = LlmOverride("openai", "gpt-render")))
+        val factory = LlmClientsFactory(config(categories = mapOf("g" to own, "r" to render)), db, recorder)
+        assertEquals("gpt-mini", factory.forUpdateDiff(own).endpoint.model)
+        assertEquals("gpt-render", factory.forUpdateDiff(render).endpoint.model)
+        assertEquals("router-default", factory.forUpdateDiff(null).endpoint.model)
+        val metered = factory.forUpdateDiff(own)
+        assertTrue(metered is MeteredLlmClient)
+        assertEquals(LlmUseCase.UPDATE_DIFF, metered.useCase)
+    }
+
+    @Test
     fun `forExtract with no override returns primary openai + alternate openrouter`() {
         val factory = LlmClientsFactory(config(withOpenRouter = true), db)
         val (primary, alternate) = factory.forExtract(null)

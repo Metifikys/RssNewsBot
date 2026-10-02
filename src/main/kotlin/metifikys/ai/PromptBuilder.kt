@@ -44,6 +44,8 @@ object PromptBuilder {
         val eventDate: String? = null,
         /** "long" for a long-form event (post.longForm); omitted for a short bullet. */
         val depth: String? = null,
+        /** dedup.digest.updateDiff: the only facts a meaningful_update may state; omitted when empty. */
+        val newFacts: List<String> = emptyList(),
         val sourceArticles: List<RenderSourceArticle> = emptyList()
     )
 
@@ -163,6 +165,7 @@ object PromptBuilder {
             articleIndices = articleIndices,
             eventDate = eventDate,
             depth = depth,
+            newFacts = newFacts,
             sourceArticles = sourceArticles
         )
     }

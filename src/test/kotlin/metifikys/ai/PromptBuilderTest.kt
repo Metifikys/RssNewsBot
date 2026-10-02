@@ -87,6 +87,25 @@ class PromptBuilderTest {
     }
 
     @Test
+    fun `an update with newFacts shows them to the render, other items omit the field`() {
+        val articles = listOf(
+            Article(category = "tech", title = "T0", link = "https://a.com/0", description = "rss 0"),
+            Article(category = "tech", title = "T1", link = "https://a.com/1", description = "rss 1")
+        )
+        val shortlist = listOf(
+            ShortlistItem(eventKey = "upd", coreFact = "x", url = "https://a.com/0", status = "meaningful_update",
+                articleIndices = listOf(0), newFacts = listOf("Контракти — у грудні.", "Бюджет — £5 млн.")),
+            ShortlistItem(eventKey = "new", coreFact = "y", url = "https://a.com/1", status = "new", articleIndices = listOf(1))
+        )
+
+        val prompt = PromptBuilder.buildRenderUserPrompt("tech", "💻", "{{SHORTLIST_JSON}}", shortlist, articles)
+
+        val (upd, fresh) = json.parseToJsonElement(prompt).jsonArray.map { it.jsonObject }
+        assertEquals(listOf("Контракти — у грудні.", "Бюджет — £5 млн."), upd.getValue("newFacts").jsonArray.map { it.jsonPrimitive.content })
+        assertTrue("newFacts" !in fresh)
+    }
+
+    @Test
     fun `buildRenderUserPrompt falls back to shortlist url when articleIndices are absent`() {
         val articles = listOf(
             Article(

@@ -181,6 +181,37 @@ class PromptValidatorTest {
     }
 
     @Test
+    fun `an applied update diff without newFacts in render is a warning, logOnly is not`() {
+        fun diffCat(logOnly: Boolean, renderSystem: String = goodRenderSystem) = cat(
+            dedup = DedupConfig(
+                prompts = inline(renderSystem = renderSystem),
+                digest = metifikys.config.DigestConfig(updateDiff = metifikys.config.UpdateDiffConfig(logOnly = logOnly))
+            )
+        )
+        val f = validate(config(diffCat(logOnly = false)))
+        assertTrue(f.at(Level.WARN).any { it.slot == "render" && "newFacts" in it.message }, "$f")
+        assertEquals(emptyList(), validate(config(diffCat(logOnly = true))))
+        assertEquals(emptyList(), validate(config(diffCat(logOnly = false, renderSystem = "$goodRenderSystem Updates with \"newFacts\": only those."))))
+    }
+
+    @Test
+    fun `updateDiff prompt keys of the prompt file are checked`() {
+        val base = "extract:\n  system: \"$goodExtractSystem\"\n  user: |\n    Batch: {{CURRENT_BATCH_JSON}}\n    Covered: {{PREVIOUSLY_COVERED_EVENTS_JSON}}\n" +
+            "render:\n  system: \"Render bullets •. depth long. newFacts only.\"\n  user: \"{{SHORTLIST_JSON}}\"\n"
+        val digest = metifikys.config.DigestConfig(updateDiff = metifikys.config.UpdateDiffConfig())
+        fun findings(file: String, body: String): List<PromptFinding> {
+            write(file, base + body)
+            return validate(config(cat(dedup = DedupConfig(promptFile = file, digest = digest))))
+        }
+        assertEquals(emptyList(), findings("ok.yaml", "updateDiff:\n  system: \"Diff.\"\n  user: \"{{PREVIOUS_POSTS}} {{NEW_SOURCES}} {{SUBJECT}}\"\n"))
+        assertTrue(findings("half.yaml", "updateDiff:\n  system: \"Diff.\"\n").any { it.level == Level.WARN && it.slot == "updateDiff" })
+        val bad = findings("bad.yaml", "updateDiff:\n  system: \"Diff.\"\n  user: \"{{PREVIOUS_POSTS}} {{ARTICLES}}\"\n")
+        assertTrue(bad.any { it.slot == "updateDiff" && "NEW_SOURCES" in it.message }, "$bad")
+        assertTrue(bad.any { it.slot == "updateDiff.user" && "{{ARTICLES}}" in it.message }, "$bad")
+        assertEquals("Diff.", loader.resolve(cat(dedup = DedupConfig(promptFile = "ok.yaml")))!!.updateDiffSystem)
+    }
+
+    @Test
     fun `trackers without eventDate in extract is a warning`() {
         val trackers = listOf(TrackerConfig(id = "releases", title = "📅", eventTypes = listOf("release_date")))
         assertEquals(emptyList(), validate(config(cat(trackers = trackers))))
