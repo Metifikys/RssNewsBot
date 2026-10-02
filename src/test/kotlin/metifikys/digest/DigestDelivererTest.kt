@@ -933,6 +933,33 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `digest_messages keeps the clean posted text without the footer`() {
+        val (_, sent, rows) = exploreDelivery(PostConfig(hashtags = HashtagsConfig(category = "#tech")))
+        assertTrue("#tech" in sent[0])
+        assertEquals(
+            listOf("**First.**\n\n[Title 1](https://example.com/1)", "**Second.**\n\n[Title 2](https://example.com/2)"),
+            rows.map { it.text }
+        )
+    }
+
+    @Test
+    fun `an update's digest_messages rows carry its related event key on every chunk`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        every { sender.sendToChannel(any(), any(), any(), any()) } returns listOf(SentRef(-100L, 1L), SentRef(-100L, 2L))
+        val rows = slot<List<DigestMessageRow>>()
+        every { db.insertDigestMessages(capture(rows)) } returns Unit
+        val update = shortlistItem("evt-u", article(1).link).copy(status = "meaningful_update", relatedPreviousEventKey = "evt-o")
+
+        DigestDeliverer(config(), db, sender).deliver("tech", "• **Оновлення.**\n\n[Title 1](https://example.com/1)", listOf(article(1)), listOf(update))
+
+        assertEquals(listOf("evt-o", "evt-o"), rows.captured.map { it.relatedEventKey })
+        assertEquals(listOf("evt-u", "evt-u"), rows.captured.map { it.eventKey })
+        assertTrue(rows.captured.all { it.text == "**Оновлення.**\n\n[Title 1](https://example.com/1)" }, "${rows.captured}")
+    }
+
+    @Test
     fun `the explore marker shows without a post block, and a failed send leaves the interval alone`() {
         val (_, sent, _) = exploreDelivery(post = null)
         assertEquals("**Second.**\n\n[Title 2](https://example.com/2)\n\n🧭 Поза звичним вибором", sent[1])

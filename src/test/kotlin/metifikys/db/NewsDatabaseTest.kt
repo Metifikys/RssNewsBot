@@ -545,4 +545,52 @@ class NewsDatabaseTest {
         assertEquals(null, db.fetchDigestMessage(-100L, 61L)?.variant)
         assertEquals("explore", db.fetchLatestDigestMessagesByEventKeys("gaming", setOf("evt-x"), at.minusDays(1)).getValue("evt-x").variant)
     }
+
+    @Test
+    fun `digest message text and related key round-trip and default to null`() {
+        val at = LocalDateTime.now().withNano(0)
+        db.insertDigestMessages(listOf(
+            DigestMessageRow(-100L, 70L, "tech", "evt-u", "", at, text = "• **Тема.** Текст поста.", relatedEventKey = "evt-o"),
+            DigestMessageRow(-100L, 71L, "tech", "evt-v", "", at)
+        ))
+        val withText = db.fetchDigestMessage(-100L, 70L)!!
+        assertEquals("• **Тема.** Текст поста.", withText.text)
+        assertEquals("evt-o", withText.relatedEventKey)
+        assertEquals(null, db.fetchDigestMessage(-100L, 71L)!!.text)
+        assertEquals(null, db.fetchDigestMessage(-100L, 71L)!!.relatedEventKey)
+        assertEquals("• **Тема.** Текст поста.", db.fetchLatestDigestMessagesByEventKeys("tech", setOf("evt-u"), at.minusDays(1)).getValue("evt-u").text)
+    }
+
+    @Test
+    fun `fetchStoryPosts follows the related chain both ways, one entry per post, oldest first`() {
+        val now = LocalDateTime.now().withNano(0)
+        val d1 = now.minusDays(7)  // the original
+        val d2 = now.minusDays(6)  // update 1: own key, related -> original
+        val d3 = now.minusDays(5)  // update 2: own key, related -> update 1
+        db.insertDigestMessages(listOf(
+            DigestMessageRow(-100L, 1L, "tech", "drones", "", d1, text = "post 1"),
+            DigestMessageRow(-100L, 2L, "tech", "drones-12", "", d2, text = "post 2", relatedEventKey = "drones"),
+            DigestMessageRow(-100L, 3L, "tech", "drones-12", "", d2, text = "post 2", relatedEventKey = "drones"), // chunk 2
+            DigestMessageRow(-100L, 4L, "tech", "drones-labs", "", d3, text = null, relatedEventKey = "drones-12"),
+            DigestMessageRow(-100L, 5L, "tech", "other", "", d2, text = "unrelated"),
+            DigestMessageRow(-100L, 6L, "gaming", "drones", "", d2, text = "other category"),
+            DigestMessageRow(-100L, 7L, "tech", "drones", "", now.minusDays(30), text = "outside the window")
+        ))
+        val since = now.minusDays(14)
+
+        // A new update pointing at the original sees the sibling chain too.
+        val fromOriginal = db.fetchStoryPosts("tech", listOf("drones-new", "drones"), since, 5)
+        assertEquals(listOf("drones", "drones-12", "drones-labs"), fromOriginal.map { it.eventKey })
+        assertEquals(listOf("post 1", "post 2", null), fromOriginal.map { it.text })
+        assertEquals(listOf(d1, d2, d3), fromOriginal.map { it.sentAt })
+
+        // From the newest key the chain is walked back to the original.
+        assertEquals(listOf("drones", "drones-12", "drones-labs"), db.fetchStoryPosts("tech", listOf("drones-labs"), since, 5).map { it.eventKey })
+
+        // limit keeps the latest posts.
+        assertEquals(listOf("drones-12", "drones-labs"), db.fetchStoryPosts("tech", listOf("drones"), since, 2).map { it.eventKey })
+
+        assertTrue(db.fetchStoryPosts("tech", listOf("nothing"), since, 3).isEmpty())
+        assertTrue(db.fetchStoryPosts("tech", emptyList(), since, 3).isEmpty())
+    }
 }

@@ -277,7 +277,8 @@ class DigestDeliverer(
                 val topicLinks = (topicUrls[idx] intersect allArticleLinks)
                 val linksJson = topicLinks.joinToString("\n")
                 // One digest_messages row per Telegram message (a chunked topic yields several,
-                // all sharing the same event and article links).
+                // all sharing the same event, article links and clean text). `text` is the topic
+                // without its footer — what updateDiff later compares an update against.
                 for (ref in refs) {
                     digestMessageRows += DigestMessageRow(
                         chatId = ref.chatId,
@@ -286,7 +287,9 @@ class DigestDeliverer(
                         eventKey = eventKey,
                         articleLinks = linksJson,
                         sentAt = sentAt,
-                        variant = variant
+                        variant = variant,
+                        text = topic,
+                        relatedEventKey = item?.relatedPreviousEventKey
                     )
                 }
                 if (checkFacts) {

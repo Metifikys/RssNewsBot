@@ -23,6 +23,10 @@ object DigestMessagesTable : Table("digest_messages") {
     val sentAt = datetime("sent_at").index()
     /** Experiment arm of the post for reaction analysis (see [DigestMessageRow.variant]); null = none. */
     val variant = varchar("variant", 20).nullable()
+    /** The clean topic as posted (see [DigestMessageRow.text]); null on rows written before the column existed. */
+    val text = text("text").nullable()
+    /** The Step 1 item's `relatedPreviousEventKey` (see [DigestMessageRow.relatedEventKey]). */
+    val relatedEventKey = varchar("related_event_key", 3000).nullable()
 
     override val primaryKey = PrimaryKey(chatId, messageId)
 
@@ -61,7 +65,21 @@ data class DigestMessageRow(
      * (the anti-bubble pick), `persona` / `control` (the editor-remark A/B). Null for an ordinary
      * post and for every row written before the column existed.
      */
-    val variant: String? = null
+    val variant: String? = null,
+    /**
+     * The topic exactly as the bullet was rendered — after the URL whitelist and layout, WITHOUT
+     * the footer (badges, story lines, hashtags…): the same clean text `saveSummary` keeps, the
+     * full text for a long-form post. Every chunk of a chunked topic carries it. Lets
+     * `dedup.digest.updateDiff` compare an update with what the channel actually said. Null on
+     * rows written before the column existed.
+     */
+    val text: String? = null,
+    /**
+     * The `relatedPreviousEventKey` of the item this post rendered (null for a `new` item and on
+     * older rows): links the posts of one story whose updates minted new event keys, so the story
+     * reads back as a chain ([DigestMessageStore.fetchStoryPosts]).
+     */
+    val relatedEventKey: String? = null
 ) {
     companion object {
         const val VARIANT_EXPLORE = "explore"
@@ -69,6 +87,16 @@ data class DigestMessageRow(
         const val VARIANT_CONTROL = "control"
     }
 }
+
+/**
+ * One post of a story as the channel carried it ([DigestMessageStore.fetchStoryPosts]): the event
+ * key it rendered, when it went out, and its clean text (null for posts written before
+ * `digest_messages.text` existed).
+ */
+data class StoryPost(val eventKey: String, val sentAt: LocalDateTime, val text: String?)
+
+/** How many rounds [DigestMessageStore.fetchStoryPosts] follows `related_event_key` links. */
+const val STORY_HOPS = 2
 
 /** A single emoji's current aggregated count on a message. */
 data class ReactionCount(val emoji: String, val count: Int)
@@ -116,6 +144,21 @@ interface DigestMessageStore {
         eventKeys: Collection<String>,
         since: LocalDateTime
     ): Map<String, DigestMessageRow>
+
+    /**
+     * The last [limit] posts of the story [eventKeys] belong to in [category] since [since],
+     * oldest first; one entry per post (the chunks of a topic count once). The story is followed
+     * through `related_event_key` both ways for up to [STORY_HOPS] rounds: an update that minted
+     * a new key (pointing `related` at the original) is found from the original's key, and a
+     * sibling update pointing at the same original is found from the newest one. Backs
+     * `dedup.digest.updateDiff` — "what the channel already said about this story".
+     */
+    fun fetchStoryPosts(
+        category: String,
+        eventKeys: Collection<String>,
+        since: LocalDateTime,
+        limit: Int
+    ): List<StoryPost>
 
     /**
      * Replaces the stored reaction set for one message with [counts]. A `message_reaction_count`
@@ -196,6 +239,8 @@ internal class DigestMessageRepository : DigestMessageStore {
                     it[articleLinks] = r.articleLinks
                     it[sentAt] = r.sentAt
                     it[variant] = r.variant
+                    it[text] = r.text
+                    it[relatedEventKey] = r.relatedEventKey
                 }
             }
         }
@@ -240,20 +285,45 @@ internal class DigestMessageRepository : DigestMessageStore {
                 .orderBy(DigestMessagesTable.sentAt to SortOrder.DESC, DigestMessagesTable.messageId to SortOrder.ASC)
                 .forEach { row ->
                     val key = row[DigestMessagesTable.eventKey] ?: return@forEach
-                    out.putIfAbsent(
-                        key,
-                        DigestMessageRow(
-                            chatId = row[DigestMessagesTable.chatId],
-                            messageId = row[DigestMessagesTable.messageId],
-                            category = row[DigestMessagesTable.category],
-                            eventKey = key,
-                            articleLinks = row[DigestMessagesTable.articleLinks],
-                            sentAt = row[DigestMessagesTable.sentAt],
-                            variant = row[DigestMessagesTable.variant]
-                        )
-                    )
+                    out.putIfAbsent(key, row.toDigestMessageRow())
                 }
             out
+        }
+    }
+
+    override fun fetchStoryPosts(
+        category: String,
+        eventKeys: Collection<String>,
+        since: LocalDateTime,
+        limit: Int
+    ): List<StoryPost> {
+        if (eventKeys.isEmpty() || limit <= 0) return emptyList()
+        return transaction {
+            val keys = eventKeys.toMutableSet()
+            val rows = LinkedHashMap<Pair<Long, Long>, DigestMessageRow>()
+            var frontier: Set<String> = keys.toSet()
+            // Round 0 reads the given keys; each further round follows the keys the rows found
+            // so far link to (their own key and their related key), up to STORY_HOPS.
+            repeat(STORY_HOPS + 1) {
+                if (frontier.isEmpty()) return@repeat
+                DigestMessagesTable
+                    .selectAll()
+                    .where {
+                        (DigestMessagesTable.category eq category) and
+                            (DigestMessagesTable.sentAt greaterEq since) and
+                            ((DigestMessagesTable.eventKey inList frontier) or (DigestMessagesTable.relatedEventKey inList frontier))
+                    }
+                    .forEach { r -> rows.putIfAbsent(r[DigestMessagesTable.chatId] to r[DigestMessagesTable.messageId], r.toDigestMessageRow()) }
+                val linked = rows.values.flatMap { listOfNotNull(it.eventKey, it.relatedEventKey) }.toSet()
+                frontier = linked - keys
+                keys += linked
+            }
+            rows.values
+                .filter { it.eventKey != null }
+                .sortedWith(compareBy({ it.sentAt }, { it.messageId }))
+                .distinctBy { it.eventKey to it.sentAt }
+                .takeLast(limit)
+                .map { StoryPost(it.eventKey!!, it.sentAt, it.text) }
         }
     }
 
@@ -390,7 +460,9 @@ internal class DigestMessageRepository : DigestMessageStore {
         eventKey = this[DigestMessagesTable.eventKey],
         articleLinks = this[DigestMessagesTable.articleLinks],
         sentAt = this[DigestMessagesTable.sentAt],
-        variant = this[DigestMessagesTable.variant]
+        variant = this[DigestMessagesTable.variant],
+        text = this[DigestMessagesTable.text],
+        relatedEventKey = this[DigestMessagesTable.relatedEventKey]
     )
 
     override fun fetchDigestMessage(chatId: Long, messageId: Long): DigestMessageRow? = transaction {
