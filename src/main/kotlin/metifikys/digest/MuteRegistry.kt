@@ -2,8 +2,10 @@ package metifikys.digest
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import metifikys.config.AppConfig
+import metifikys.db.AdminMuteKind
 import metifikys.db.AdminMuteRow
 import metifikys.db.NewsDatabase
+import metifikys.format.EventTypeLabels
 import java.time.LocalDateTime
 
 private val logger = KotlinLogging.logger {}
@@ -11,7 +13,13 @@ private val logger = KotlinLogging.logger {}
 /**
  * The effective keyword-mute lists: the YAML ones (`preferences.mute` for every category,
  * `categories.<name>.mute` for one) plus the DB overlay `admin_mutes` that Telegram commands,
- * mute suggestions and moderation buttons write. [filterFor] is what Step 0 of the digest uses.
+ * mute suggestions, moderation and inspector buttons write. [filterFor] is what Step 0 of the
+ * digest uses.
+ *
+ * Event-type mutes (`admin_mutes.kind = event_type`, DB only, always one category) are a separate
+ * list: [mutedEventTypes] is what Step 1 post-processing drops shortlist items by — an event type
+ * exists only once Step 1 has run. [entries], [covering], [add] and [remove] are keyword-only;
+ * the type side has [typeEntries], [addEventType] and [removeEventType].
  *
  * Filters are built lazily and cached until [invalidate] — every write through [add] / [remove]
  * invalidates, so a new mute takes effect on the next digest run, including for articles already
@@ -30,8 +38,18 @@ class MuteRegistry(
         DB("бот")
     }
 
-    /** One effective mute. [category] null = global; [row] is set for DB entries. */
-    data class Entry(val keyword: String, val category: String?, val origin: Origin, val row: AdminMuteRow? = null)
+    /**
+     * One effective mute. [category] null = global; [row] is set for DB entries. [kind] is
+     * [AdminMuteKind.KEYWORD] or, for [typeEntries], [AdminMuteKind.EVENT_TYPE] ([keyword] then
+     * holds the normalized event type).
+     */
+    data class Entry(
+        val keyword: String,
+        val category: String?,
+        val origin: Origin,
+        val row: AdminMuteRow? = null,
+        val kind: String = AdminMuteKind.KEYWORD
+    )
 
     sealed interface AddResult {
         data class Added(val id: Int) : AddResult
@@ -52,12 +70,14 @@ class MuteRegistry(
     private val lock = Any()
     @Volatile private var cached: Map<String, TopicMuteFilter>? = null
     @Volatile private var cachedEntries: List<Entry>? = null
+    @Volatile private var cachedTypes: List<Entry>? = null
 
-    /** Drops the cached filters; the next [filterFor] / [entries] re-reads the DB. */
+    /** Drops the cached filters; the next [filterFor] / [entries] / [typeEntries] re-reads the DB. */
     fun invalidate() {
         synchronized(lock) {
             cached = null
             cachedEntries = null
+            cachedTypes = null
         }
     }
 
@@ -84,9 +104,54 @@ class MuteRegistry(
             cachedEntries?.let { return it }
             val fromConfig = config.preferences.mute.map { Entry(it.trim(), null, Origin.CONFIG_GLOBAL) } +
                 config.categories.flatMap { (name, cat) -> cat.mute.map { Entry(it.trim(), name, Origin.CONFIG_CATEGORY) } }
-            val fromDb = dbRows().map { Entry(it.keyword, it.category, Origin.DB, it) }
+            val fromDb = dbRows().filter { it.kind == AdminMuteKind.KEYWORD }.map { Entry(it.keyword, it.category, Origin.DB, it) }
             return (fromConfig + fromDb).also { cachedEntries = it }
         }
+    }
+
+    /** Every event-type mute (DB only), oldest first. */
+    fun typeEntries(): List<Entry> {
+        cachedTypes?.let { return it }
+        synchronized(lock) {
+            cachedTypes?.let { return it }
+            return dbRows()
+                .filter { it.kind == AdminMuteKind.EVENT_TYPE && it.category != null }
+                .map { Entry(EventTypeLabels.normalize(it.keyword), it.category, Origin.DB, it, AdminMuteKind.EVENT_TYPE) }
+                .also { cachedTypes = it }
+        }
+    }
+
+    /** Event types muted in [category] (normalized); what Step 1 post-processing drops. */
+    fun mutedEventTypes(category: String): Set<String> =
+        typeEntries().filter { it.category == category }.map { it.keyword }.toSet()
+
+    /** The type mute covering [eventType] in [category], or null. */
+    fun coveringType(eventType: String, category: String): Entry? {
+        val t = EventTypeLabels.normalize(eventType)
+        return typeEntries().firstOrNull { it.category == category && it.keyword == t }
+    }
+
+    /** Mutes [eventType] in [category] (from the next digest on); same results as [add]. */
+    fun addEventType(eventType: String, category: String, by: Long, source: String): AddResult {
+        val t = EventTypeLabels.normalize(eventType)
+        EventTypeLabels.validate(t)?.let { return AddResult.Invalid(it) }
+        if (category !in config.categories) return AddResult.Invalid("невідома категорія $category")
+        coveringType(t, category)?.let { return AddResult.AlreadyMuted(it) }
+        val store = db ?: return AddResult.Invalid("немає БД")
+        val id = store.insertAdminMute(t, category, by, source, AdminMuteKind.EVENT_TYPE)
+        invalidate()
+        logger.info { "[Mute] +type $t scope=$category by=$by source=$source" }
+        return AddResult.Added(id)
+    }
+
+    /** Removes the type mute of [eventType] in [category]: [RemoveResult.Removed] or [RemoveResult.NotFound]. */
+    fun removeEventType(eventType: String, category: String, by: Long): RemoveResult {
+        val t = EventTypeLabels.normalize(eventType)
+        val removed = db?.deleteAdminMutes(t, category, AdminMuteKind.EVENT_TYPE) ?: 0
+        if (removed == 0) return RemoveResult.NotFound
+        invalidate()
+        logger.info { "[Mute] -type $t scope=$category by=$by" }
+        return RemoveResult.Removed(removed)
     }
 
     private fun dbRows(): List<AdminMuteRow> {

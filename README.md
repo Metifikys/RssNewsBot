@@ -350,7 +350,10 @@ via a `/status` admin snapshot.
   Commands ([`AdminCommands`](src/main/kotlin/metifikys/telegram/AdminCommands.kt)): `/status`,
   `/pause <cat> [6h|2d]` / `/resume <cat>` (digest only, ingestion continues; kept in `bot_state`),
   `/run <cat> [fetch]` (queued on the category's own scheduler thread, reports the post count),
-  `/mute <word|"phrase"> [cat]` with a 7-day hit preview, `/unmute`, `/mutes [yaml]`. Telegram
+  `/mute <word|"phrase"> [cat]` with a 7-day hit preview, `/unmute`, `/mutes [yaml]`;
+  `/mute type:<eventType> <cat>` (e.g. `type:rumor gaming`) mutes a Step 1 event type in one category —
+  such shortlist items are dropped after Step 1, before the ranker (`[Mute] type rumor dropped <key>`),
+  and their articles are reconciled like any other dropped item; `/unmute type:rumor gaming` lifts it. Telegram
   mutes go to the `admin_mutes` table and are merged over the YAML lists by
   [`MuteRegistry`](src/main/kotlin/metifikys/digest/MuteRegistry.kt), so a hand-synced prod config
   cannot wipe them; `/mutes yaml` prints them as a config fragment to move into the repo.
@@ -1219,7 +1222,7 @@ next to the golden one and prints the shortlist Jaccard, status / score changes 
 | `badge_cache`        | Rendered footer badges per `(provider, key)` with a per-provider TTL; `""` caches a negative lookup; also `ogimage` (a post page's og:image, `post.images`) and the shared Steam lookups (`steam_app` title → appid, `steam_appdetails` narrowed card) |
 | `entity_intros`      | First-mention memory for the Wikipedia intro: one row per `(category, entity key)`, hits and misses |
 | `tracker_entries`    | Living-tracker state per `(category, tracker, entity)`: event date, previous date, status, latest post |
-| `admin_mutes`        | Keyword mutes added from Telegram (`/mute`, suggestions, moderation), merged over the YAML mute lists; `category` null = global |
+| `admin_mutes`        | Mutes added from Telegram (`/mute`, suggestions, moderation, the inspector): `kind = keyword` merged over the YAML mute lists (`category` null = global), `kind = event_type` a Step 1 event type muted in one category |
 | `admin_feedback`     | Explicit 👍/👎/🗑 per post from the moderation buttons (last press wins), with the post's category, event and send time; kept apart from `reaction_counts`, which every reaction update replaces |
 | `fact_checks`        | `factCheck` verdicts: per judged post its category, `chat_id` / `message_id`, event key, post text (no footer), source chars, `verdict` (`supported` / `minor` / `unsupported`), the judge's `claims_json`, judge provider / model, `checked_at`; kept `factCheck.retentionDays` (90) |
 | `shadow_runs`        | `llm.shadow` pairs: per Step 1 batch or render, A's and B's provider / model / prompt hash, the post-processed output of each (Step 1 shortlist + drops, or the prepared topics; B's raw answer when it did not parse), their links, B's error and latency; kept `processing.shadowRetentionDays` |

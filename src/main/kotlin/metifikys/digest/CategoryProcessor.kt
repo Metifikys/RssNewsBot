@@ -89,6 +89,9 @@ open class CategoryProcessor(
      */
     private val mutes: MuteRegistry = muteRegistry ?: MuteRegistry(config)
 
+    /** Event types muted in [category] (`/mute type:…`): Step 1 post-processing drops them from the shortlist. */
+    fun mutedEventTypes(category: String): Set<String> = mutes.mutedEventTypes(category)
+
     /**
      * Processes each ready category independently — categories never block each other:
      *  - Batch route: `submitCategoryBatch()` returns a CompletableFuture and delivery fires from
@@ -258,7 +261,8 @@ open class CategoryProcessor(
                     alternateOpenAI = alternate,
                     requestCounter = extractorCounters.getOrPut(name) { AtomicLong(0) },
                     storyIntel = config.storyIntel,
-                    shadow = step1Shadow(name, categoryConfig, resolvedDedup)
+                    shadow = step1Shadow(name, categoryConfig, resolvedDedup),
+                    mutedEventTypes = ::mutedEventTypes
                 )
             }
             val outcome = try {

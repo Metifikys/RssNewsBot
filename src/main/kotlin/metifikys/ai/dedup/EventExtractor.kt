@@ -61,6 +61,8 @@ data class Step1Drop(val url: String, val eventKey: String, val reason: String) 
         const val HALLUCINATED_URL = "hallucinated_url"
         const val COOLDOWN = "cooldown"
         const val MAX_POSTS_PER_EVENT = "max_posts_per_event"
+        /** The item's `eventType` is muted in the category (`/mute type:…`, the inspector's button). */
+        const val MUTED_TYPE = "muted_type"
         const val RANKER = "ranker"
         const val AFFINITY = "affinity"
     }
@@ -111,7 +113,13 @@ class EventExtractor(
     /** "Now" of the post-processing (cooldown, posts cap, anti-bubble, row stamps); golden tests pin it. */
     private val clock: () -> LocalDateTime = LocalDateTime::now,
     /** `llm.shadow.extract`: B runs next to every sync Step 1 call; null = no shadow. */
-    private val shadow: Step1Shadow? = null
+    private val shadow: Step1Shadow? = null,
+    /**
+     * Event types muted per category (normalized, see [metifikys.digest.MuteRegistry.mutedEventTypes]):
+     * shortlist items of such a type are dropped after the posts cap, before the ranker. A failing
+     * lookup mutes nothing.
+     */
+    private val mutedEventTypes: (String) -> Set<String> = { emptySet() }
 ) {
 
     companion object {
@@ -438,8 +446,24 @@ class EventExtractor(
             cooldownFilteredShortlist
         }
 
+        val typeMuted = try {
+            mutedEventTypes(category)
+        } catch (e: Exception) {
+            logger.warn(e) { "$tag[Mute] reading the event-type mutes failed — none applied" }
+            emptySet()
+        }
+        val unmutedShortlist = if (typeMuted.isEmpty()) cappedShortlist else cappedShortlist.filter { item ->
+            val type = item.eventType.trim().lowercase()
+            val muted = type.isNotEmpty() && type in typeMuted
+            if (muted) {
+                logger.info { "$tag[Mute] type $type dropped ${item.eventKey}" }
+                drops += Step1Drop(item.url, item.eventKey, Step1Drop.MUTED_TYPE)
+            }
+            !muted
+        }
+
         val finalShortlist = if (digestConfig != null && digestConfig.ranker.enabled) {
-            val ranked = ShortlistRanker.rank(cappedShortlist, digestConfig)
+            val ranked = ShortlistRanker.rank(unmutedShortlist, digestConfig)
             if (ranked.dropped.isNotEmpty()) {
                 val byReason = ranked.dropped.groupingBy { it.reason.substringBefore(" ") }.eachCount()
                 logger.info {
@@ -457,14 +481,14 @@ class EventExtractor(
                 }
             }
             val final = if (withAudience) {
-                val kept = applyAffinity(category, cappedShortlist, ranked, digestConfig)
-                applyAntiBubble(category, cappedShortlist, kept, ranked, digestConfig, now)
+                val kept = applyAffinity(category, unmutedShortlist, ranked, digestConfig)
+                applyAntiBubble(category, unmutedShortlist, kept, ranked, digestConfig, now)
             } else {
                 ranked.kept
             }
             val finalIds = final.map { it.eventKey to it.url }.toSet()
             val rankerReasons = ranked.dropped.associate { (it.item.eventKey to it.item.url) to it.reason }
-            for (item in cappedShortlist) {
+            for (item in unmutedShortlist) {
                 val id = item.eventKey to item.url
                 if (id in finalIds) continue
                 val reason = rankerReasons[id]?.let { "${Step1Drop.RANKER}: $it" } ?: Step1Drop.AFFINITY
@@ -472,7 +496,7 @@ class EventExtractor(
             }
             final
         } else {
-            cappedShortlist
+            unmutedShortlist
         }
 
         val statuses = parsed.extractions.groupingBy { it.status }.eachCount()

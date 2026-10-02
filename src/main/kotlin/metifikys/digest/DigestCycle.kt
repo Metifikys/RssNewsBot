@@ -576,7 +576,8 @@ class DigestCycle(
             openAI = primaryClient,
             promptLoader = promptLoader,
             db = db,
-            storyIntel = config.storyIntel
+            storyIntel = config.storyIntel,
+            mutedEventTypes = { categoryProcessor.mutedEventTypes(it) }
         )
 
         RunContext.carry(primaryClient.resumeExtractBatch(record.batchId))

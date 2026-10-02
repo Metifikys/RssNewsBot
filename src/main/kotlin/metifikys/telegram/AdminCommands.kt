@@ -4,6 +4,7 @@ import metifikys.config.AppConfig
 import metifikys.db.NewsDatabase
 import metifikys.digest.MuteRegistry
 import metifikys.digest.PauseStore
+import metifikys.format.EventTypeLabels
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -48,8 +49,8 @@ class AdminCommands(
         router.register("pause", "/pause <cat> [6h|2d]", "призупинити дайджест категорії") { cmd, ctx -> pause(cmd.args, ctx) }
         router.register("resume", "/resume <cat>", "зняти паузу") { cmd, ctx -> resume(cmd.args, ctx) }
         router.register("run", "/run <cat> [fetch]", "прогнати дайджест зараз") { cmd, ctx -> runNow(cmd.args, ctx) }
-        router.register("mute", "/mute <слово|\"фраза\"> [cat]", "заглушити слово") { cmd, ctx -> mute(cmd.args, ctx) }
-        router.register("unmute", "/unmute <слово> [cat]", "зняти mute, доданий ботом") { cmd, ctx -> unmute(cmd.args, ctx) }
+        router.register("mute", "/mute <слово|\"фраза\"|type:тип> [cat]", "заглушити слово або тип подій у категорії") { cmd, ctx -> mute(cmd.args, ctx) }
+        router.register("unmute", "/unmute <слово|type:тип> [cat]", "зняти mute, доданий ботом") { cmd, ctx -> unmute(cmd.args, ctx) }
         router.register("mutes", "/mutes [yaml]", "усі mute і їхні джерела") { cmd, ctx -> listMutes(cmd.args, ctx) }
     }
 
@@ -138,6 +139,7 @@ class AdminCommands(
     }
 
     private fun mute(args: List<String>, ctx: AdminCommandRouter.Context) {
+        parseTypeArgs(args, config.categories.keys)?.let { (type, scope) -> return muteType(type, scope, ctx) }
         val (keyword, scope) = parseMuteArgs(args, config.categories.keys) ?: run {
             ctx.reply("Використання: /mute <слово|\"фраза\"> [cat]\nОстанній аргумент, що збігається з категорією, — область; фразу з таким словом у кінці бери в лапки.")
             return
@@ -155,7 +157,42 @@ class AdminCommands(
         }
     }
 
+    /** `/mute type:rumor gaming`: from the next digest, Step 1 items of this type are dropped in the category. */
+    private fun muteType(type: String, scope: String?, ctx: AdminCommandRouter.Context) {
+        if (scope == null) {
+            ctx.reply("Тип подій глушиться лише в категорії: /mute type:$type <cat>\nКатегорії: ${config.categories.keys.joinToString(", ")}")
+            return
+        }
+        val norm = EventTypeLabels.normalize(type)
+        val label = EventTypeLabels.label(norm)
+        when (val res = mutes.addEventType(norm, scope, ctx.fromId, SOURCE_COMMAND)) {
+            is MuteRegistry.AddResult.Added ->
+                ctx.reply("🔇 тип «$label» ($norm) у $scope: такі події відкидаються після Step 1, з наступного дайджесту.")
+            is MuteRegistry.AddResult.AlreadyMuted -> ctx.reply("Вже є: тип «$label» ($norm) у $scope")
+            is MuteRegistry.AddResult.Invalid -> ctx.reply("✖ type:$type: ${res.reason}")
+        }
+    }
+
+    /** `/unmute type:rumor gaming`. */
+    private fun unmuteType(type: String, scope: String?, ctx: AdminCommandRouter.Context) {
+        if (scope == null) {
+            ctx.reply("Використання: /unmute type:<тип> <cat>")
+            return
+        }
+        val norm = EventTypeLabels.normalize(type)
+        if (mutes.removeEventType(norm, scope, ctx.fromId) is MuteRegistry.RemoveResult.Removed) {
+            ctx.reply("🔊 тип «${EventTypeLabels.label(norm)}» ($norm) у $scope знято.")
+            return
+        }
+        val elsewhere = mutes.typeEntries().filter { it.keyword == norm }
+        ctx.reply(
+            if (elsewhere.isEmpty()) "Тип $norm не зам'ючено."
+            else "Тип $norm зам'ючено в: " + elsewhere.joinToString(", ") { "/unmute type:$norm ${it.category}" }
+        )
+    }
+
     private fun unmute(args: List<String>, ctx: AdminCommandRouter.Context) {
+        parseTypeArgs(args, config.categories.keys)?.let { (type, scope) -> return unmuteType(type, scope, ctx) }
         val (keyword, scope) = parseMuteArgs(args, config.categories.keys) ?: run {
             ctx.reply("Використання: /unmute <слово|\"фраза\"> [cat]")
             return
@@ -180,23 +217,32 @@ class AdminCommands(
 
     private fun listMutes(args: List<String>, ctx: AdminCommandRouter.Context) {
         val all = mutes.entries()
+        val types = mutes.typeEntries()
         if (args.firstOrNull()?.equals("yaml", ignoreCase = true) == true) {
             val fromDb = all.filter { it.origin == MuteRegistry.Origin.DB }
+            val typeNote = if (types.isEmpty()) "" else
+                "\n\nMute типів подій (${types.size}) є лише в БД — у config.yaml відповідника немає."
             ctx.reply(
-                if (fromDb.isEmpty()) "У БД немає mute — усе вже в config.yaml."
+                (if (fromDb.isEmpty()) "У БД немає mute слів — усе вже в config.yaml."
                 else "Mute з БД як фрагмент config.yaml (допиши до наявних списків, потім /unmute тут):\n\n" +
-                    mutesYaml(fromDb.map { it.keyword to it.category })
+                    mutesYaml(fromDb.map { it.keyword to it.category })) + typeNote
             )
             return
         }
-        if (all.isEmpty()) {
+        if (all.isEmpty() && types.isEmpty()) {
             ctx.reply("Mute немає.")
             return
         }
-        val sb = StringBuilder("🔇 Mute (${all.size}):")
+        val sb = StringBuilder("🔇 Mute (${all.size + types.size}):")
         for ((scope, entries) in all.groupBy { it.category }.toSortedMap(nullsFirst())) {
             sb.append("\n${scope ?: "Глобально"}:")
             for (e in entries) sb.append("\n  • ${e.keyword} — ${source(e)}")
+        }
+        if (types.isNotEmpty()) {
+            sb.append("\nТипи подій (відкидаються після Step 1):")
+            for (e in types.sortedWith(compareBy({ it.category }, { it.keyword }))) {
+                sb.append("\n  • ${e.category}: ${EventTypeLabels.label(e.keyword)} (type:${e.keyword}) — ${source(e)}")
+            }
         }
         ctx.reply(sb.toString())
     }
@@ -227,6 +273,26 @@ class AdminCommands(
             val keyword = words.joinToString(" ").trim()
             if (keyword.isEmpty()) return null
             return keyword to (if (scoped) args.last() else null)
+        }
+
+        /** Prefix of an event-type mute argument: `/mute type:rumor gaming`. */
+        const val TYPE_PREFIX = "type:"
+
+        /**
+         * `type:<eventType> [cat]` → the type and the scope (null when the last argument is not a
+         * category); null when the first argument is not a `type:` one. `type: rumor` (a space
+         * after the colon) works too; an empty type comes back as "" for the caller to reject.
+         */
+        fun parseTypeArgs(args: List<String>, categories: Set<String>): Pair<String, String?>? {
+            val first = args.firstOrNull() ?: return null
+            if (!first.startsWith(TYPE_PREFIX, ignoreCase = true)) return null
+            var rest = args.drop(1)
+            var type = first.substring(TYPE_PREFIX.length).trim()
+            if (type.isEmpty() && rest.size >= 2) {
+                type = rest.first().trim()
+                rest = rest.drop(1)
+            }
+            return type to rest.lastOrNull()?.takeIf { it in categories }
         }
 
         /** DB mutes as a YAML fragment shaped like `config.yaml` (`preferences.mute`, `categories.<cat>.mute`). */

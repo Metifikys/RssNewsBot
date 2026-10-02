@@ -114,4 +114,31 @@ class MuteRegistryTest {
         assertEquals(MuteRegistry.Preview(2, 1), reg.preview("diablo", "gaming", 7))
         assertEquals(MuteRegistry.Preview(3, 1), reg.preview("diablo", null, 7))
     }
+
+    @Test
+    fun `event-type mutes are per category, apart from the keyword lists, and the same word may be both`() {
+        val reg = MuteRegistry(config, db)
+        assertIs<MuteRegistry.AddResult.Added>(reg.addEventType(" Rumor ", "gaming", 7, "inspect"))
+        assertIs<MuteRegistry.AddResult.AlreadyMuted>(reg.addEventType("rumor", "gaming", 7, "command"))
+        assertIs<MuteRegistry.AddResult.Invalid>(reg.addEventType("rumor", "nope", 7, "command"))
+        assertIs<MuteRegistry.AddResult.Invalid>(reg.addEventType("two words", "gaming", 7, "command"))
+        assertEquals(setOf("rumor"), reg.mutedEventTypes("gaming"))
+        assertEquals(emptySet(), reg.mutedEventTypes("science"))
+        assertEquals(2, reg.entries().size, "keyword entries unchanged")
+
+        assertIs<MuteRegistry.AddResult.Added>(reg.add("rumor", "gaming", 7, "command"), "a keyword 'rumor' is a different mute")
+        assertTrue(reg.filterFor("gaming").matches(art("A rumor about Halo")))
+        assertEquals(MuteRegistry.RemoveResult.Removed(1), reg.removeEventType("RUMOR", "gaming", 7))
+        assertEquals(emptySet(), reg.mutedEventTypes("gaming"))
+        assertTrue(reg.filterFor("gaming").matches(art("A rumor about Halo")), "the keyword mute stays")
+        assertEquals(MuteRegistry.RemoveResult.NotFound, reg.removeEventType("rumor", "gaming", 7))
+        assertEquals("keyword", db.fetchAdminMutes().single().kind)
+    }
+
+    @Test
+    fun `without a DB there are no type mutes`() {
+        val reg = MuteRegistry(config)
+        assertEquals(emptySet(), reg.mutedEventTypes("gaming"))
+        assertIs<MuteRegistry.AddResult.Invalid>(reg.addEventType("rumor", "gaming", 7, "command"))
+    }
 }

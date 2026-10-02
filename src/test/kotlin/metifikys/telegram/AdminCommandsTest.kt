@@ -132,6 +132,45 @@ class AdminCommandsTest {
     }
 
     @Test
+    fun `type arguments - prefix, optional space, scope only when a category`() {
+        val cats = setOf("gaming", "tech")
+        assertEquals("rumor" to "gaming", AdminCommands.parseTypeArgs(listOf("type:rumor", "gaming"), cats))
+        assertEquals("rumor" to "gaming", AdminCommands.parseTypeArgs(listOf("TYPE:", "rumor", "gaming"), cats))
+        assertEquals("rumor" to null, AdminCommands.parseTypeArgs(listOf("type:rumor"), cats))
+        assertEquals("" to "gaming", AdminCommands.parseTypeArgs(listOf("type:", "gaming"), cats))
+        assertNull(AdminCommands.parseTypeArgs(listOf("rumor", "gaming"), cats), "a plain word is a keyword mute")
+    }
+
+    @Test
+    fun `event-type mutes - mute, list with a label, yaml note, unmute, and the category is required`() {
+        send("/mute type:rumor")
+        assertTrue(replies.last().startsWith("Тип подій глушиться лише в категорії"), replies.last())
+        send("/mute type:Rumor gaming")
+        assertTrue(replies.last().startsWith("🔇 тип «чутки» (rumor) у gaming"), replies.last())
+        assertEquals(setOf("rumor"), mutes.mutedEventTypes("gaming"))
+        assertTrue(mutes.filterFor("gaming").matches(Article("gaming", "Call of Duty rumor", "https://a/1", "")), "YAML keyword still there")
+        assertTrue(!mutes.filterFor("gaming").matches(Article("gaming", "A rumor about Halo", "https://a/2", "")), "the type is no keyword")
+        send("/mute type:rumor gaming")
+        assertTrue(replies.last().startsWith("Вже є: тип «чутки»"), replies.last())
+        send("/mute type:no\$pe gaming")
+        assertTrue(replies.last().startsWith("✖ type:no\$pe"), replies.last())
+
+        send("/mutes")
+        assertTrue("Типи подій (відкидаються після Step 1):\n  • gaming: чутки (type:rumor) — бот" in replies.last(), replies.last())
+        send("/mutes yaml")
+        assertTrue(replies.last().endsWith("Mute типів подій (1) є лише в БД — у config.yaml відповідника немає."), replies.last())
+
+        send("/unmute type:rumor tech")
+        assertEquals("Тип rumor зам'ючено в: /unmute type:rumor gaming", replies.last())
+        send("/unmute type:rumor gaming")
+        assertEquals("🔊 тип «чутки» (rumor) у gaming знято.", replies.last())
+        assertEquals(emptySet(), mutes.mutedEventTypes("gaming"))
+        send("/unmute type:rumor gaming")
+        assertEquals("Тип rumor не зам'ючено.", replies.last())
+        assertTrue("/unmute <слово|type:тип> [cat]" in router.helpText())
+    }
+
+    @Test
     fun `pause and resume a category, run queues with fetch`() {
         send("/pause tech 6h")
         assertTrue(replies.last().startsWith("⏸ tech: дайджест на паузі до "), replies.last())

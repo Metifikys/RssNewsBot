@@ -869,4 +869,43 @@ class EventExtractorTest {
             runner.shutdown()
         }
     }
+
+    // ── event-type mutes (/mute type:…, the inspector's button) ──────────────
+
+    private val typedShortlistJson = """
+        {
+          "extractions": [],
+          "shortlist": [
+            {"eventKey": "gta_rumor", "eventType": "Rumor", "coreFact": "f", "newsworthiness": 9, "digestFit": 9,
+             "url": "https://a.com/1", "status": "new", "articleIndices": [0]},
+            {"eventKey": "silksong_date", "eventType": "release_date", "coreFact": "f", "newsworthiness": 6, "digestFit": 7,
+             "url": "https://a.com/2", "status": "new", "articleIndices": [1]}
+          ]
+        }
+    """.trimIndent()
+
+    @Test
+    fun `a muted event type is dropped after Step 1, before the ranker, with its own drop reason`() {
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        val muted = EventExtractor(openAI, promptLoader, db, mutedEventTypes = { if (it == "games") setOf("rumor") else emptySet() })
+        val ranked = cat(DedupConfig(promptFile = "any.yaml", digest = DigestConfig(ranker = RankerConfig(enabled = true), meaningfulUpdateCooldownMinutes = 0)))
+        val articles = listOf(article("https://a.com/1"), article("https://a.com/2"))
+
+        val eval = muted.evaluate("games", ranked, articles, typedShortlistJson, emptyList())!!
+        assertEquals(listOf("silksong_date"), eval.result.shortlist.map { it.eventKey })
+        assertEquals(listOf(Step1Drop("https://a.com/1", "gta_rumor", Step1Drop.MUTED_TYPE)), eval.drops)
+
+        val other = muted.evaluate("tech", ranked, articles, typedShortlistJson, emptyList())!!
+        assertEquals(2, other.result.shortlist.size, "the mute is per category")
+        val noRanker = muted.evaluate("games", cat(), articles, typedShortlistJson, emptyList())!!
+        assertEquals(listOf("silksong_date"), noRanker.result.shortlist.map { it.eventKey }, "applies without a ranker too")
+    }
+
+    @Test
+    fun `a failing type-mute lookup mutes nothing`() {
+        val broken = EventExtractor(openAI, promptLoader, db, mutedEventTypes = { throw IllegalStateException("db down") })
+        val eval = broken.evaluate("games", cat(), listOf(article("https://a.com/1"), article("https://a.com/2")), typedShortlistJson, emptyList())!!
+        assertEquals(2, eval.result.shortlist.size)
+        assertTrue(eval.drops.isEmpty())
+    }
 }

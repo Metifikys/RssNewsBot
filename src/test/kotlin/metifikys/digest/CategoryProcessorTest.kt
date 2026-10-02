@@ -1022,4 +1022,70 @@ class CategoryProcessorTest {
         verify(exactly = 0) { diffClient.completeJson(any(), any(), any()) }
         verify { client.submitCategoryBatch("tech", any()) }
     }
+
+    // ── event-type mutes: dropped after Step 1, articles reconciled ───────────
+
+    private val typedJson = """
+        {"extractions": [], "shortlist": [
+          {"eventKey": "k1", "eventType": "rumor", "coreFact": "f1", "importance": 7, "url": "https://example.com/1", "status": "new", "articleIndices": [0]},
+          {"eventKey": "k2", "eventType": "release_date", "coreFact": "f2", "importance": 7, "url": "https://example.com/2", "status": "new", "articleIndices": [1]}
+        ]}
+    """.trimIndent()
+
+    /** A processor whose real Step 1 extractor answers [answer] and mutes `rumor`. */
+    private fun typeMuteProcessor(answer: String): Tuple {
+        val cat = cat(dedup = DedupConfig(promptFile = "x.yaml"))
+        val promptLoader = mockk<PromptLoader>()
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val llm = mockk<LlmClient>()
+        every { llm.isBatchCapable } returns false
+        every { llm.completeJson(any(), any(), any()) } returns answer
+        val extractor = EventExtractor(llm, promptLoader, db, mutedEventTypes = { setOf("rumor") })
+        val tuple = deps(cfg(minArticles = 1, category = cat), eventExtractor = extractor, relaxedDb = db, promptLoader = promptLoader)
+        every { promptLoader.resolve(any()) } returns resolvedDedup
+        return tuple
+    }
+
+    @Test
+    fun `a shortlist of only muted types is dropped and every article is marked processed`() {
+        val onlyRumor = typedJson.lines().filterNot { "\"k2\"" in it }.joinToString("\n").replace("[0]},", "[0]}")
+        val (p, db, factory) = typeMuteProcessor(onlyRumor)
+
+        p.process(mapOf("tech" to (1..3).map { article(it) }))
+
+        verify { db.markProcessed((1..3).map { "https://example.com/$it" }) }
+        verify(exactly = 0) { factory.forBatch(any()) }
+    }
+
+    @Test
+    fun `a muted-type item leaves the render shortlist while its article still goes to delivery for reconciliation`() {
+        val (p, _, factory, _, deliverer) = typeMuteProcessor(typedJson)
+        val client = mockk<LlmClient>()
+        every { factory.forBatch(any()) } returns client
+        val input = slot<metifikys.model.CategoryInput>()
+        every { client.submitCategoryBatch(any(), capture(input)) } returns CompletableFuture.completedFuture("digest")
+        val delivered = slot<List<Article>>()
+        every { deliverer.deliver(any(), any(), capture(delivered), any()) } just Runs
+
+        p.process(mapOf("tech" to (1..3).map { article(it) }))
+
+        assertEquals(listOf("k2"), input.captured.shortlist!!.map { it.eventKey })
+        assertTrue("https://example.com/1" in delivered.captured.map { it.link })
+    }
+
+    @Test
+    fun `the processor reads type mutes from the registry`() {
+        val file = java.io.File.createTempFile("cp-type-mute", ".db")
+        try {
+            val realDb = NewsDatabase(file.absolutePath)
+            val config = cfg(minArticles = 1)
+            val registry = MuteRegistry(config, realDb)
+            registry.addEventType("rumor", "tech", 7, "command")
+            val p = CategoryProcessor(config, realDb, mockk(), mockk(), mockk(), muteRegistry = registry)
+            assertEquals(setOf("rumor"), p.mutedEventTypes("tech"))
+        } finally {
+            file.delete()
+        }
+    }
 }
