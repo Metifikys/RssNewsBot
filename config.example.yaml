@@ -280,7 +280,7 @@ admin:
   statusChatId: null                    # e.g. "123456789"; null = no status post
   userIds: []                           # who may run commands / press buttons, e.g. [123456789]
   commands:
-    enabled: false                      # /help /status /pause /resume /run /mute /unmute /mutes
+    enabled: false                      # /help /status /pause /resume /run /mute /unmute /mutes /inspect
   muteSuggestions:                      # weekly "mute this?" with [in category] [global] [no]
     enabled: false
     everyDays: 7
@@ -291,6 +291,8 @@ admin:
   moderation:                           # per published post: [🗑 delete] [🔇 mute] [👍 more] [👎 less]
     enabled: false
     categories: []                      # empty = every category
+  inspect:                              # /inspect <post link>, a pasted link or a forwarded post → a card + 🔇 buttons
+    enabled: true                       # only with commands.enabled; false = no /inspect, links/forwards ignored
 
 categories:
   tech:

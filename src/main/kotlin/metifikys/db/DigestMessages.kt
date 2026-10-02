@@ -215,6 +215,22 @@ interface DigestMessageStore {
      */
     fun fetchDigestMessagesOfPost(row: DigestMessageRow): List<DigestMessageRow>
 
+    /**
+     * Rows with message id [messageId] in any of [categories], newest first: a `t.me/<username>/<id>`
+     * link names the channel, not the numeric chat id the rows are keyed by.
+     */
+    fun fetchDigestMessagesByMessageId(messageId: Long, categories: Collection<String>): List<DigestMessageRow>
+
+    /**
+     * The posts of the story [eventKeys] belong to in [category] since [since] — followed through
+     * `related_event_key` like [fetchStoryPosts] — as the FIRST message of each post, oldest first.
+     * Backs the inspector's "update to ↗" / "next: N updates ↗" links.
+     */
+    fun fetchStoryMessages(category: String, eventKeys: Collection<String>, since: LocalDateTime): List<DigestMessageRow>
+
+    /** Current reactions of these messages summed per emoji, highest first. */
+    fun fetchReactionCounts(refs: Collection<Pair<Long, Long>>): List<ReactionCount>
+
     /** Deletes the rows of these `(chat_id, message_id)` messages (a post deleted from the channel). */
     fun deleteDigestMessages(refs: Collection<Pair<Long, Long>>)
 
@@ -298,7 +314,25 @@ internal class DigestMessageRepository : DigestMessageStore {
         limit: Int
     ): List<StoryPost> {
         if (eventKeys.isEmpty() || limit <= 0) return emptyList()
-        return transaction {
+        return storyRows(category, eventKeys, since)
+            .filter { it.eventKey != null }
+            .sortedWith(compareBy({ it.sentAt }, { it.messageId }))
+            .distinctBy { it.eventKey to it.sentAt }
+            .takeLast(limit)
+            .map { StoryPost(it.eventKey!!, it.sentAt, it.text) }
+    }
+
+    override fun fetchStoryMessages(category: String, eventKeys: Collection<String>, since: LocalDateTime): List<DigestMessageRow> {
+        if (eventKeys.isEmpty()) return emptyList()
+        return storyRows(category, eventKeys, since)
+            .filter { it.eventKey != null }
+            .sortedWith(compareBy({ it.sentAt }, { it.messageId }))
+            .distinctBy { Triple(it.chatId, it.eventKey, it.sentAt) }
+    }
+
+    /** Every row of the story chain: the given keys, then [STORY_HOPS] rounds of linked keys. */
+    private fun storyRows(category: String, eventKeys: Collection<String>, since: LocalDateTime): Collection<DigestMessageRow> =
+        transaction {
             val keys = eventKeys.toMutableSet()
             val rows = LinkedHashMap<Pair<Long, Long>, DigestMessageRow>()
             var frontier: Set<String> = keys.toSet()
@@ -319,13 +353,7 @@ internal class DigestMessageRepository : DigestMessageStore {
                 keys += linked
             }
             rows.values
-                .filter { it.eventKey != null }
-                .sortedWith(compareBy({ it.sentAt }, { it.messageId }))
-                .distinctBy { it.eventKey to it.sentAt }
-                .takeLast(limit)
-                .map { StoryPost(it.eventKey!!, it.sentAt, it.text) }
         }
-    }
 
     override fun replaceReactionCounts(chatId: Long, messageId: Long, counts: List<ReactionCount>) {
         transaction {
@@ -482,6 +510,33 @@ internal class DigestMessageRepository : DigestMessageStore {
             .map { it.toDigestMessageRow() }
             .filter { if (row.eventKey != null) it.eventKey == row.eventKey else it.eventKey == null && it.articleLinks == row.articleLinks }
             .sortedBy { it.messageId }
+    }
+
+    override fun fetchDigestMessagesByMessageId(messageId: Long, categories: Collection<String>): List<DigestMessageRow> {
+        if (categories.isEmpty()) return emptyList()
+        return transaction {
+            DigestMessagesTable.selectAll()
+                .where { (DigestMessagesTable.messageId eq messageId) and (DigestMessagesTable.category inList categories.toSet()) }
+                .orderBy(DigestMessagesTable.sentAt to SortOrder.DESC)
+                .map { it.toDigestMessageRow() }
+        }
+    }
+
+    override fun fetchReactionCounts(refs: Collection<Pair<Long, Long>>): List<ReactionCount> {
+        if (refs.isEmpty()) return emptyList()
+        val wanted = refs.toSet()
+        val rows = transaction {
+            ReactionCountsTable.selectAll()
+                .where {
+                    (ReactionCountsTable.chatId inList wanted.map { it.first }.toSet()) and
+                        (ReactionCountsTable.messageId inList wanted.map { it.second }.toSet())
+                }
+                .filter { (it[ReactionCountsTable.chatId] to it[ReactionCountsTable.messageId]) in wanted }
+                .map { it[ReactionCountsTable.emoji] to it[ReactionCountsTable.count] }
+        }
+        return rows.groupBy({ it.first }, { it.second })
+            .map { (emoji, counts) -> ReactionCount(emoji, counts.sum()) }
+            .sortedByDescending { it.count }
     }
 
     override fun deleteDigestMessages(refs: Collection<Pair<Long, Long>>) {

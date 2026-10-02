@@ -370,6 +370,20 @@ via a `/status` admin snapshot.
   thread: 🗑 delete (confirmed; every chunk, within Telegram's 48 h; `covered_events` kept so the
   story is not re-posted), 🔇 mute the franchise (same DB mute as `/mute`), 👍/👎 an explicit
   signal in `admin_feedback` that affinity counts as `feedback.explicitWeight` reactions at once.
+- **Post inspector** (`admin.inspect`, on whenever `admin.commands` is) —
+  [`PostInspector`](src/main/kotlin/metifikys/telegram/PostInspector.kt): send the bot `/inspect <link>`,
+  a message with up to 5 post links (`t.me/c/<id>/<msg>`, `t.me/<username>/<msg>`; a later chunk of a
+  chunked post resolves to the same post) or forward a channel post, and get one compact card per post
+  ([`PostCard`](src/main/kotlin/metifikys/telegram/PostCard.kt)): category, time, A/B variant, the story
+  chain (`↩` the previous post, `↪` later updates), the Telegraph page; the event (key, subject,
+  franchise, type, core fact, new / update, newsworthiness · digestFit · composite, and "why it passed"
+  only where the data proves it — explore, the digestFit override, the breaking threshold); each
+  source with its feed (`label`), `published → fetched (+N h)`, status / drop reason and the feed's
+  `feedHealth` share of published / junk; the story cluster (outlets, who was first, reprints); the
+  reactions, your 👍/👎 and the affinity of its franchise / type / subject / source; and which mutes
+  already hit it. Buttons: 🔇 the franchise and 2–4 keyword candidates (in-category / global, the same
+  DB mute as `/mute`) and 🔇 the event type in this category. Same users and chats as the commands;
+  in a group with privacy mode on only `/inspect` reaches the bot, so prefer the private chat.
 - **CLI login health** (opt-in, `health.enabled`) —
   [`CliHealthMonitor`](src/main/kotlin/metifikys/ai/CliHealthMonitor.kt) gets the outcome of every
   `claude -p` / `codex exec` run, classified by the shared
@@ -1031,7 +1045,7 @@ first cycle.
 | `preferences`     | no       | Global `mute:` keyword blocklist                            |
 | `feedback`        | no       | Reaction-feedback aggregation (off by default)              |
 | `weekly`          | no       | Weekly top-story roundup (off by default); `weekly.barometer` adds the industry chart, `weekly.album` a photo album before it |
-| `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`) |
+| `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`), and with them the post inspector (`inspect.enabled`, default on) |
 | `health`          | no       | `claude` / `codex` login + usage-limit alerts in the admin chat, idle probe, `setup-token` expiry (off by default) |
 | `feedHealth`      | no       | Per-feed fetch health + the `/status` 📡 Feeds anomalies: `enabled`, `windowDays` (14, max 30), `statusSection`, `thresholds`; `candidates` (candidate feeds + autodiscovery, own `enabled`) (off by default) |
 | `storyIntel`      | no       | Record story clusters in `event_articles` and delivered events in `event_history`: `enabled`, `retentionDays` (180, ≥ `weekly.lookbackDays`), `historyRetentionDays` (1095), `domainAliases` (off by default; the story lines need it) |

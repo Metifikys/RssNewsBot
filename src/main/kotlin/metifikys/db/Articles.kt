@@ -65,6 +65,19 @@ object DropReason {
 /** An article row's identity and clocks: `pub_date` (the feed's claim) and `fetched_at` (ours; null on old rows). */
 data class ArticleStamp(val id: Int, val pubDate: LocalDateTime, val fetchedAt: LocalDateTime?)
 
+/** An `articles` row with its bookkeeping (status, drop reason, feed, clocks), for the post inspector. */
+data class ArticleRecord(
+    val id: Int,
+    val category: String,
+    val title: String,
+    val link: String,
+    val feedUrl: String?,
+    val pubDate: LocalDateTime,
+    val fetchedAt: LocalDateTime?,
+    val status: String,
+    val dropReason: String?
+)
+
 /** Ingested articles and their UNPROCESSED → PROCESSING → PROCESSED / DUPLICATE lifecycle. */
 interface ArticleStore {
     /**
@@ -146,6 +159,9 @@ interface ArticleStore {
      * the digest pipeline has already claimed).
      */
     fun markDuplicate(articleId: Int, duplicateOfId: Int)
+
+    /** The rows of [links] with status and clocks, in the order of [links] (unknown links skipped). */
+    fun fetchArticleRecordsByLinks(links: Collection<String>): List<ArticleRecord>
 }
 
 internal class ArticleRepository : ArticleStore {
@@ -394,5 +410,29 @@ internal class ArticleRepository : ArticleStore {
                 it[processingStartedAt] = null
             }
         }
+    }
+
+    override fun fetchArticleRecordsByLinks(links: Collection<String>): List<ArticleRecord> {
+        val wanted = links.distinct()
+        if (wanted.isEmpty()) return emptyList()
+        val byLink = transaction {
+            val a = ArticlesTable
+            a.select(a.id, a.category, a.title, a.link, a.feedUrl, a.pubDate, a.fetchedAt, a.status, a.dropReason)
+                .where { a.link inList wanted }
+                .associate {
+                    it[a.link] to ArticleRecord(
+                        id = it[a.id],
+                        category = it[a.category],
+                        title = it[a.title],
+                        link = it[a.link],
+                        feedUrl = it[a.feedUrl],
+                        pubDate = it[a.pubDate],
+                        fetchedAt = it[a.fetchedAt],
+                        status = it[a.status],
+                        dropReason = it[a.dropReason]
+                    )
+                }
+        }
+        return wanted.mapNotNull { byLink[it] }
     }
 }

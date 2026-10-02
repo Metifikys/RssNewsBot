@@ -132,4 +132,32 @@ class TelegramUpdatesPollerTest {
         assertEquals(listOf(listOf("ok", "17", "555", "44")), seen.toList())
         io.mockk.verify { sender.answerCallbackQuery("cb1", null) }
     }
+
+    @Test
+    fun `a forwarded channel post reaches the message routes with its origin, old and new forward fields`() {
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val router = AdminCommandRouter(AdminAuth(admin), sender, direct)
+        val seen = Collections.synchronizedList(mutableListOf<Pair<Long?, Long?>>())
+        val done = CountDownLatch(2)
+        router.registerMessageHandler("fwd", { it.forwardChatId != null }) { m, _ ->
+            seen += m.forwardChatId to m.forwardMessageId
+            done.countDown()
+        }
+        val now = System.currentTimeMillis() / 1000
+        val origin = """{"update_id":30,"message":{"message_id":2,"date":$now,"chat":{"id":7,"type":"private"},"from":{"id":7},""" +
+            """"forward_origin":{"type":"channel","chat":{"id":-1009876543210,"type":"channel"},"message_id":15205,"date":1}}}"""
+        val legacy = """{"update_id":31,"message":{"message_id":3,"date":$now,"chat":{"id":7,"type":"private"},"from":{"id":7},""" +
+            """"forward_from_chat":{"id":-1009876543210,"type":"channel"},"forward_from_message_id":15206,"caption":"x"}}"""
+        val user = """{"update_id":32,"message":{"message_id":4,"date":$now,"chat":{"id":7,"type":"private"},"from":{"id":7},""" +
+            """"forward_origin":{"type":"user","sender_user":{"id":5},"date":1},"text":"hi"}}"""
+        val base = fakeApi("[$origin,$legacy,$user]")
+        val poller = TelegramUpdatesPoller("t", db, router, null, apiBaseUrl = base, longPollSeconds = 1)
+        poller.start()
+        try {
+            assertTrue(done.await(10, TimeUnit.SECONDS))
+        } finally {
+            poller.stop()
+        }
+        assertEquals(listOf<Pair<Long?, Long?>>(-1009876543210L to 15205L, -1009876543210L to 15206L), seen.toList())
+    }
 }

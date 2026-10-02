@@ -162,7 +162,23 @@ data class AdminConfig(
     /** Periodic mute proposals with approve/reject buttons in the admin chat; off by default. */
     val muteSuggestions: MuteSuggestionsConfig = MuteSuggestionsConfig(),
     /** One moderation message per published post in the admin chat; off by default. */
-    val moderation: ModerationConfig = ModerationConfig()
+    val moderation: ModerationConfig = ModerationConfig(),
+    /** `/inspect`, pasted post links and forwarded posts → a card about the post; on with [commands]. */
+    val inspect: AdminInspectConfig = AdminInspectConfig()
+)
+
+/**
+ * Post inspector: the owner sends `/inspect <link>`, a message with up to 5 channel-post links
+ * (`t.me/c/<id>/<msg>`, `t.me/<username>/<msg>`) or a forwarded channel post, and gets one card
+ * per post — its event, scores, sources, story cluster, audience and the mutes that already hit
+ * it — with 🔇 buttons for the franchise, a few keywords and the event type. Read-only except for
+ * those buttons, which write the same DB mutes as `/mute`. Only does anything with
+ * `admin.commands.enabled` (the same users and chats as every command), so it defaults to on:
+ * turning the commands on is the opt-in. `false` drops the command, the link/forward handling
+ * and the buttons.
+ */
+data class AdminInspectConfig(
+    val enabled: Boolean = true
 )
 
 /**

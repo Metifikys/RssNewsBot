@@ -57,6 +57,7 @@ import metifikys.telegram.AdminCallbackRouter
 import metifikys.telegram.AdminCommandRouter
 import metifikys.telegram.AdminCommands
 import metifikys.telegram.ModerationNotifier
+import metifikys.telegram.PostInspector
 import metifikys.telegram.RunListener
 import metifikys.telegram.RunQueued
 import metifikys.telegram.StatusCommand
@@ -348,6 +349,14 @@ class NewsBot(
         }
         muteSuggester?.let { s -> callbackRouter?.register("ms") { cb, parts -> s.handleCallback(cb, parts) } }
         moderationNotifier?.let { m -> callbackRouter?.register("mod") { cb, parts -> m.handleCallback(cb, parts) } }
+        // Post inspector (`admin.inspect`, on with the commands): `/inspect`, pasted links, forwards.
+        if (config.admin.inspect.enabled) {
+            commandRouter?.let { router ->
+                val inspector = PostInspector(config, db, muteRegistry, sender)
+                inspector.registerAll(router)
+                callbackRouter?.register(PostInspector.NAMESPACE) { cb, parts -> inspector.handleCallback(cb, parts) }
+            }
+        }
     }
 
     fun start() {

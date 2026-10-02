@@ -43,9 +43,18 @@ class AdminCommandRouter(
         fun handle(cmd: Command, ctx: Context)
     }
 
+    /** Handles a message that is not a command (a pasted post link, a forwarded post). */
+    fun interface MessageHandler {
+        fun handle(m: IncomingMessage, ctx: Context)
+    }
+
     private class Registered(val usage: String, val description: String, val handler: Handler)
 
+    private class MessageRoute(val name: String, val accepts: (IncomingMessage) -> Boolean, val handler: MessageHandler)
+
     private val commands = LinkedHashMap<String, Registered>()
+
+    private val messageRoutes = java.util.concurrent.CopyOnWriteArrayList<MessageRoute>()
 
     init {
         register("help", "/help", "список команд") { _, ctx -> ctx.reply(helpText()) }
@@ -54,6 +63,15 @@ class AdminCommandRouter(
     /** Adds a command; [usage] is the `/help` line (`/pause <cat> [6h|2d]`), [description] its gloss. */
     fun register(name: String, usage: String, description: String, handler: Handler) {
         synchronized(commands) { commands[name.lowercase()] = Registered(usage, description, handler) }
+    }
+
+    /**
+     * Adds a route for non-command messages: the first route whose [accepts] holds gets the
+     * message, under the same authorization, executor and staleness rule as a command. [accepts]
+     * runs on the poller thread, so it must be cheap (no IO). [name] is for the log.
+     */
+    fun registerMessageHandler(name: String, accepts: (IncomingMessage) -> Boolean, handler: MessageHandler) {
+        messageRoutes += MessageRoute(name, accepts, handler)
     }
 
     /** `command → description` pairs for `setMyCommands` (the "/" menu). */
@@ -65,21 +83,46 @@ class AdminCommandRouter(
         "Команди:\n" + commands.values.joinToString("\n") { "${it.usage} — ${it.description}" }
     }
 
-    /** Called on the poller thread. Plain text (no leading `/`) is ignored. */
+    /**
+     * Called on the poller thread. A message that is not a command goes to the first message
+     * route that accepts it ([registerMessageHandler]); with none, it is ignored.
+     */
     fun onMessage(m: IncomingMessage) {
-        val cmd = parse(m.text ?: return) ?: return
+        val cmd = m.text?.let { parse(it) }
+        if (cmd == null) {
+            val route = messageRoutes.firstOrNull { r -> runCatching { r.accepts(m) }.getOrDefault(false) } ?: return
+            if (!auth.allowsCommand(m)) return
+            val ctx = Context(m.chatId.toString(), m.fromId ?: return, m.updateId, sender)
+            executor.execute { runMessage(route, m, ctx) }
+            return
+        }
         if (!auth.allowsCommand(m)) return
         val ctx = Context(m.chatId.toString(), m.fromId ?: return, m.updateId, sender)
         executor.execute { run(cmd, m, ctx) }
     }
 
-    private fun run(cmd: Command, m: IncomingMessage, ctx: Context) {
+    /** True, after telling the admin, when [m] is too old to act on (see [maxAgeSeconds]). */
+    private fun refuseStale(m: IncomingMessage, ctx: Context, what: String): Boolean {
         val age = clock().epochSecond - m.date
-        if (age > maxAgeSeconds) {
-            logger.warn { "[Admin] /${cmd.name} from ${ctx.fromId} is ${age}s old — refused as stale" }
-            ctx.reply("⌛ /${cmd.name} застаріла (надіслана ${age / 60} хв тому, бот був недоступний) — не виконую. Надішли ще раз.")
-            return
+        if (age <= maxAgeSeconds) return false
+        logger.warn { "[Admin] $what from ${ctx.fromId} is ${age}s old — refused as stale" }
+        ctx.reply("⌛ $what застаріла (надіслана ${age / 60} хв тому, бот був недоступний) — не виконую. Надішли ще раз.")
+        return true
+    }
+
+    private fun runMessage(route: MessageRoute, m: IncomingMessage, ctx: Context) {
+        if (refuseStale(m, ctx, route.name)) return
+        logger.info { "[Admin] ${route.name} message by ${ctx.fromId} (update ${ctx.updateId})" }
+        try {
+            route.handler.handle(m, ctx)
+        } catch (e: Exception) {
+            logger.error(e) { "[Admin] ${route.name} failed" }
+            ctx.reply("⚠️ ${route.name}: помилка — ${e.message ?: e.javaClass.simpleName}")
         }
+    }
+
+    private fun run(cmd: Command, m: IncomingMessage, ctx: Context) {
+        if (refuseStale(m, ctx, "/${cmd.name}")) return
         val registered = synchronized(commands) { commands[cmd.name] }
         if (registered == null) {
             ctx.reply("Невідома команда /${cmd.name}.\n\n${helpText()}")

@@ -6,7 +6,11 @@ import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 
-/** A `message` update reduced to what command routing needs. [date] is Telegram's epoch seconds. */
+/**
+ * A `message` update reduced to what command routing needs. [date] is Telegram's epoch seconds.
+ * [forwardChatId] / [forwardMessageId] are set when the message is a forward of a CHANNEL post
+ * (`forward_origin.type = channel`, or the older `forward_from_chat`): the original post's ids.
+ */
 data class IncomingMessage(
     val updateId: Long,
     val chatId: Long,
@@ -14,7 +18,9 @@ data class IncomingMessage(
     val fromId: Long?,
     val messageId: Long,
     val date: Long,
-    val text: String?
+    val text: String?,
+    val forwardChatId: Long? = null,
+    val forwardMessageId: Long? = null
 )
 
 /**

@@ -67,6 +67,7 @@ object ConfigChangelog {
         Entry("categories.*.llm.shadow", "2026-09-23", "🌓 shadow run of a B model / prompt next to the live Step 1 / render, stored in shadow_runs (bench/shadow-dump.mjs)"),
         Entry("badges.hnMinPoints", "2026-09-24", "🔥 HN badge only from this many points (default 10): no \"🔥 1 · 0 коментарів\" for fresh hnrss newest?q= items"),
         Entry("factCheck", "2026-09-23", "🧐 sampled log-only LLM judge of sent posts vs. their sources, fact_checks + /status line (needs judge; prompts/factcheck.example.yaml)"),
+        Entry("admin.inspect", "2026-10-02", "/inspect, pasted post links and forwards → a card about the post with 🔇 keyword / event-type buttons (on with admin.commands)"),
         Entry("categories.*.dedup.digest.updateDiff", "2026-10-02", "a meaningful_update is posted only with facts absent from the earlier posts (LLM diff; start with logOnly: true; render prompt needs newFacts)"),
     )
 

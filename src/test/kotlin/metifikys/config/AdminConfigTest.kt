@@ -51,6 +51,16 @@ class AdminConfigTest {
     }
 
     @Test
+    fun `the post inspector is on by default and can be switched off`() {
+        assertTrue(load().admin.inspect.enabled)
+        val off = load(
+            telegramExtra = "  updatesPolling: true\n",
+            admin = "admin:\n  statusChatId: \"123\"\n  userIds: [123]\n  commands:\n    enabled: true\n  inspect:\n    enabled: false\n"
+        )
+        assertFalse(off.admin.inspect.enabled)
+    }
+
+    @Test
     fun `commands without updatesPolling are rejected`() {
         val e = assertThrows<IllegalArgumentException> {
             load(admin = "admin:\n  userIds: [123]\n  commands:\n    enabled: true\n")

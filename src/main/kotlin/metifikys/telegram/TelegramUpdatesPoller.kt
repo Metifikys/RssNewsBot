@@ -125,10 +125,15 @@ class TelegramUpdatesPoller(
         u.message?.let { m ->
             val router = commandRouter ?: return@let
             routeSafely("message") {
+                // A forwarded channel post: `forward_origin` (Bot API 7.0+), else the older fields.
+                val origin = m.forwardOrigin?.takeIf { it.type == "channel" && it.chat != null && it.messageId != null }
+                val legacy = m.forwardFromChat?.takeIf { it.type == "channel" && m.forwardFromMessageId != null }
                 router.onMessage(
                     IncomingMessage(
                         updateId = u.updateId, chatId = m.chat.id, chatType = m.chat.type, fromId = m.from?.id,
-                        messageId = m.messageId, date = m.date, text = m.text
+                        messageId = m.messageId, date = m.date, text = m.text,
+                        forwardChatId = origin?.chat?.id ?: legacy?.id,
+                        forwardMessageId = origin?.messageId ?: legacy?.let { m.forwardFromMessageId }
                     )
                 )
             }
@@ -240,7 +245,18 @@ class TelegramUpdatesPoller(
         val chat: ChatDto = ChatDto(),
         val from: UserDto? = null,
         val date: Long = 0,
-        val text: String? = null
+        val text: String? = null,
+        @SerialName("forward_origin") val forwardOrigin: ForwardOriginDto? = null,
+        @SerialName("forward_from_chat") val forwardFromChat: ChatDto? = null,
+        @SerialName("forward_from_message_id") val forwardFromMessageId: Long? = null
+    )
+
+    /** `MessageOrigin`; only the `channel` shape (chat + message_id) is read. */
+    @Serializable
+    private data class ForwardOriginDto(
+        val type: String = "",
+        val chat: ChatDto? = null,
+        @SerialName("message_id") val messageId: Long? = null
     )
 
     @Serializable
