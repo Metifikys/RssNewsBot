@@ -120,6 +120,26 @@ class PostConfigTest {
     }
 
     @Test
+    fun `discussion block is parsed with defaults and validated`() {
+        val config = load(yaml("post:\n  discussion:\n    minComments: 40\n    logOnly: true"))
+        val d = config.categories.getValue("gaming").post!!.discussion!!
+        assertTrue(d.enabled)
+        assertEquals(listOf("hn"), d.sources)
+        assertEquals(40, d.minComments)
+        assertTrue(d.logOnly)
+        assertTrue(d.silent)
+        assertEquals(2, d.maxPerDigest)
+
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  discussion:\n    sources: [reddit]")) }
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  discussion:\n    sources: []")) }
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  discussion:\n    topLevel: 0")) }
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  discussion:\n    maxChars: 500")) }
+        assertThrows<IllegalArgumentException> { load(yaml("post:\n  discussion:\n    maxPoints: 9")) }
+        // A disabled block is not validated.
+        load(yaml("post:\n  discussion:\n    enabled: false\n    sources: [reddit]"))
+    }
+
+    @Test
     fun `absent post block leaves posts unchanged`() {
         val config = load(yaml(""))
         assertNull(config.categories.getValue("gaming").post)

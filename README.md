@@ -84,7 +84,7 @@ via a `/status` admin snapshot.
 ### LLM rendering & routing (see [§4](#llm-routing--multi-provider-support))
 - **Multi-provider**: OpenAI / Anthropic / OpenRouter plus the subscription-billed Claude CLI
   (`claude -p`) and Codex CLI (`codex exec`), mixable per category and per use case
-  (`extract`, `render`, `batch`, `summarize`, `batchFallback`, `persona`, `updateDiff`, …).
+  (`extract`, `render`, `batch`, `summarize`, `batchFallback`, `persona`, `updateDiff`, `discussion`, …).
 - **OpenRouter model ladder** — `openrouter.models` is a priority list walked on failure, so a
   withdrawn free-tier model fails over to the next instead of taking the use case down.
 - **Bounded Step-1 prompt** — `dedup.extractMaxArticles` / `extractMaxPromptChars` keep the
@@ -284,6 +284,19 @@ via a `/status` admin snapshot.
     no URL / markup / banned phrase, no number the topic lacks); a failed guard or call means no
     line and no variant. The voice is the owner's: `promptFile` (see
     `prompts/persona.example.yaml`) is required.
+  - **discussion** — `🗣 Обговорення на HN · 401 коментар` + up to `maxPoints` bullets: a silent
+    reply under a post that reached the channel, with what its Hacker News thread adds (corrections,
+    practitioners' experience, counter-arguments). The thread comes from the hnrss metadata of the
+    event's articles (the folded HN copy counts), or with `lookupByUrl` from an Algolia search for
+    the post's article URLs. HN's page order (Firebase `kids`) picks the top `topLevel` comments,
+    each with its first `repliesPerComment` replies; the texts come in one Algolia call. One LLM call
+    per thread from `minComments` up (`llm.discussion`, else the render route; metered as
+    `DISCUSSION`), at most `maxPerDigest` replies per digest, on its own thread after delivery. The
+    model may answer `skip`; its points lose URLs and markup. Each thread is answered once per
+    category (`discussions`); `logOnly` stores and logs without posting
+    ([`DiscussionReplier`](src/main/kotlin/metifikys/discussion/DiscussionReplier.kt), sources behind
+    [`DiscussionSource`](src/main/kotlin/metifikys/discussion/Discussion.kt); prompts built-in or
+    `prompts/discussion.example.yaml`).
 - **Industry barometer** (opt-in, `weekly.barometer`, needs `storyIntel`) — after the weekly
   roundup, a 1200×675 PNG of distinct subjects per ISO week over the last 12 weeks from
   `event_history`, one panel per series with its own scale: layoffs / closures (by type, or a
@@ -766,7 +779,7 @@ Three providers, six use cases, all per-category overridable.
 | `summarize`          | per-feed `summarize:` provider               | yes          | n/a (sync)               |
 | `batchFallback`      | none                                         | yes          | n/a (sync)               |
 
-Any sync slot (`extract`, `render`, `summarize`, `batchFallback`, `persona`, `updateDiff`) may also
+Any sync slot (`extract`, `render`, `summarize`, `batchFallback`, `persona`, `updateDiff`, `discussion`) may also
 carry a nested `fallback: { provider, model }` — an on-failure secondary tried when the primary
 call fails (usage limit, expired login, bad model, exhausted-retry timeout). Sync-only, may chain
 (depth ≤ 3), and independent of the weighted split and the backpressure `batchFallback`.

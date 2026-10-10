@@ -43,7 +43,8 @@ class NewsDatabase(dbPath: String) :
     BotStateStore by BotStateRepository(),
     TelegraphPageStore by TelegraphPageRepository(),
     ShadowRunStore by ShadowRunRepository(),
-    FactCheckStore by FactCheckRepository() {
+    FactCheckStore by FactCheckRepository(),
+    DiscussionStore by DiscussionRepository() {
 
     /** Canonical path of the DB file; side jobs (e.g. [RetentionArchiver]) place their files next to it. */
     val canonicalPath: String

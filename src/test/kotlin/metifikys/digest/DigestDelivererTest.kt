@@ -133,6 +133,35 @@ class DigestDelivererTest {
     }
 
     @Test
+    fun `discussion replies are queued only for sent posts, with the event's folded articles`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        val sender = mockk<TelegramSender>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val replier = mockk<metifikys.discussion.DiscussionReplier>(relaxed = true)
+        every { replier.appliesTo(any()) } returns true
+        val posts = slot<List<metifikys.discussion.DiscussionReplier.Post>>()
+        every { replier.afterDelivery("tech", any(), capture(posts)) } returns Unit
+
+        // Article 3 (say, the hnrss copy) was folded into event 1 but is not linked by its topic.
+        val articles = listOf(article(1), article(2), article(3))
+        val shortlist = listOf(
+            shortlistItem("evt-1", article(1).link).copy(sourceLinks = listOf(article(1).link, article(3).link)),
+            shortlistItem("evt-2", article(2).link)
+        )
+        val summary = "• **First.**\n\n[Title 1](https://example.com/1)\n" +
+            "• **Second.**\n\n[Title 2](https://example.com/2)"
+        every { sender.sendToChannel(any(), match { it.contains("/1") }, any()) } returns listOf(SentRef(-100L, 11L))
+        every { sender.sendToChannel(any(), match { it.contains("/2") }, any()) } returns emptyList()
+
+        DigestDeliverer(config(), db, sender, discussionReplier = replier).deliver("tech", summary, articles, shortlist)
+
+        val post = posts.captured.single()
+        assertEquals(11L, post.messageId)
+        assertEquals("evt-1", post.eventKey)
+        assertEquals(listOf(article(1).link, article(3).link), post.articles.map { it.link })
+    }
+
+    @Test
     fun `fully successful send records every shortlist event as covered`() {
         val db = mockk<NewsDatabase>(relaxed = true)
         val sender = mockk<TelegramSender>(relaxed = true)

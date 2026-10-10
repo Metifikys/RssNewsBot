@@ -1148,8 +1148,51 @@ data class PostConfig(
     /** `🔗 У 🖥 Tech: …` — the related post another category's channel already carries; see [CrossLinksConfig]. */
     val crossLinks: CrossLinksConfig? = null,
     /** `💬 …` — the editor persona's one-line remark under the top event, as an A/B test; see [PersonaConfig]. */
-    val persona: PersonaConfig? = null
+    val persona: PersonaConfig? = null,
+    /** `🗣 Обговорення на HN …` — a reply under a post summing up its discussion thread; see [DiscussionConfig]. */
+    val discussion: DiscussionConfig? = null
 )
+
+/**
+ * Discussion summary: after a post went out, the thread about its article on a link aggregator
+ * ([sources]: `hn` today) is read — the top [topLevel] comments in the site's own order, each
+ * with its first [repliesPerComment] replies — and one LLM call (`llm.discussion`, else the
+ * render route; metered as `DISCUSSION`) picks up to [maxPoints] things the post does not say.
+ * They go out as a reply to the post (silent with [silent]), only for posts that really reached
+ * the channel and only for threads with at least [minComments] comments; at most [maxPerDigest]
+ * replies per digest, top-ranked posts first. The model may answer `skip` (jokes, off-topic, a
+ * retelling of the post) — then nothing is sent.
+ *
+ * The thread comes from the feed (hnrss items carry their HN id); with [lookupByUrl] a post from
+ * any other feed also gets one when the source has a thread about the same article URL, at most
+ * [lookupMaxAgeDays] old (one search request per source per post). Each thread is answered once
+ * per category (`discussions`). Runs on its own thread after delivery, never delays it.
+ * [logOnly] stores the summary and logs it without posting — to look at a few first.
+ * Prompts: built-in, or [promptFile] with `discussion.system` / `discussion.user` (see
+ * `prompts/discussion.example.yaml`).
+ */
+data class DiscussionConfig(
+    val enabled: Boolean = true,
+    val sources: List<String> = listOf("hn"),
+    val lookupByUrl: Boolean = false,
+    val lookupMaxAgeDays: Long = 7,
+    val minComments: Int = 25,
+    val topLevel: Int = 10,
+    val repliesPerComment: Int = 2,
+    /** One comment longer than this is cut. */
+    val maxCommentChars: Int = 1000,
+    /** All comments together, as the model sees them. */
+    val maxChars: Int = 12000,
+    val maxPoints: Int = 4,
+    val maxPerDigest: Int = 2,
+    val silent: Boolean = true,
+    val logOnly: Boolean = false,
+    val promptFile: String? = null
+) {
+    companion object {
+        val KNOWN_SOURCES: Set<String> = setOf("hn")
+    }
+}
 
 /**
  * The editor persona: one characterful line `💬 <remark>` under the digest's top event (the first
@@ -1637,6 +1680,11 @@ data class CategoryLlmOverrides(
      * default; metered as `UPDATE_DIFF` either way.
      */
     val updateDiff: LlmOverride? = null,
+    /**
+     * The discussion summary (`post.discussion`), one short sync call per summarized thread. Null
+     * falls back to the [render] override, then to the global sync default; metered as `DISCUSSION`.
+     */
+    val discussion: LlmOverride? = null,
     /** Shadow run of a second model / prompt next to the live one, stored for comparison only; see [ShadowConfig]. */
     val shadow: ShadowConfig? = null
 )
@@ -2388,6 +2436,27 @@ object ConfigLoader {
                         "Category '$name' post.persona needs a dedup: block — the remark goes under Step 1's top-ranked event"
                     }
                 }
+                post.discussion?.takeIf { it.enabled }?.let { d ->
+                    require(d.sources.isNotEmpty()) { "Category '$name' post.discussion.sources must not be empty" }
+                    for (s in d.sources) {
+                        require(s in DiscussionConfig.KNOWN_SOURCES) {
+                            "Category '$name' post.discussion.sources: unknown source '$s' (known: ${DiscussionConfig.KNOWN_SOURCES.joinToString()})"
+                        }
+                    }
+                    require(d.lookupMaxAgeDays >= 1) { "Category '$name' post.discussion.lookupMaxAgeDays must be >= 1 (got ${d.lookupMaxAgeDays})" }
+                    require(d.minComments >= 1) { "Category '$name' post.discussion.minComments must be >= 1 (got ${d.minComments})" }
+                    require(d.topLevel in 1..50) { "Category '$name' post.discussion.topLevel must be in 1..50 (got ${d.topLevel})" }
+                    require(d.repliesPerComment in 0..10) {
+                        "Category '$name' post.discussion.repliesPerComment must be in 0..10 (got ${d.repliesPerComment})"
+                    }
+                    require(d.maxCommentChars >= 100) { "Category '$name' post.discussion.maxCommentChars must be >= 100 (got ${d.maxCommentChars})" }
+                    require(d.maxChars >= d.maxCommentChars) {
+                        "Category '$name' post.discussion.maxChars (${d.maxChars}) must be >= maxCommentChars (${d.maxCommentChars})"
+                    }
+                    require(d.maxPoints in 1..8) { "Category '$name' post.discussion.maxPoints must be in 1..8 (got ${d.maxPoints})" }
+                    require(d.maxPerDigest >= 1) { "Category '$name' post.discussion.maxPerDigest must be >= 1 (got ${d.maxPerDigest})" }
+                    require(d.promptFile == null || d.promptFile.isNotBlank()) { "Category '$name' post.discussion.promptFile must not be blank" }
+                }
                 post.also?.let { a ->
                     require(a.max >= 1) { "Category '$name' post.also.max must be >= 1 (got ${a.max})" }
                     for ((host, label) in a.names) {
@@ -2550,6 +2619,7 @@ object ConfigLoader {
                 validateOverride(name, "batchFallback", ovr.batchFallback, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "persona", ovr.persona, openRouter, anthropic, config.claudeCli, config.codexCli)
                 validateOverride(name, "updateDiff", ovr.updateDiff, openRouter, anthropic, config.claudeCli, config.codexCli)
+                validateOverride(name, "discussion", ovr.discussion, openRouter, anthropic, config.claudeCli, config.codexCli)
                 ovr.shadow?.takeIf { it.enabled }?.let { s ->
                     require(s.extract != null || s.render != null) {
                         "Category '$name' llm.shadow needs extract and/or render — without either nothing runs in the shadow"

@@ -71,6 +71,8 @@ object ConfigChangelog {
         Entry("admin.inspect", "2026-10-02", "/inspect, pasted post links and forwards → a card about the post with 🔇 keyword / event-type buttons (on with admin.commands)"),
         Entry("categories.*.dedup.digest.updateDiff", "2026-10-02", "a meaningful_update is posted only with facts absent from the earlier posts (LLM diff; start with logOnly: true; render prompt needs newFacts)"),
         Entry("fetcher.summarizeInputChars", "2026-10-08", "per-article summarize reads up to this much page text (default 12000) instead of the 1500-char stored description"),
+        Entry("categories.*.post.discussion", "2026-10-10", "🗣 reply under a post summing up its HN thread (top comments → llm.discussion; minComments, maxPerDigest; start with logOnly: true)"),
+        Entry("categories.*.llm.discussion", "2026-10-10", "the model of the post.discussion summary (else llm.render), metered as DISCUSSION"),
         Entry("categories.*.llm.summarize.providers", "2026-10-10", "⚖️ any llm slot (extract, render, summarize, …) can be a weighted split: providers: [{ percent, provider, model }], daily tallies in bot_state; replaces extractAlternate"),
         Entry("admin.threads", "2026-10-11", "🧵 admin chat threads (private-chat topics): status snapshot + notices, /inspect cards and the /raw browser each in their own thread; /thread prints a thread's id"),
     )

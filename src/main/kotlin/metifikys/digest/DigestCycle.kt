@@ -444,6 +444,7 @@ class DigestCycle(
         timed("event_history") { db.deleteOldEventHistory(config.storyIntel.historyRetentionDays) }
         timed("shadow_runs") { db.deleteOldShadowRuns(config.processing.shadowRetentionDays) }
         timed("fact_checks") { db.deleteOldFactChecks(config.factCheck.retentionDays) }
+        timed("discussions") { db.deleteOldDiscussions(REACTION_RETENTION_DAYS) }
     }
 
     /**

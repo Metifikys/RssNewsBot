@@ -306,7 +306,8 @@ categories:
     emoji: "💻"
     channelId: "@my_tech_channel"       # public @username or "-1001234567890" for a private channel
     feeds:
-      - https://hnrss.org/newest?points=120
+      - url: https://hnrss.org/newest?points=120
+        fetchFullContent: true          # hnrss <link> is the article itself; without this only the title is read
       - https://techcrunch.com/feed/
       # Platform feeds. kind: article | social | release | video (unset = ordinary feed).
       # RSSHub routes (http://<rsshub>/telegram/channel/<name>) are kind: social too.
@@ -320,6 +321,24 @@ categories:
         titlePrefix: "Ollama "          # "v0.12.3" → "Ollama v0.12.3"
         exclude: ["-rc", "-beta", "nightly"]   # skip titles containing these
       - { url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCLA_DiR1FfKNvjuUpBHmylQ", kind: video, label: "NASA" }
+    post:
+      # 🗣 Обговорення на HN · 401 коментар — a silent reply under a sent post with what its thread
+      #    adds; one llm.discussion call per thread, each thread answered once
+      discussion:
+        enabled: false
+        sources: [hn]
+        lookupByUrl: false              # true: also search HN for posts from other feeds (1 request per post)
+        lookupMaxAgeDays: 7
+        minComments: 25
+        topLevel: 10                    # top-level comments in HN's page order…
+        repliesPerComment: 2            # …each with its first replies
+        maxCommentChars: 1000
+        maxChars: 12000                 # all comments together
+        maxPoints: 4
+        maxPerDigest: 2
+        silent: true                    # no notification sound
+        logOnly: true                   # first: summaries only in the log and the discussions table
+        promptFile: null                # null = built-in; e.g. "prompts/discussion.yaml" (prompts/discussion.example.yaml)
 
   gaming:
     emoji: "🎮"
@@ -470,6 +489,7 @@ categories:
       batchFallback:    { provider: anthropic,  model: claude-haiku-4-5-20251001 }               # sync, under backpressure
       persona:          { provider: openrouter, model: "provider/your-free-model" }              # post.persona remark
       updateDiff:       { provider: openrouter, model: "provider/your-free-model" }              # dedup.digest.updateDiff check
+      discussion:       { provider: openrouter, model: "provider/your-free-model" }              # post.discussion summary
       # 🌓 Shadow: B gets exactly A's input, only A is posted, both stored in shadow_runs
       #    (node bench/shadow-dump.mjs). Needs dedup:.
       shadow:

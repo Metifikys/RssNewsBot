@@ -71,7 +71,8 @@ class TelegramSender(
         val reply_parameters: ReplyParameters? = null,
         val link_preview_options: LinkPreviewOptions? = null,
         /** Forum topic / private-chat thread (Bot API 9.3); null = the chat's main thread. */
-        val message_thread_id: Long? = null
+        val message_thread_id: Long? = null,
+        val disable_notification: Boolean? = null
     )
 
     /**
@@ -273,7 +274,9 @@ class TelegramSender(
         replyToMessageId: Long? = null,
         previewImageUrl: String? = null,
         /** Where the [previewImageUrl] card sits: above the text (a picture) or below it (a telegra.ph page). */
-        previewAboveText: Boolean = true
+        previewAboveText: Boolean = true,
+        /** `disable_notification`: the message arrives without a sound (a reply under a post). */
+        silent: Boolean = false
     ): List<SentRef> {
         val chunks = chunkMessage(text)
         val refs = ArrayList<SentRef>(chunks.size)
@@ -282,11 +285,11 @@ class TelegramSender(
             // The image preview belongs to the first chunk; later chunks keep [disablePreview].
             val preview = if (index == 0) previewImageUrl else null
             val html = TopicFormatter.toHtml(chunk)
-            val ref = when (val res = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview, replyTo = replyTo, previewImageUrl = preview, previewAboveText = previewAboveText)) {
+            val ref = when (val res = sendMessage(channelId, html, parseMode = "HTML", disablePreview = disablePreview, replyTo = replyTo, previewImageUrl = preview, previewAboveText = previewAboveText, silent = silent)) {
                 is SendResult.Ok -> res.ref
                 // BUG-007: fall back to plain text only on a 400 markup error.
                 is SendResult.BadRequest ->
-                    (sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview, replyTo = replyTo, previewImageUrl = preview, previewAboveText = previewAboveText) as? SendResult.Ok)?.ref
+                    (sendMessage(channelId, html.htmlToPlainText(), parseMode = null, disablePreview = disablePreview, replyTo = replyTo, previewImageUrl = preview, previewAboveText = previewAboveText, silent = silent) as? SendResult.Ok)?.ref
                 is SendResult.Transient -> null
             }
             if (ref != null) refs += ref
@@ -405,16 +408,19 @@ class TelegramSender(
         disablePreview: Boolean = false,
         replyTo: Long? = null,
         previewImageUrl: String? = null,
-        previewAboveText: Boolean = true
+        previewAboveText: Boolean = true,
+        silent: Boolean = false
     ): SendResult {
+        val quiet = if (silent) true else null
         // An explicit image preview replaces the legacy on/off flag (the two must not conflict).
         val request = if (previewImageUrl != null) {
             SendMessageRequest(
                 chatId, text, parseMode, reply_parameters = replyParams(replyTo),
-                link_preview_options = LinkPreviewOptions(previewImageUrl, prefer_large_media = true, show_above_text = previewAboveText)
+                link_preview_options = LinkPreviewOptions(previewImageUrl, prefer_large_media = true, show_above_text = previewAboveText),
+                disable_notification = quiet
             )
         } else {
-            SendMessageRequest(chatId, text, parseMode, if (disablePreview) true else null, replyParams(replyTo))
+            SendMessageRequest(chatId, text, parseMode, if (disablePreview) true else null, replyParams(replyTo), disable_notification = quiet)
         }
         val payload = json.encodeToString(request)
         return post("sendMessage", payload, chatId)

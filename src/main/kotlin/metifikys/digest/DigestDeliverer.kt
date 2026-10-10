@@ -16,6 +16,7 @@ import metifikys.config.VaporwareLineConfig
 import metifikys.db.CoveredEventRow
 import metifikys.db.DigestMessageRow
 import metifikys.db.NewsDatabase
+import metifikys.discussion.DiscussionReplier
 import metifikys.enrich.BadgeResolver
 import metifikys.enrich.WikipediaIntroProvider
 import metifikys.format.AlsoLine
@@ -73,7 +74,9 @@ class DigestDeliverer(
     /** The editor persona's remark under the top event (`post.persona`); null when no category sets it. */
     private val personaWriter: PersonaWriter? = null,
     /** Sampled, log-only judge of the sent posts against their sources (`factCheck`); null when off. */
-    private val factChecker: FactChecker? = null
+    private val factChecker: FactChecker? = null,
+    /** Replies summing up the posts' discussion threads (`post.discussion`); null when no category sets it. */
+    private val discussionReplier: DiscussionReplier? = null
 ) {
 
     /**
@@ -164,6 +167,9 @@ class DigestDeliverer(
         // factCheck: the clean topic of every sent post with the sources its render saw.
         val checkFacts = factChecker?.appliesTo(categoryName) == true
         val factCheckPosts = mutableListOf<FactChecker.Post>()
+        // post.discussion: every sent post, in digest order, with all the articles of its event.
+        val discuss = discussionReplier?.appliesTo(categoryConfig) == true
+        val discussionPosts = mutableListOf<DiscussionReplier.Post>()
         val sentAt = LocalDateTime.now()
 
         // post.images: one og:image / probe budget per delivered digest.
@@ -301,6 +307,14 @@ class DigestDeliverer(
                     }
                     factCheckPosts += FactChecker.Post(first.chatId, first.messageId, eventKey, topic, sources)
                 }
+                if (discuss) {
+                    val first = refs.first()
+                    // The topic's own links first, then the event's other batch articles (the HN copy
+                    // of a story is often folded into the cluster, not linked).
+                    val eventArticles = (topicArticles + item?.sourceLinks.orEmpty().mapNotNull { articleByLink[it] })
+                        .distinctBy { it.link }
+                    discussionPosts += DiscussionReplier.Post(first.chatId, first.messageId, eventKey, topic, eventArticles)
+                }
                 if (moderate) {
                     val first = refs.first()
                     moderated += ModeratedPost(
@@ -335,6 +349,8 @@ class DigestDeliverer(
             moderationNotifier?.afterDigest(categoryName, moderated)
             // Log-only fact check of the sent posts, on the checker's own thread.
             if (factCheckPosts.isNotEmpty()) factChecker?.afterDelivery(categoryName, categoryConfig, factCheckPosts)
+            // Discussion replies under the sent posts, on the replier's own thread.
+            if (discussionPosts.isNotEmpty()) discussionReplier?.afterDelivery(categoryName, categoryConfig, discussionPosts)
         }
 
         when {

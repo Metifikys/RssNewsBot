@@ -6,6 +6,7 @@ import metifikys.config.CategoryConfig
 import metifikys.digest.FactChecker
 import metifikys.digest.UpdateDiff
 import metifikys.digest.WeeklyDigest
+import metifikys.discussion.DiscussionReplier
 import java.io.File
 
 /** One prompt problem. [slot] is `promptFile`, `extract`, `extract.user`, `render.system`, … */
@@ -34,7 +35,7 @@ class PromptValidator(
 
     fun validate(config: AppConfig): List<PromptFinding> =
         config.categories.flatMap { (name, cat) -> validateCategory(name, cat, config) } + validateWeekly(config) +
-            validateFactCheck(config)
+            validateFactCheck(config) + validateDiscussion(config)
 
     /** Categories whose `dedup.promptFile` is [file] (canonical) — the ones a hot reload affects. */
     fun categoriesUsing(file: File, config: AppConfig): List<String> =
@@ -174,6 +175,21 @@ class PromptValidator(
         }
         return out
     }
+
+    /** `post.discussion.promptFile` of every category that sets one: readable, with known placeholders. */
+    fun validateDiscussion(config: AppConfig): List<PromptFinding> =
+        config.categories.flatMap { (name, cat) ->
+            val file = cat.post?.discussion?.takeIf { it.enabled }?.promptFile ?: return@flatMap emptyList()
+            val out = mutableListOf<PromptFinding>()
+            DiscussionReplier.promptFileProblem(file, baseDir)?.let {
+                out += PromptFinding(PromptFinding.Level.WARN, name, "discussion.promptFile", "$it — the built-in prompt is used")
+            }
+            DiscussionReplier.loadPrompts(file, baseDir)?.let { p ->
+                unknownIn(p.system, DiscussionReplier.PLACEHOLDERS)?.let { out += PromptFinding(PromptFinding.Level.WARN, name, "discussion.system", it) }
+                unknownIn(p.user, DiscussionReplier.PLACEHOLDERS)?.let { out += PromptFinding(PromptFinding.Level.WARN, name, "discussion.user", it) }
+            }
+            out
+        }
 
     fun validateWeekly(config: AppConfig): List<PromptFinding> {
         val weekly = config.weekly?.takeIf { it.enabled } ?: return emptyList()

@@ -53,6 +53,14 @@ class LlmClientsFactory(
             ?: syncDefault(category, LlmUseCase.UPDATE_DIFF)
 
     /**
+     * The discussion summary (`post.discussion`): `llm.discussion`, else the `llm.render` override,
+     * else the global sync default — always a sync client, metered as [LlmUseCase.DISCUSSION].
+     */
+    fun forDiscussion(category: CategoryConfig?): LlmClient =
+        (category?.llm?.discussion ?: category?.llm?.render)?.let { build(it, category, LlmUseCase.DISCUSSION) }
+            ?: syncDefault(category, LlmUseCase.DISCUSSION)
+
+    /**
      * The B side of `llm.shadow` for Step 1 ([LlmUseCase.SHADOW_EXTRACT]) or the render
      * ([LlmUseCase.SHADOW_RENDER]); null when the category shadows nothing at that stage. Always a
      * sync client (config validation rejects `batch: true` there), with its own `fallback` chain.

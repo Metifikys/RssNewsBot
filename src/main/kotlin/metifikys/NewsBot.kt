@@ -33,6 +33,8 @@ import metifikys.digest.SemanticDedupDetector
 import metifikys.digest.TrackerUpdater
 import metifikys.digest.WeeklyDigest
 import metifikys.digest.WeeklyScheduler
+import metifikys.discussion.DiscussionReplier
+import metifikys.discussion.HackerNewsDiscussionSource
 import metifikys.enrich.BadgeHttp
 import metifikys.enrich.BadgeProviders
 import metifikys.enrich.BadgeResolver
@@ -71,6 +73,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
+
+/** The discussion threads are read off the delivery path, so a big Algolia tree may take its time. */
+private const val DISCUSSION_HTTP_TIMEOUT_SECONDS = 20L
 
 /**
  * ONE per-host gate for every outbound request the bot makes — RSS feeds and the article pages
@@ -260,6 +265,16 @@ class NewsBot(
     private val factChecker: FactChecker? =
         if (config.factCheck.enabled) FactChecker(config.factCheck, db, { llmClientsFactory.forJudge(it) }) else null
 
+    /** `post.discussion`: replies summing up the posts' discussion threads; null when no category sets it. */
+    private val discussionReplier: DiscussionReplier? =
+        if (config.categories.values.any { it.post?.discussion?.enabled == true }) {
+            val http = BadgeHttp(timeoutSeconds = DISCUSSION_HTTP_TIMEOUT_SECONDS)
+            DiscussionReplier(
+                mapOf(HackerNewsDiscussionSource.ID to HackerNewsDiscussionSource(http)),
+                db, sender, { llmClientsFactory.forDiscussion(it) }
+            )
+        } else null
+
     internal val deliverer =
         DigestDeliverer(
             config, db, sender, badgeResolver, introProvider, trackerUpdater, moderationNotifier,
@@ -270,7 +285,8 @@ class NewsBot(
             personaWriter = if (config.categories.values.any { it.post?.persona?.enabled == true }) {
                 PersonaWriter({ llmClientsFactory.forPersona(it) })
             } else null,
-            factChecker = factChecker
+            factChecker = factChecker,
+            discussionReplier = discussionReplier
         )
 
     /** `llm.shadow` B runs; only when some category configures a shadow. */
@@ -474,6 +490,7 @@ class NewsBot(
             moderationExecutor?.shutdownNow()
             shadowRunner?.shutdown()
             factChecker?.shutdown()
+            discussionReplier?.shutdown()
             val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             try {
                 for (executor in executors) {
