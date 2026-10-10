@@ -75,6 +75,29 @@ class FeedColumnsTest {
     }
 
     @Test
+    fun `insertSeenArticles stores a new feed's backlog as processed and out of the feed metrics`() {
+        db.insertSeenArticles(listOf(article("https://a/1", "https://feed/new")))
+        db.insertArticles(listOf(article("https://a/2", "https://feed/new")))
+
+        assertEquals(ArticleStatus.PROCESSED.name, column("https://a/1", "status"))
+        assertEquals(DropReason.NEW_FEED, column("https://a/1", "drop_reason"))
+        assertEquals(listOf("https://a/2"), db.fetchReadyForDigest("tech").map { it.link })
+        assertEquals(listOf("https://a/2"), db.fetchFeedArticleOutcomes(LocalDateTime.now().minusDays(1)).map { it.link })
+    }
+
+    @Test
+    fun `findKnownFeedUrls sees feeds through articles and sightings`() {
+        db.insertArticles(listOf(article("https://a/1", "https://feed/a")))
+        db.insertFeedSightings(listOf(FeedSighting("https://a/1", "https://feed/echo", "tech", LocalDateTime.now())))
+
+        assertEquals(
+            setOf("https://feed/a", "https://feed/echo"),
+            db.findKnownFeedUrls(listOf("https://feed/a", "https://feed/echo", "https://feed/new"))
+        )
+        assertEquals(emptySet(), db.findKnownFeedUrls(emptyList()))
+    }
+
+    @Test
     fun `feed sightings keep the first sighting per link and feed and expire`() {
         val old = LocalDateTime.now().minusDays(20)
         db.insertFeedSightings(listOf(

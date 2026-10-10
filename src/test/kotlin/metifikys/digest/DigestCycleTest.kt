@@ -16,6 +16,8 @@ import metifikys.config.ProcessingConfig
 import metifikys.config.SchedulerConfig
 import metifikys.config.TelegramConfig
 import metifikys.db.CoveredEventRow
+import metifikys.db.DropReason
+import metifikys.db.FeedSighting
 import metifikys.db.NewsDatabase
 import metifikys.db.RetentionArchiver
 import metifikys.fetch.ArticleFetcher
@@ -23,6 +25,7 @@ import metifikys.fetch.ArticleSummarizer
 import metifikys.fetch.RssFetcher
 import metifikys.fetch.UrlGuard
 import metifikys.model.Article
+import metifikys.model.ArticleStatus
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -31,6 +34,7 @@ import java.net.InetSocketAddress
 import java.time.LocalDateTime
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -138,7 +142,7 @@ class DigestCycleTest {
             val config = cfg(
                 mapOf(
                     "slow" to cat(urlOf(badServer)),
-                    "fast" to cat(urlOf(goodServer))
+                    "fast" to cat(known(urlOf(goodServer)))
                 )
             )
             val processor = RecordingCategoryProcessor(config, db)
@@ -168,8 +172,8 @@ class DigestCycleTest {
         try {
             val config = cfg(
                 mapOf(
-                    "boom" to cat(urlOf(serverA)),
-                    "ok" to cat(urlOf(serverB))
+                    "boom" to cat(known(urlOf(serverA))),
+                    "ok" to cat(known(urlOf(serverB)))
                 )
             )
             val errorLog = CycleErrorLog()
@@ -193,7 +197,7 @@ class DigestCycleTest {
         val server = serverRss(rssWithItems("https://example.com/i1"))
         val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
         try {
-            val config = cfg(mapOf("tech" to cat(urlOf(server))))
+            val config = cfg(mapOf("tech" to cat(known(urlOf(server)))))
             val processor = RecordingCategoryProcessor(config, db)
             // Simulate the cycle barrier interrupting the worker during enrichment: the
             // best-effort stages swallow the interrupt and only restore the flag.
@@ -248,7 +252,7 @@ class DigestCycleTest {
         val serverB = serverRss(rssWithItems("https://example.com/b1"))
         val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
         try {
-            val config = cfg(mapOf("a" to cat(urlOf(serverA)), "b" to cat(urlOf(serverB))))
+            val config = cfg(mapOf("a" to cat(known(urlOf(serverA))), "b" to cat(known(urlOf(serverB)))))
             val processor = RecordingCategoryProcessor(config, db)
 
             cycle(config, fetcher, processor).runCategory("a")
@@ -269,7 +273,7 @@ class DigestCycleTest {
         val serverA = serverRss(rssWithItems("https://example.com/a1"))
         val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
         try {
-            val config = cfg(mapOf("boom" to cat(urlOf(serverA))))
+            val config = cfg(mapOf("boom" to cat(known(urlOf(serverA)))))
             val errorLog = CycleErrorLog()
             val processor = RecordingCategoryProcessor(config, db, throwFor = "boom")
 
@@ -361,7 +365,7 @@ class DigestCycleTest {
         val server = serverRss(rssWithItems("https://example.com/p1"))
         val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
         try {
-            val config = cfg(mapOf("a" to cat(urlOf(server))))
+            val config = cfg(mapOf("a" to cat(known(urlOf(server)))))
             val processor = RecordingCategoryProcessor(config, db)
             var now = LocalDateTime.now()
             val pauses = PauseStore(db) { now }
@@ -409,7 +413,7 @@ class DigestCycleTest {
         val server = serverRss(rssWithItems("https://example.com/1"))
         val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
         try {
-            val config = cfg(mapOf("tech" to cat(urlOf(server))))
+            val config = cfg(mapOf("tech" to cat(known(urlOf(server)))))
             val processor = RecordingCategoryProcessor(config, db)
             val digestCycle = cycle(config, fetcher, processor)
             digestCycle.runCycle()
@@ -421,6 +425,56 @@ class DigestCycleTest {
             assertEquals(2, processor.calls.count { it.first == "tech" })
         } finally {
             server.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `a new feed's first poll is stored as seen and only later items reach the digest`() {
+        val body = AtomicReference(rssWithItems("https://example.com/old1", "https://example.com/old2"))
+        val server = serverRss(body)
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val url = urlOf(server)
+            val config = cfg(mapOf("tech" to cat(url)))
+            val processor = RecordingCategoryProcessor(config, db)
+            val c = cycle(config, fetcher, processor)
+
+            c.runCategory("tech")
+            assertTrue(processor.calls.isEmpty(), "the backlog never reaches Step 1")
+            val backlog = db.fetchArticleRecordsByLinks(listOf("https://example.com/old1", "https://example.com/old2"))
+            assertEquals(listOf(ArticleStatus.PROCESSED.name), backlog.map { it.status }.distinct())
+            assertEquals(listOf(DropReason.NEW_FEED), backlog.map { it.dropReason }.distinct())
+            assertEquals(listOf(url), backlog.map { it.feedUrl }.distinct())
+
+            body.set(rssWithItems("https://example.com/new1", "https://example.com/old1", "https://example.com/old2"))
+            c.runCategory("tech")
+            assertEquals(listOf("https://example.com/new1"), processor.calls.single().second.map { it.link })
+        } finally {
+            server.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
+    fun `a link a known feed also brought in the same pass stays live`() {
+        val newServer = serverRss(rssWithItems("https://example.com/shared", "https://example.com/b-old"))
+        val knownServer = serverRss(rssWithItems("https://example.com/shared"))
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val knownUrl = known(urlOf(knownServer))
+            // The new feed is listed first: without the known-first order it would win the shared link.
+            val config = cfg(mapOf("tech" to cat(urlOf(newServer), knownUrl)))
+            val processor = RecordingCategoryProcessor(config, db)
+
+            cycle(config, fetcher, processor).runCategory("tech")
+
+            assertEquals(listOf("https://example.com/shared"), processor.calls.single().second.map { it.link })
+            assertEquals(knownUrl, db.fetchArticleRecordsByLinks(listOf("https://example.com/shared")).single().feedUrl)
+            assertEquals(DropReason.NEW_FEED, db.fetchArticleRecordsByLinks(listOf("https://example.com/b-old")).single().dropReason)
+        } finally {
+            newServer.stop(0)
+            knownServer.stop(0)
             fetcher.shutdown()
         }
     }
@@ -530,5 +584,23 @@ class DigestCycleTest {
         return server
     }
 
+    /** A server whose feed body can change between polls. */
+    private fun serverRss(body: AtomicReference<ByteArray>): HttpServer {
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/rss") { exchange ->
+            val bytes = body.get()
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        return server
+    }
+
     private fun urlOf(server: HttpServer) = "http://localhost:${server.address.port}/rss"
+
+    /** Marks [url] as a feed that brought links before, so its first fetch here is not a new feed's backlog. */
+    private fun known(url: String): String {
+        db.insertFeedSightings(listOf(FeedSighting("https://example.com/seen-before", url, "tech", LocalDateTime.now())))
+        return url
+    }
 }

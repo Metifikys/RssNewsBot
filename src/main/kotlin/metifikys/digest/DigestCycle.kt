@@ -320,12 +320,27 @@ class DigestCycle(
             return false
         }
 
+        // A feed that never brought a link before (just added to the config) hands over its whole
+        // history on the first poll — hundreds of entries for a company blog. Known feeds go first,
+        // so a link one of them also brought in this pass stays theirs and reaches the digest.
+        val rawFeeds = rawArticles.mapNotNull { it.feedUrl }.toSet()
+        val newFeeds = if (rawFeeds.isEmpty()) emptySet() else rawFeeds - db.findKnownFeedUrls(rawFeeds)
+        val ordered = if (newFeeds.isEmpty()) rawArticles else rawArticles.sortedBy { it.feedUrl in newFeeds }
+
         // Dedup BEFORE enrichment: skip articles whose links are already in DB (and a second copy
         // of a link within this pass). A link that a DIFFERENT feed brought is kept as a feed
         // sighting — the "echo" side of the feed-quality metrics.
-        val existingLinks = db.findExistingLinkFeeds(rawArticles.map { it.link })
-        val split = IngestSightings.split(rawArticles, existingLinks)
-        val newRawArticles = split.fresh
+        val existingLinks = db.findExistingLinkFeeds(ordered.map { it.link })
+        val split = IngestSightings.split(ordered, existingLinks)
+        val (backlog, newRawArticles) = split.fresh.partition { it.feedUrl in newFeeds }
+        if (backlog.isNotEmpty()) {
+            // Stored as already seen (no enrichment, no Step 1): from now on link-dedup skips them
+            // and only what the feed publishes after today becomes news.
+            db.insertSeenArticles(backlog)
+            backlog.groupingBy { it.feedUrl }.eachCount().forEach { (feed, n) ->
+                logger.info { "[Cycle:$name] New feed $feed: first poll, $n entr(ies) marked as seen — only later items reach the digest." }
+            }
+        }
         logger.info { "[Cycle:$name] After dedup: ${newRawArticles.size} new article(s) (${existingLinks.size} already in DB)." }
         if (split.sightings.isNotEmpty()) {
             try {

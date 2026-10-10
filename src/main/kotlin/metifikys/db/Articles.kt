@@ -60,6 +60,9 @@ object ArticlesTable : Table("articles") {
 object DropReason {
     /** Step 0 keyword mute (`preferences.mute`, category mutes, `/mute`). */
     const val MUTE = "mute"
+
+    /** A newly added feed's first poll: its backlog is stored as already seen ([ArticleStore.insertSeenArticles]). */
+    const val NEW_FEED = "new_feed"
 }
 
 /** An article row's identity and clocks: `pub_date` (the feed's claim) and `fetched_at` (ours; null on old rows). */
@@ -95,6 +98,12 @@ interface ArticleStore {
     fun findExistingLinkFeeds(links: List<String>): Map<String, String?>
 
     fun insertArticles(articles: List<Article>): Int
+
+    /**
+     * Inserts [articles] already PROCESSED with `drop_reason = 'new_feed'`: a newly added feed's
+     * backlog, kept only so link-dedup skips it from now on. Never reaches Step 1.
+     */
+    fun insertSeenArticles(articles: List<Article>): Int
 
     fun fetchReadyForDigestByCategory(staleTimeoutHours: Long = 3): Map<String, List<Article>>
 
@@ -189,7 +198,11 @@ internal class ArticleRepository : ArticleStore {
         }
     }
 
-    override fun insertArticles(articles: List<Article>): Int {
+    override fun insertArticles(articles: List<Article>): Int = insert(articles, ArticleStatus.UNPROCESSED, null)
+
+    override fun insertSeenArticles(articles: List<Article>): Int = insert(articles, ArticleStatus.PROCESSED, DropReason.NEW_FEED)
+
+    private fun insert(articles: List<Article>, rowStatus: ArticleStatus, reason: String?): Int {
         var inserted = 0
         val now = LocalDateTime.now()
         transaction {
@@ -200,13 +213,14 @@ internal class ArticleRepository : ArticleStore {
                     it[link] = article.link
                     it[description] = article.description
                     it[pubDate] = article.pubDate
-                    it[status] = ArticleStatus.UNPROCESSED.name
+                    it[status] = rowStatus.name
                     it[processingStartedAt] = null
                     it[imageUrl] = article.imageUrl
                     it[summary] = article.summary
                     it[metaJson] = article.metaJson
                     it[feedUrl] = article.feedUrl
                     it[fetchedAt] = now
+                    it[dropReason] = reason
                 }
                 if (result.insertedCount > 0) inserted++
             }

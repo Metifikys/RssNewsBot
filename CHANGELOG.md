@@ -8,6 +8,13 @@ single **Unreleased** section.
 ## [Unreleased]
 
 ### Added
+- **New feed backlog is marked as seen** — a feed that never brought a link before (no
+  `articles.feed_url` and no `feed_sightings` row under its `url`) has its first successful poll
+  stored as `PROCESSED` with `drop_reason = 'new_feed'`: no enrichment, no Step 1, out of the
+  feed-quality metrics. Only what it publishes afterwards reaches the digest, so adding a company
+  blog with 1000+ entries no longer floods the queue with years-old posts. Known feeds win a link
+  both bring in the same pass. A changed feed `url` counts as a new feed; so does every feed of a
+  fresh, empty database.
 - **Weighted provider split (`llm.<slot>.providers`)** — any LLM slot (`extract`, `render`,
   `summarize`, `batch`, `batchFallback`, `persona`, `updateDiff`, `shadow.*`, `factCheck.judge`)
   can list several provider+model entries with a `percent` each (sum 100). Each call goes to the

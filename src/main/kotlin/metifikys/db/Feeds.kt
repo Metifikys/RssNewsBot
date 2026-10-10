@@ -4,7 +4,9 @@ import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.isNotNull
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.isNull
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.neq
 import org.jetbrains.exposed.sql.javatime.datetime
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.LocalDateTime
@@ -108,6 +110,12 @@ interface FeedStore {
     /** Retention: drops sightings older than [days] (the same window as the articles). */
     fun deleteOldFeedSightings(days: Long)
 
+    /**
+     * The subset of [feedUrls] that ever brought a link: an `articles` row or a `feed_sightings`
+     * row under that `feed_url`. Any other configured feed has never been polled successfully.
+     */
+    fun findKnownFeedUrls(feedUrls: Collection<String>): Set<String>
+
     /** Merges one flush of fetch outcomes into `feed_stats`. */
     fun applyFeedStats(deltas: List<FeedStatsDelta>)
 
@@ -171,6 +179,23 @@ internal class FeedRepository : FeedStore {
         }
     }
 
+    override fun findKnownFeedUrls(feedUrls: Collection<String>): Set<String> {
+        if (feedUrls.isEmpty()) return emptySet()
+        val urls = feedUrls.toList()
+        return transaction {
+            val inArticles = ArticlesTable.select(ArticlesTable.feedUrl)
+                .where { ArticlesTable.feedUrl inList urls }
+                .withDistinct()
+                .mapNotNull { it[ArticlesTable.feedUrl] }
+            val rest = urls - inArticles.toSet()
+            val inSightings = if (rest.isEmpty()) emptyList() else FeedSightingsTable.select(FeedSightingsTable.feedUrl)
+                .where { FeedSightingsTable.feedUrl inList rest }
+                .withDistinct()
+                .map { it[FeedSightingsTable.feedUrl] }
+            (inArticles + inSightings).toSet()
+        }
+    }
+
     override fun applyFeedStats(deltas: List<FeedStatsDelta>) {
         if (deltas.isEmpty()) return
         transaction {
@@ -224,7 +249,11 @@ internal class FeedRepository : FeedStore {
     override fun fetchFeedArticleOutcomes(since: LocalDateTime): List<FeedArticleOutcome> = transaction {
         val a = ArticlesTable
         val rows = a.select(a.id, a.feedUrl, a.category, a.link, a.status, a.dropReason, a.fetchedAt, a.duplicateOf)
-            .where { a.feedUrl.isNotNull() and (a.fetchedAt greaterEq since) }
+            // A new feed's first-poll backlog was never a candidate: it would read as "unselected" junk.
+            .where {
+                a.feedUrl.isNotNull() and (a.fetchedAt greaterEq since) and
+                    (a.dropReason.isNull() or (a.dropReason neq DropReason.NEW_FEED))
+            }
             .toList()
         if (rows.isEmpty()) return@transaction emptyList()
         // Step 1 verdicts, joined in memory: rejected_events.url has no index, and the window is
