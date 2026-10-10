@@ -2,7 +2,7 @@
   "fallbackToLegacy" : false,
   "shortlist" : [ {
     "url" : "https://news.example/doom-dark-ages-dlc",
-    "status" : "meaningful_update",
+    "status" : "new",
     "newsworthiness" : 6,
     "digestFit" : 8,
     "eventDate" : null,

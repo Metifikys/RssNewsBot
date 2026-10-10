@@ -11,6 +11,7 @@ import metifikys.config.RankerConfig
 import metifikys.db.CoveredEventRow
 import metifikys.db.NewsDatabase
 import metifikys.model.Article
+import metifikys.model.ShortlistItem
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
@@ -467,6 +468,13 @@ class EventExtractorTest {
         every { promptLoader.resolve(any()) } returns okResolved
         every { promptLoader.substitute(any(), any()) } answers { firstArg() }
         every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        // The story is covered, so the orphan-update check is settled without digest_messages.
+        every { db.fetchCoveredEventsByKeys(any(), any(), any()) } returns listOf(
+            CoveredEventRow(
+                category = "games", eventKey = "doom_crunch", subject = "DOOM", franchise = "DOOM", eventType = "t",
+                coreFact = "c", importance = 6, url = "https://old.com/doom", coveredAt = LocalDateTime.now().minusDays(2)
+            )
+        )
         every { openAI.completeJson(any(), any(), any()) } returns updateShortlistJson()
 
         val ready = assertIs<ExtractOutcome.Ready>(
@@ -653,6 +661,100 @@ class EventExtractorTest {
         val ready = assertIs<ExtractOutcome.Ready>(result)
         assertEquals(1, ready.result.shortlist.size)
         verify(exactly = 0) { db.fetchCoveredEventsByKeys(any(), any(), any()) }
+    }
+
+    // ── meaningful_update without an earlier post ────────────────────────────
+
+    private fun updatesJson(vararg items: Pair<String, String?>, newKey: String? = null): String {
+        val updates = items.mapIndexed { i, (key, related) ->
+            """{"eventKey": "$key", "coreFact": "c", "importance": 6, "newsworthiness": 6, "digestFit": 6,
+               "relatedPreviousEventKey": ${related?.let { "\"$it\"" } ?: "null"}, "url": "https://a.com/$i",
+               "status": "meaningful_update", "articleIndices": [$i]}"""
+        }
+        val fresh = newKey?.let {
+            listOf("""{"eventKey": "$it", "coreFact": "c", "importance": 6, "newsworthiness": 6, "digestFit": 6,
+               "url": "https://a.com/${items.size}", "status": "new", "articleIndices": [${items.size}]}""")
+        }.orEmpty()
+        return """{"extractions": [], "shortlist": [${(fresh + updates).joinToString(",")}]}"""
+    }
+
+    private fun extractUpdates(json: String, articleCount: Int): List<ShortlistItem> {
+        every { promptLoader.resolve(any()) } returns okResolved
+        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
+        every { openAI.completeJson(any(), any(), any()) } returns json
+        val result = extractor.extract(
+            "games",
+            cat(DedupConfig(promptFile = "any.yaml", digest = DigestConfig(ranker = RankerConfig(enabled = false), meaningfulUpdateCooldownMinutes = 0))),
+            (0 until articleCount).map { article("https://a.com/$it") }
+        )
+        return assertIs<ExtractOutcome.Ready>(result).result.shortlist
+    }
+
+    @Test
+    fun `a meaningful_update whose story was never posted goes on as new`() {
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { db.fetchCoveredEventsByKeys(any(), any(), any()) } returns emptyList()
+        every { db.countDigestPostsByEventKeys(any(), any(), any()) } returns emptyMap()
+
+        val shortlist = extractUpdates(updatesJson("mistral_large_4" to null, "doom_dlc" to "doom_dlc_tease"), 2)
+
+        assertEquals(listOf("new", "new"), shortlist.map { it.status })
+        // The lookup window is digest.updateWindowDays (default 7).
+        val since = slot<LocalDateTime>()
+        verify { db.fetchCoveredEventsByKeys("games", setOf("mistral_large_4", "doom_dlc", "doom_dlc_tease"), capture(since)) }
+        assertTrue(java.time.Duration.between(LocalDateTime.now().minusDays(7), since.captured).abs().toMinutes() < 5)
+    }
+
+    @Test
+    fun `a meaningful_update stays one when its story is covered, posted or in the same shortlist`() {
+        every { db.fetchRecentEvents(any(), any(), any()) } returns listOf(
+            CoveredEventRow(
+                category = "games", eventKey = "in_context", subject = "S", franchise = "F", eventType = "t",
+                coreFact = "c", importance = 6, url = "https://old.com/1", coveredAt = LocalDateTime.now().minusDays(1)
+            )
+        )
+        every { db.fetchCoveredEventsByKeys(any(), any(), any()) } answers {
+            secondArg<Collection<String>>().filter { it == "in_archive" }.map {
+                CoveredEventRow(
+                    category = "games", eventKey = it, subject = "S", franchise = "F", eventType = "t",
+                    coreFact = "c", importance = 6, url = "https://old.com/2", coveredAt = LocalDateTime.now().minusDays(3)
+                )
+            }
+        }
+        every { db.countDigestPostsByEventKeys(any(), any(), any()) } answers {
+            secondArg<Collection<String>>().filter { it == "posted_only" }.associateWith { 1 }
+        }
+
+        val shortlist = extractUpdates(
+            updatesJson(
+                "u1" to "in_context",
+                "in_archive" to null,     // Step 1 reused the key
+                "u3" to "posted_only",
+                "u4" to "fresh_story",    // the story's first post is in this very shortlist
+                newKey = "fresh_story"
+            ),
+            5
+        )
+
+        assertEquals(
+            mapOf("fresh_story" to "new", "u1" to "meaningful_update", "in_archive" to "meaningful_update",
+                "u3" to "meaningful_update", "u4" to "meaningful_update"),
+            shortlist.associate { it.eventKey to it.status }
+        )
+        // Updates anchored by the context or the shortlist need no DB round-trip; the
+        // digest_messages fallback asks only for what covered_events left missing.
+        verify { db.fetchCoveredEventsByKeys("games", setOf("in_archive", "u3", "posted_only"), any()) }
+        verify { db.countDigestPostsByEventKeys("games", setOf("u3", "posted_only"), any()) }
+    }
+
+    @Test
+    fun `a failed earlier-post lookup keeps the meaningful_update`() {
+        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
+        every { db.fetchCoveredEventsByKeys(any(), any(), any()) } throws RuntimeException("db down")
+
+        val shortlist = extractUpdates(updatesJson("mistral_large_4" to null), 1)
+
+        assertEquals("meaningful_update", shortlist.single().status)
     }
 
     // ── Story clusters (storyIntel) and shortlist sourceLinks ────────────────

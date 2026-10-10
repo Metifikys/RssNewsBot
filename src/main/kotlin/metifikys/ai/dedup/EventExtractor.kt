@@ -452,7 +452,16 @@ class EventExtractor(
             logger.warn(e) { "$tag[Mute] reading the event-type mutes failed — none applied" }
             emptySet()
         }
-        val unmutedShortlist = if (typeMuted.isEmpty()) cappedShortlist else cappedShortlist.filter { item ->
+        val anchoredShortlist = demoteOrphanUpdates(
+            category = category,
+            shortlist = cappedShortlist,
+            coveredRows = effectiveCoveredRows,
+            windowDays = digestConfig?.updateWindowDays ?: DigestConfig().updateWindowDays,
+            now = now,
+            tag = tag
+        )
+
+        val unmutedShortlist = if (typeMuted.isEmpty()) anchoredShortlist else anchoredShortlist.filter { item ->
             val type = item.eventType.trim().lowercase()
             val muted = type.isNotEmpty() && type in typeMuted
             if (muted) {
@@ -753,6 +762,52 @@ class EventExtractor(
                 }
             }
             keep
+        }
+    }
+
+    /**
+     * A `meaningful_update` with nothing to update goes on as `new`: neither its own nor its
+     * related key has a covered event (prompt context, then `covered_events`) or a post
+     * (`digest_messages`) within [windowDays], and the related key is no other item of this
+     * shortlist. Step 1 does label a story's first post so (06.10 Mistral Large 4, related=null),
+     * and the render then opens it with "Оновлення:". A DB failure keeps the statuses.
+     */
+    private fun demoteOrphanUpdates(
+        category: String,
+        shortlist: List<ShortlistItem>,
+        coveredRows: List<CoveredEventRow>,
+        windowDays: Long,
+        now: LocalDateTime,
+        tag: String
+    ): List<ShortlistItem> {
+        val updates = shortlist.filter { it.status == "meaningful_update" }
+        if (updates.isEmpty()) return shortlist
+        fun keysOf(item: ShortlistItem) = listOfNotNull(item.eventKey, item.relatedPreviousEventKey).filter { it.isNotBlank() }
+        val known = coveredRows.mapTo(HashSet()) { it.eventKey }
+        fun anchored(item: ShortlistItem): Boolean {
+            val related = item.relatedPreviousEventKey
+            return keysOf(item).any { it in known } || (related != null && shortlist.any { it !== item && it.eventKey == related })
+        }
+        // Only the updates the prompt context and the shortlist leave unanchored cost a DB round-trip.
+        val unresolved = updates.filterNot(::anchored).flatMapTo(HashSet(), ::keysOf)
+        if (unresolved.isNotEmpty()) {
+            val since = now.minusDays(windowDays)
+            try {
+                db.fetchCoveredEventsByKeys(category, unresolved, since).mapTo(known) { it.eventKey }
+                val stillMissing = updates.filterNot(::anchored).flatMapTo(HashSet(), ::keysOf)
+                if (stillMissing.isNotEmpty()) {
+                    known += db.countDigestPostsByEventKeys(category, stillMissing, since).filterValues { it > 0 }.keys
+                }
+            } catch (e: Exception) {
+                logger.warn(e) { "$tag[Dedup] earlier-post lookup of ${unresolved.size} update key(s) failed — statuses kept" }
+                return shortlist
+            }
+        }
+        return shortlist.map { item ->
+            if (item.status != "meaningful_update" || anchored(item)) item else {
+                logger.info { "$tag[Dedup] ${item.eventKey}: meaningful_update without an earlier post (related=${item.relatedPreviousEventKey}) → new" }
+                item.copy(status = "new")
+            }
         }
     }
 
