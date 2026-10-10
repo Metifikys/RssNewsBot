@@ -40,6 +40,18 @@ node bench/analyze.mjs bench/results/<date>/results.jsonl bench/results/<date>/b
 node bench/dump.mjs bench/results/<date>/results.jsonl bench/results/<date>/bench-input.json bench/results/<date>
 ```
 
+Subscription CLI models (`codex exec`, same transport as `CodexCli.kt`: system prompt via
+`model_instructions_file`, prompt on stdin, answer from `--output-last-message`, neutral temp dir)
+run on the same inputs and write the same row shape (model id `codex:<model>`), so steps 3–4 apply:
+
+```bash
+node bench/bench-cli.mjs bench/results/<date>/bench-input.json bench/results/<date>/results.jsonl gpt-5.6-luna,gpt-6-luna [effort]
+```
+
+First CLI run 2026-10-10 (`results/2026-10-10-cli/report.md`): `gpt-5.6-luna` ≥ `gpt-5.5` at
+40–60 % of the tokens, `gpt-6-luna` close behind (one meta tail); `gpt-5.4-mini` is refused for
+ChatGPT-account codex logins.
+
 Update the `MODELS` list in `bench.mjs` from https://openrouter.ai/api/v1/models
 (filter ids ending `:free`) before a new run. Auto-metrics deliberately do NOT replace
 reading `digests.md` / `summaries.md` — the 2026-08 run caught a Spanish reply, invented
