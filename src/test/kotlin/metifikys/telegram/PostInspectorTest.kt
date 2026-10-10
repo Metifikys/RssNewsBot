@@ -81,7 +81,7 @@ class PostInspectorTest {
         db.insertArticles(
             listOf(
                 Article("gaming", "Survival horror game Signal Veil announced for PS5", "https://www.gematsu.com/sv", "Signal Veil desc",
-                    pubDate = now.minusHours(9), feedUrl = "https://e/rss")
+                    pubDate = now.minusHours(9), feedUrl = "https://e/rss", summary = "Serafini Productions анонсувала Signal Veil.")
             )
         )
         db.markProcessed(listOf("https://www.gematsu.com/sv"))
@@ -142,7 +142,10 @@ class PostInspectorTest {
         assertTrue("· 2 повідомл." in text)
         assertTrue("↪ далі: 1 оновлення" in text && "https://t.me/c/9876543210/15300" in text, text)
         assertTrue("⚡ лонгрід: <a href=\"https://telegra.ph/p\">Telegraph ↗</a>" in text)
-        assertTrue("тип: чутки (rumor) · статус: нова" in text, text)
+        assertTrue("<code>signal_veil</code> · статус: нова" in text, text)
+        assertTrue("eventType: чутки (<code>rumor</code>)" in text, text)
+        assertTrue("importance 3 · newsworthiness 3 · digestFit 5" in text, text)
+        assertTrue("<blockquote expandable>Serafini Productions анонсувала Signal Veil.</blockquote>" in text, text)
         assertTrue("стрічка Gematsu" in text, text)
         assertTrue("(+9 год)" in text, text)
         assertTrue("<b>Кластер</b>: 1 видання · першим gematsu.com" in text, text)

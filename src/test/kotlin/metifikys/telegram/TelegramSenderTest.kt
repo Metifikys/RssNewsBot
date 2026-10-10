@@ -91,6 +91,19 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `an HTML admin message is cut by its visible length, never mid-tag`() = withFakeApi { s, bodies ->
+        // 30 links of ~210 raw characters each but 5 visible: 6300 raw, 30 × 6 visible.
+        val links = (1..30).joinToString("\n") { "<a href=\"https://e.com/${"y".repeat(180)}\">link$it</a>" }
+        val html = links + "\n" + "z".repeat(3500)
+        assertEquals(42L, s.sendMessageWithKeyboard("555", html, html = true))
+        assertTrue("z".repeat(3500) + "\"" in bodies[0], "sent whole")
+
+        bodies.clear()
+        s.sendMessageWithKeyboard("555", "z".repeat(5000), html = true)
+        assertFalse("z".repeat(4000) in bodies[0], "visible text over the limit is still cut")
+    }
+
+    @Test
     fun `admin messages carry an inline keyboard, silence, and the admin-chat helper calls`() = withFakeApi { s, bodies ->
         val kb = listOf(listOf(InlineButton("🔇 У gaming", "ms:cat:17"), InlineButton("✖ Ні", "ms:no:17")))
         assertEquals(42L, s.sendMessageWithKeyboard("555", "hi", kb, silent = true))

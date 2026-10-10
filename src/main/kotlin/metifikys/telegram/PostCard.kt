@@ -73,24 +73,32 @@ data class PostInspection(
 /** The inspector card: HTML text, keyboard and keyword candidates. Pure. */
 object PostCard {
 
-    /** Telegram's message limit is 4096; leave room for the HTML-to-plain fallback. */
-    const val MAX_CHARS = 3900
+    /**
+     * Visible characters ([TopicFormatter.htmlVisibleLength]) per card: Telegram's 4096 counts
+     * the text after entity parsing; the sender cuts admin messages at 4000 (`ADMIN_TEXT_MAX`).
+     */
+    const val MAX_CHARS = 4000
     const val MAX_SOURCES = 5
     const val MAX_CANDIDATES = 4
     private const val TITLE_MAX = 90
+    private const val CORE_FACT_MAX = 500
     private const val BUTTON_LABEL_MAX = 24
 
     private val stamp: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM HH:mm")
 
     private fun h(s: String) = TopicFormatter.escapeHtml(s)
+    private fun visible(s: String) = TopicFormatter.htmlVisibleLength(s)
     private fun attr(s: String) = h(s).replace("\"", "&quot;")
     private fun link(url: String?, label: String) = if (url == null) h(label) else "<a href=\"${attr(url)}\">${h(label)}</a>"
     private fun cut(s: String, max: Int) = if (s.length <= max) s else s.take(max - 1).trimEnd() + "…"
     private fun num(v: Double) = String.format(Locale.ROOT, "%+.2f", v).replace('-', '−')
     private fun one(v: Double) = String.format(Locale.ROOT, "%.1f", v)
     private fun pct(v: Double) = String.format(Locale.ROOT, "%.0f%%", v * 100)
+    /** A Step 1 score; 0 is "not set" (older rows, a model that skipped the field). */
+    private fun score(v: Int) = if (v > 0) v.toString() else "—"
+    private fun text(s: String) = s.trim().takeIf { it.isNotEmpty() }?.let { h(it) } ?: "—"
 
-    /** The card text (Telegram HTML), at most [MAX_CHARS] characters. */
+    /** The card text (Telegram HTML), at most [MAX_CHARS] visible characters. */
     fun render(i: PostInspection): String {
         val head = mutableListOf<String>()
         val p = i.post
@@ -107,19 +115,22 @@ object PostCard {
         i.telegraphUrl?.let { head += "⚡ лонгрід: ${link(it, "Telegraph ↗")}" }
 
         val event = eventSection(i)
-        val sources = i.sources.take(MAX_SOURCES).map { sourceBlock(it) }
+        val candidates = i.sources.take(MAX_SOURCES)
         val hiddenSources = (i.sources.size - MAX_SOURCES).coerceAtLeast(0)
         val cluster = clusterLine(i)
         val audience = audienceSection(i)
         val filters = filterSection(i)
         val footer = "Своє слово: <code>/mute &lt;слово&gt; ${h(i.category)}</code>"
 
-        // Sources are the long part: drop them from the end until the card fits.
-        var shown = sources.size
+        // Sources are the long part: drop their AI summaries from the end first, then whole
+        // sources, until the card fits.
+        var shown = candidates.size
+        var withSummary = shown
         while (true) {
-            val text = assemble(head, event, sources.take(shown), hiddenSources + sources.size - shown, cluster, audience, filters, footer)
-            if (text.length <= MAX_CHARS || shown == 0) return hardCut(text)
-            shown--
+            val sources = candidates.take(shown).mapIndexed { idx, s -> sourceBlock(s, showSummary = idx < withSummary) }
+            val text = assemble(head, event, sources, hiddenSources + candidates.size - shown, cluster, audience, filters, footer)
+            if (visible(text) <= MAX_CHARS || shown == 0) return hardCut(text)
+            if (withSummary > 0) withSummary-- else shown--
         }
     }
 
@@ -148,13 +159,15 @@ object PostCard {
 
     /** Last resort: cut at a line boundary (every line is self-contained HTML). */
     private fun hardCut(text: String): String {
-        if (text.length <= MAX_CHARS) return text
-        val lines = text.lines()
+        if (visible(text) <= MAX_CHARS) return text
         val sb = StringBuilder()
-        for (l in lines) {
-            if (sb.length + l.length + 2 > MAX_CHARS) break
-            if (sb.isNotEmpty()) sb.append('\n')
+        var length = 0
+        for (l in text.lines()) {
+            val n = visible(l)
+            if (length + n + 2 > MAX_CHARS) break
+            if (sb.isNotEmpty()) { sb.append('\n'); length++ }
             sb.append(l)
+            length += n
         }
         return sb.append("\n…").toString()
     }
@@ -179,24 +192,22 @@ object PostCard {
             out += "<b>Подія</b>: немає (legacy-пост без Step 1)"
             return out
         }
-        out += "<b>Подія</b> <code>${h(key)}</code>"
         val e = i.event
         val status = statusLabel(i)
         if (e == null) {
+            out += "<b>Подія</b> <code>${h(key)}</code>"
             out += "дані події вже видалені (covered_events живе ${i.eventRetentionDays} дн.)" + (status?.let { " · статус: $it" } ?: "")
             return out
         }
-        val who = listOfNotNull(
-            e.subject.takeIf { it.isNotBlank() }?.let { h(it) },
-            e.franchise.takeIf { it.isNotBlank() && !it.equals(e.subject, ignoreCase = true) }?.let { "франшиза: ${h(it)}" }
-        )
-        if (who.isNotEmpty()) out += who.joinToString(" · ")
-        val typeCell = e.eventType.takeIf { it.isNotBlank() }?.let { "тип: ${h(EventTypeLabels.label(it))} (${h(it)})" }
-        out += listOfNotNull(typeCell, status?.let { "статус: $it" }).joinToString(" · ").ifEmpty { "тип невідомий" }
-        if (e.coreFact.isNotBlank()) out += "Факт: ${h(cut(e.coreFact, 300))}"
-        val item = itemOf(e)
-        val composite = ShortlistRanker.compositeScore(item, i.digest)
-        out += "Оцінки: newsworthiness ${e.newsworthiness.takeIf { it > 0 } ?: "—"} · digestFit ${e.digestFit.takeIf { it > 0 } ?: "—"} · " +
+        out += "<b>Подія</b> <code>${h(key)}</code>" + (status?.let { " · статус: $it" } ?: "")
+        // Step 1's fields exactly as covered_events stores them, under their own names.
+        out += "🤖 <b>Step 1</b> (covered_events)"
+        out += "subject: ${text(e.subject)}"
+        out += "franchise: ${text(e.franchise)}"
+        out += "eventType: " + if (e.eventType.isBlank()) "—" else "${h(EventTypeLabels.label(e.eventType))} (<code>${h(e.eventType)}</code>)"
+        out += "coreFact: ${text(cut(e.coreFact, CORE_FACT_MAX))}"
+        val composite = ShortlistRanker.compositeScore(itemOf(e), i.digest)
+        out += "importance ${score(e.importance)} · newsworthiness ${score(e.newsworthiness)} · digestFit ${score(e.digestFit)} · " +
             "composite ${one(composite)}"
         val why = whyPassed(i, e)
         if (why.isNotEmpty()) out += "Чому пройшла: " + why.joinToString("; ")
@@ -234,7 +245,11 @@ object PostCard {
         return out
     }
 
-    private fun sourceBlock(s: PostInspection.Source): List<String> {
+    /**
+     * One source; with [showSummary] its AI summary goes into a collapsed quote (one line, so
+     * [hardCut] never splits the tag), without it the card only says a summary exists.
+     */
+    private fun sourceBlock(s: PostInspection.Source, showSummary: Boolean = true): List<String> {
         val a = s.article
         val out = mutableListOf<String>()
         val title = a?.title?.takeIf { it.isNotBlank() } ?: s.link
@@ -251,6 +266,12 @@ object PostCard {
             out += "  опубл. ${a.pubDate.format(stamp)}$taken"
             if (a.status != ArticleStatus.PROCESSED.name || a.dropReason != null) {
                 out += "  статус: ${h(a.status)}" + (a.dropReason?.let { " · ${h(it)}" } ?: "")
+            }
+            val summary = a.summary?.replace(SPACES, " ")?.trim()?.takeIf { it.isNotEmpty() }
+            out += when {
+                summary == null -> "  🤖 AI-саммарі: немає (вимкнене або збій) — у Step 1 пішов сирий текст"
+                showSummary -> "  🤖 AI-саммарі (${summary.length} симв.):<blockquote expandable>${h(summary)}</blockquote>"
+                else -> "  🤖 AI-саммарі: є (${summary.length} симв.), не влізло в картку"
             }
         }
         s.feedStats?.takeIf { it.decided > 0 }?.let { m ->
@@ -339,6 +360,7 @@ object PostCard {
     )
 
     private val WORD = Regex("""[\p{L}\p{N}]+""")
+    private val SPACES = Regex("""\s+""")
 
     /**
      * Up to [max] mute keywords for a post: the franchise's first ` / ` segment, the subject (both

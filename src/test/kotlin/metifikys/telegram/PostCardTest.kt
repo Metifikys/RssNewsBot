@@ -10,6 +10,7 @@ import metifikys.db.EventArticleRow
 import metifikys.db.ExplicitSignal
 import metifikys.db.ReactionCount
 import metifikys.digest.MuteRegistry
+import metifikys.format.TopicFormatter
 import metifikys.story.EventCluster
 import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
@@ -48,11 +49,15 @@ class PostCardTest {
     fun `a plain post shows header, event, scores, source timing, audience and filters`() {
         val text = PostCard.render(plain())
         assertTrue(text.startsWith("🔎 🎮 gaming · 02.10 07:22 · <a href=\"https://t.me/c/9876543210/15205\">пост ↗</a>"), text)
-        assertTrue("<b>Подія</b> <code>signal_veil_announcement</code>" in text)
-        assertTrue("Signal Veil · франшиза: Signal Veil / Serafini Productions" in text)
-        assertTrue("тип: анонси (major_announcement) · статус: нова" in text)
-        assertTrue("Оцінки: newsworthiness 3 · digestFit 5 · composite 3.8" in text, text)
+        assertTrue("<b>Подія</b> <code>signal_veil_announcement</code> · статус: нова" in text, text)
+        assertTrue("🤖 <b>Step 1</b> (covered_events)" in text)
+        assertTrue("subject: Signal Veil\n" in text)
+        assertTrue("franchise: Signal Veil / Serafini Productions\n" in text)
+        assertTrue("eventType: анонси (<code>major_announcement</code>)" in text)
+        assertTrue("coreFact: Serafini Productions анонсувала survival horror Signal Veil." in text)
+        assertTrue("importance 3 · newsworthiness 3 · digestFit 5 · composite 3.8" in text, text)
         assertTrue("опубл. 01.10 22:35 → взято 02.10 05:46 (+7 год)" in text)
+        assertTrue("🤖 AI-саммарі: немає (вимкнене або збій) — у Step 1 пішов сирий текст" in text)
         assertTrue("gematsu.com · стрічка gematsu.com/feed" in text)
         assertTrue("Реакції: немає" in text)
         assertTrue("Affinity: тип major_announcement −0.07 (n 93.6/413.9)" in text, text)
@@ -104,6 +109,49 @@ class PostCardTest {
     }
 
     @Test
+    fun `an AI summary goes into a collapsed quote, unset scores and fields read as a dash`() {
+        val summarized = article.copy(summary = "Serafini Productions <b>анонсувала</b>\n\nSignal Veil.")
+        val text = PostCard.render(
+            plain().copy(
+                sources = listOf(PostInspection.Source(article.link, summarized, null, null)),
+                event = event.copy(franchise = "", importance = 0, digestFit = 0)
+            )
+        )
+        assertTrue(
+            "🤖 AI-саммарі (51 симв.):<blockquote expandable>Serafini Productions &lt;b&gt;анонсувала&lt;/b&gt; Signal Veil.</blockquote>" in text,
+            text
+        )
+        assertTrue("franchise: —\n" in text)
+        assertTrue("importance — · newsworthiness 3 · digestFit — · " in text, text)
+    }
+
+    @Test
+    fun `a summary is shown whole, and long links do not count against the limit`() {
+        // Telegram counts the text after entity parsing: hrefs and tags are free.
+        val summary = "S".repeat(748)
+        val sources = (1..3).map { n ->
+            val link = "https://site$n.com/${"x".repeat(900)}"
+            PostInspection.Source(link, article.copy(link = link, summary = summary), null, null)
+        }
+        val text = PostCard.render(plain().copy(sources = sources))
+        assertTrue(text.length > PostCard.MAX_CHARS, "the raw HTML is over the limit: ${text.length}")
+        assertEquals(3, Regex("<blockquote expandable>$summary</blockquote>").findAll(text).count(), text)
+        assertFalse("…</blockquote>" in text)
+    }
+
+    @Test
+    fun `an over-long card drops the AI summaries before it drops sources`() {
+        val sources = (1..5).map { n ->
+            PostInspection.Source("https://site$n.com/a", article.copy(link = "https://site$n.com/a", summary = "S".repeat(1000)), null, null)
+        }
+        val text = PostCard.render(plain().copy(sources = sources))
+        assertTrue(TopicFormatter.htmlVisibleLength(text) <= PostCard.MAX_CHARS, "${TopicFormatter.htmlVisibleLength(text)}")
+        assertFalse("… ще" in text, "every source stays")
+        assertTrue("<blockquote expandable>" in text, "the first summaries still fit")
+        assertTrue("🤖 AI-саммарі: є (1000 симв.), не влізло в картку" in text, text)
+    }
+
+    @Test
     fun `missing data degrades to short notes instead of failing`() {
         val legacy = plain().copy(post = post.copy(eventKey = null), event = null, step1Status = null, affinity = emptyList(),
             sources = listOf(PostInspection.Source("https://x.com/gone", null, null, null)))
@@ -135,7 +183,7 @@ class PostCardTest {
             PostInspection.Source("https://site$n.com/${"x".repeat(150)}", article.copy(title = "T".repeat(200)), "feed $n", null)
         }
         val text = PostCard.render(plain().copy(sources = many))
-        assertTrue(text.length <= PostCard.MAX_CHARS, "${text.length}")
+        assertTrue(TopicFormatter.htmlVisibleLength(text) <= PostCard.MAX_CHARS, "${TopicFormatter.htmlVisibleLength(text)}")
         assertTrue("… ще" in text)
         assertTrue(text.contains("<b>Фільтри</b>"), "sections after the sources survive")
     }

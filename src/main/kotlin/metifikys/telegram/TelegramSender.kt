@@ -597,7 +597,7 @@ class TelegramSender(
         silent: Boolean = false,
         html: Boolean = false
     ): Long? {
-        val body = cutForAdmin(text)
+        val body = cutForAdmin(text, html)
         fun attempt(t: String, parseMode: String?): SendResult = post(
             "sendMessage",
             json.encodeToString(
@@ -611,7 +611,7 @@ class TelegramSender(
         )
         return when (val res = attempt(body, if (html) "HTML" else null)) {
             is SendResult.Ok -> res.ref.messageId
-            is SendResult.BadRequest -> if (html) (attempt(body.htmlToPlainText(), null) as? SendResult.Ok)?.ref?.messageId else null
+            is SendResult.BadRequest -> if (html) (attempt(cutForAdmin(body.htmlToPlainText()), null) as? SendResult.Ok)?.ref?.messageId else null
             is SendResult.Transient -> null
         }
     }
@@ -627,7 +627,7 @@ class TelegramSender(
         keyboard: List<List<InlineButton>>? = null,
         html: Boolean = false
     ): EditResult {
-        val body = cutForAdmin(text)
+        val body = cutForAdmin(text, html)
         fun attempt(t: String, parseMode: String?): SendResult = post(
             "editMessageText",
             json.encodeToString(EditKeyboardMessageRequest(chatId, messageId, t, parseMode, true, keyboard?.toMarkup())),
@@ -640,7 +640,7 @@ class TelegramSender(
         }
         classify(attempt(body, if (html) "HTML" else null))?.let { return it }
         if (!html) return EditResult.NOT_FOUND
-        return classify(attempt(body.htmlToPlainText(), null)) ?: EditResult.NOT_FOUND
+        return classify(attempt(cutForAdmin(body.htmlToPlainText()), null)) ?: EditResult.NOT_FOUND
     }
 
     /** Swaps (or with a null [keyboard] removes) the inline keyboard of a message, text untouched. */
@@ -712,9 +712,14 @@ class TelegramSender(
         return chunks
     }
 
-    /** One admin message's worth of [text], never cutting an astral character's surrogate pair. */
-    private fun cutForAdmin(text: String): String {
+    /**
+     * One admin message's worth of [text], never cutting an astral character's surrogate pair.
+     * [html] is measured as Telegram counts it (tags and `href`s are free), so a card that fits
+     * on screen is never cut mid-tag.
+     */
+    private fun cutForAdmin(text: String, html: Boolean = false): String {
         if (text.length <= ADMIN_TEXT_MAX) return text
+        if (html && TopicFormatter.htmlVisibleLength(text) <= ADMIN_TEXT_MAX) return text
         var end = ADMIN_TEXT_MAX - 1
         if (text[end - 1].isHighSurrogate()) end--
         return text.substring(0, end) + "…"
@@ -736,5 +741,6 @@ class TelegramSender(
             .replace("<b>", "").replace("</b>", "")
             .replace("<i>", "").replace("</i>", "")
             .replace("<code>", "").replace("</code>", "")
+            .replace("<blockquote expandable>", "").replace("<blockquote>", "").replace("</blockquote>", "")
             .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
 }

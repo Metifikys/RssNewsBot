@@ -75,7 +75,9 @@ data class ArticleRecord(
     val pubDate: LocalDateTime,
     val fetchedAt: LocalDateTime?,
     val status: String,
-    val dropReason: String?
+    val dropReason: String?,
+    /** The per-article LLM summary ([metifikys.fetch.ArticleSummarizer]); null = not summarized (off or failed). */
+    val summary: String? = null
 )
 
 /** Ingested articles and their UNPROCESSED → PROCESSING → PROCESSED / DUPLICATE lifecycle. */
@@ -417,7 +419,7 @@ internal class ArticleRepository : ArticleStore {
         if (wanted.isEmpty()) return emptyList()
         val byLink = transaction {
             val a = ArticlesTable
-            a.select(a.id, a.category, a.title, a.link, a.feedUrl, a.pubDate, a.fetchedAt, a.status, a.dropReason)
+            a.select(a.id, a.category, a.title, a.link, a.feedUrl, a.pubDate, a.fetchedAt, a.status, a.dropReason, a.summary)
                 .where { a.link inList wanted }
                 .associate {
                     it[a.link] to ArticleRecord(
@@ -429,7 +431,8 @@ internal class ArticleRepository : ArticleStore {
                         pubDate = it[a.pubDate],
                         fetchedAt = it[a.fetchedAt],
                         status = it[a.status],
-                        dropReason = it[a.dropReason]
+                        dropReason = it[a.dropReason],
+                        summary = it[a.summary]
                     )
                 }
         }

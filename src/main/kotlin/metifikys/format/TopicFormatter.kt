@@ -124,6 +124,17 @@ object TopicFormatter {
             .replace("<", "&lt;")
             .replace(">", "&gt;")
 
+    private val HTML_TAG = Regex("<[^>]*>")
+
+    /**
+     * How long Telegram counts [html] against its message limit — "after entities parsing":
+     * tags (with their `href`s) are free and an escape counts as the one character it stands for.
+     */
+    fun htmlVisibleLength(html: String): Int =
+        HTML_TAG.replace(html, "")
+            .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
+            .length
+
     /**
      * [escapeHtml] plus `"` → `&quot;`, for a double-quoted attribute value (`href`): a raw quote
      * would end the attribute early and Telegram rejects the message ("can't parse entities").
