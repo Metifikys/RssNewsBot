@@ -157,6 +157,34 @@ class CodexCliTest {
     }
 
     @Test
+    fun `truncated prompt echo on stderr stays out of the detail and the health report`() {
+        // 2026-10-10 prod: codex echoed a cut copy of the prompt to stderr (the tail marker can't
+        // match it), then a warning and the API error twice — the alert showed article text.
+        val prompt = "The iPhone camera has a variable aperture and nice bokeh because the sensor is big enough"
+        val error = """ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account."}}"""
+        val cmd = shim(
+            winBody = "echo The iPhone camera has a variable aperture 1>&2\r\n" +
+                "echo warning: Model metadata for `gpt-6-luna` not found. 1>&2\r\n" +
+                "echo $error 1>&2\r\necho $error 1>&2\r\nexit /b 1",
+            shBody = "echo 'The iPhone camera has a variable aperture' >&2\n" +
+                "echo 'warning: Model metadata for `gpt-6-luna` not found.' >&2\n" +
+                "cat >&2 <<'EOF'\n$error\n$error\nEOF\nexit 1"
+        )
+        val reports = mutableListOf<String?>()
+        val cli = CodexCli(endpoint(), command = cmd, timeoutSeconds = 30, maxRetries = 0,
+            health = CliOutcomeSink { _, _, detail -> reports += detail })
+        val ex = assertThrows<NonRetryableCliException> { cli.complete("sys", prompt) }
+        assertTrue(ex.message?.contains("model problem") == true, "got: ${ex.message}")
+        assertTrue(ex.message?.contains("iPhone") != true, "prompt echo leaked into detail: ${ex.message}")
+        val detail = reports.single()!!
+        assertEquals(
+            "ERROR: The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.",
+            detail.lineSequence().first()
+        )
+        assertEquals(2, detail.lines().size, "one deduplicated error + the warning: $detail")
+    }
+
+    @Test
     fun `auth error after the echoed prompt is still non-retryable`() {
         val prompt = "summarize these articles"
         val cmd = shim(

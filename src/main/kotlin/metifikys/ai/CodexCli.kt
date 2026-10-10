@@ -264,11 +264,16 @@ class CodexCli(
             // prompt left in, "login … run" / "model … not found" in article text turned transient
             // failures into NonRetryable auth/model verdicts, and the 2000-char detail was all
             // prompt — the real error never reached the log (2026-09-08/09).
+            // Newer codex versions echo a (truncated) copy of the prompt to stderr, where the tail
+            // marker can't find it — so when the CLI printed its own `ERROR:` lines, those alone are
+            // classified and reported; otherwise the de-echoed output as before (2026-10-10: a
+            // bad model's alert showed article text instead of "model is not supported").
             val stdout = stripPromptEcho(stdoutBuf.toString(), prompt).trim()
-            val stderr = stderrBuf.toString().trim()
+            val stderr = stripPromptEcho(stderrBuf.toString(), prompt).trim()
             val combined = listOf(stdout, stderr).filter { it.isNotBlank() }.joinToString("\n").trim()
-            val detail = combined.ifBlank { "<no output>" }.takeLast(2000)
-            val failure = CliErrorClassifier.classifyCodex(combined)
+            val own = errorLines(combined).ifBlank { combined }
+            val detail = own.ifBlank { "<no output>" }.takeLast(2000)
+            val failure = CliErrorClassifier.classifyCodex(own)
             health?.report("codex", CliHealthMonitor.stateOf(failure), detail)
             when (failure) {
                 CliFailure.LIMIT ->
@@ -308,6 +313,21 @@ class CodexCli(
         return if (idx >= 0) stdout.substring(idx + marker.length) else stdout
     }
 
+    /**
+     * The CLI's own `ERROR:` lines, deduplicated, each reduced to the API's `"message"` when it
+     * carries a JSON error body, then the `warning:` lines; blank when no `ERROR:` line was printed
+     * (warnings alone are not an error report).
+     */
+    private fun errorLines(output: String): String {
+        val lines = output.lineSequence().map { it.trim() }
+        val errors = lines.filter { it.startsWith("ERROR:") }
+            .map { line -> JSON_MESSAGE.find(line)?.let { "ERROR: " + it.groupValues[1].replace("\\\"", "\"") } ?: line }
+            .distinct().toList()
+        if (errors.isEmpty()) return ""
+        val warnings = lines.filter { it.startsWith("warning:") }.distinct().toList()
+        return (errors + warnings).joinToString("\n")
+    }
+
     /** Last [limit] chars of the combined stdout/stderr, for the timeout message. */
     private fun outputTail(stdout: StringBuilder, stderr: StringBuilder, limit: Int = 1500): String {
         val combined = listOf(stdout.toString().trim(), stderr.toString().trim())
@@ -315,5 +335,10 @@ class CodexCli(
             .joinToString("\n")
             .trim()
         return combined.ifBlank { "<no output>" }.takeLast(limit)
+    }
+
+    private companion object {
+        /** The `"message"` of an API error body printed on an `ERROR:` line. */
+        val JSON_MESSAGE = Regex(""""message"\s*:\s*"((?:[^"\\]|\\.)*)"""")
     }
 }
