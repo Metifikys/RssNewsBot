@@ -10,23 +10,13 @@ if (!keyMatch) { console.error('no OpenRouter key found in config'); process.exi
 const API_KEY = keyMatch[1];
 
 const MODELS = [
-  'inclusionai/ling-3.0-flash-fin:free',
-  'dots-studio/dots-3-note-preview:free',
-  'liquid/lfm-2.5-2.6b:free',
-  'nvidia/nemotron-3.5-lightning:free',
-  'thinkingmachines/inkling-small:free',
-  'poolside/laguna-s-2.1:free',
-  'thinkingmachines/inkling:free',
-  'poolside/laguna-xs-2.1:free',
-  'cohere/north-mini-code:free',
-  'z-ai/glm-5.2:free',
-  'nvidia/nemotron-3-ultra-550b-a55b:free',
-  'minimax/minimax-m3:free',
-  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
-  'google/gemma-4-26b-a4b-it:free',
-  'google/gemma-4-31b-it:free',
-  'minimax/minimax-m2.7:free',
-  'nvidia/nemotron-3-super-120b-a12b:free',   // current prod summarize model
+  'apodex/apodex-1.1-mini:free',
+  'inclusionai/ling-3.0-flash-sante:free',
+  'qwen/qwen3.8-27b:free',
+  'nvidia/nemotron-3.5-lightning:free',       // re-test: provider error all day 2026-08-28
+  'google/gemma-4-26b-a4b-it:free',           // re-test
+  'google/gemma-4-31b-it:free',               // re-test
+  'nvidia/nemotron-3-ultra-550b-a55b:free',   // baseline (current ladder head)
 ].filter(m => !modelFilter || m.includes(modelFilter));
 
 const input = JSON.parse(readFileSync(inputPath, 'utf8'));

@@ -169,3 +169,55 @@ Per article Jev answers three questions: `keep` (noul), `kind` (17-way choice), 
 $0.09 total, p50 370 ms. Gate `keep < 0.1` removes 50 % of tech junk / 61 % of gaming junk
 at ≤ 4 % loss of shortlisted items; science needs `keep < 0.2` (37 % of junk, zero loss).
 Most "lost" items were reviews/previews/opinion that Step 1 let through against its own policy.
+
+### Laya (local, open-weights "Jev clone") — 2026-09-23
+
+`convaiinnovations/laya` (ModernBERT-large 421M + `multilingual/` mmBERT-base 322M), run locally
+on the RTX 5080 with the checkpoint's own `rl_agent_api.RLAgent`. Same 1500 items and
+byte-identical requests (`laya-dump.mjs` → `requests.jsonl`; `laya-bench.py` writes the
+jev-bench row shape, so `jev-analyze.mjs` scores it). Env: isolated `C:\Users\user\laya-test`
+(uv + Python 3.12 + torch cu128). Result: AUC of `keep` 0.55 (english) / 0.49 (multilingual)
+with our questions, 0.68 / 0.55 with short README-style questions (`requests-short.jsonl`),
+vs Jev 0.86–0.90. No usable gate threshold; english checkpoint scores Cyrillic items ~0.
+Fast (p50 25 ms english / 16 ms multilingual on GPU) but not good enough for us.
+
+### Vega 0.8B (local "decision model", `vega-bench.py`) — 2026-10-10
+
+`nandakishorm/vega-08b-public-intents`: a frozen Qwen3.5-0.8B read at layers 13/19 plus a 57 MB
+"physics engine" head, Jev-shaped API (`choice` / `boolean` / `score`; our `noul` is sent as
+`boolean`, `fit` = expected score 0–3). Same 1500 items and requests as Laya, run with the
+checkpoint's own `vega_api.Vega` in the `C:\Users\user\laya-test` venv (model under `laya-test\vega`,
+backbone in its HF cache, `HF_HOME=C:\Users\user\laya-test\hf`; no Triton / fla on Windows, the torch
+fallbacks are enough: p50 128–158 ms per item on the RTX 5080).
+
+```bash
+HF_HOME=C:/Users/user/laya-test/hf python bench/vega-bench.py bench/results/2026-09-18-jev/requests.jsonl \
+    bench/results/2026-09-18-jev/vega-08b.jsonl C:/Users/user/laya-test/vega [device] [views] [adapters]
+```
+
+Result: no signal. AUC of `keep` 0.45–0.50 with our questions (`vega-08b-report.md`), 0.50–0.65 with the
+short ones (`vega-08b-short-report.md`), 0.52–0.58 with the adapters forced on and two views
+(`vega-08b-short-v2-on-report.md`); `fit` 0.54–0.70. Jev: 0.86–0.90, Laya-short 0.66–0.72, the
+embedding classifier 0.90. The shipped `public_intents` adapter (banking / e-mail routing) never
+gates on for our questions; `kind` collapses to `update_patch` / `other`, and the `keep` probability
+sits at 0.75–0.92 for everything with the long questions and below 0.01 with the short ones, so there
+is no threshold to gate on. The card itself says Jev leads on most of its benchmarks; ours is one of them.
+
+### Embedding classifier (`emb-clf.py`) — 2026-09-23
+
+Logistic regression on the `article_embeddings` we already store (text-embedding-3-small,
+title + summary|description), labels = Step 1 verdicts, time split train < 08-20 ≤ val < 08-24
+≤ test; thresholds picked on val. tech/gaming only (science has no embeddings). Report:
+`results/2026-09-23-emb/report.md`. Test AUC 0.90 (tech) / 0.91 (gaming). Gate at ~1.5 % loss of
+kept items removes 47 % / 44 % of junk (40 % / 26 % of Step 1 input). Head-to-head on the same
+bench items in the test window: tech 0.87 vs Jev 0.89, gaming 0.945 vs Jev 0.887. Zero cost,
+no extra call; host one-hot adds little.
+Low-loss points (`emb-clf-lowloss.py`, thresholds from 5-fold time OOF on all pre-test data,
+report `results/2026-09-23-emb/lowloss.md`): tech target 0.5 % → 1/775 kept lost, 32 % junk
+dropped, −26 % Step 1 input; gaming target 0.25 % → 0/727 lost, 25 % junk, −15 % input.
+Frozen check on fresh prod data (`emb-clf-frozen.py`, 2026-09-23): model refit from the
+2026-09-05 DB copy on decisions 08-06..08-23 (the 09-02 snapshot was overwritten; sanity on the
+old test window matches), saved as `results/2026-09-23-emb/model-frozen-train-lt-2026-08-24.npz`,
+scored without refit on decisions 09-03..09-23 (`frozen-eval.md`): AUC 0.889 tech / 0.884 gaming.
+tech @0.5 %: 11/1602 kept lost (8 of them historical-curiosity items), 33 % junk, −28 % input;
+tech @0.25 %: 2/1602, 22 % junk, −18 %. gaming @0.25 %: 2/1476, 16 % junk, −9 %; @1 %: 0.95 %, 33 %.

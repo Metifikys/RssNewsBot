@@ -82,6 +82,7 @@ archive/
 bench/results/**/*.npz
 bench/results/**/requests*.jsonl
 bench/results/**/laya-*.jsonl
+bench/results/**/vega-*.jsonl
 
 ### Operator data: personal preferences and the sites actually read ###
 mute-suggestions.yaml
