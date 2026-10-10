@@ -106,6 +106,7 @@ class NewsBot(
     // (and fetcher.privateHostAllowlist) — never for a link that merely came out of a feed.
     articleFetcher: ArticleFetcher = ArticleFetcher(
         UrlGuard.forConfig(config),
+        maxPageTextLength = config.fetcher.summarizeInputChars,
         hostThrottle = SHARED_HOST_THROTTLE,
         scrubRules = TextScrubRules.load(config.fetcher.scrubRulesFile)
     ),

@@ -38,11 +38,13 @@ class ArticleSummarizer(
             return article
         }
         val sysPrompt = cat?.summarizePrompt ?: DEFAULT_PROMPT
+        // The page text (up to fetcher.summarizeInputChars), not the 1500-char stored description.
+        val content = article.pageText?.takeIf { it.isNotBlank() } ?: article.description
         val userPrompt = buildString {
             append("Title: ").appendLine(article.title)
             appendLine()
             appendLine("Content:")
-            append(article.description)
+            append(content)
         }
         val ep = client.endpoint
         return try {
@@ -51,7 +53,7 @@ class ArticleSummarizer(
                 logger.warn { "[Summarize] blank output for ${article.link} via $provider [${ep.model}@${ep.baseUrl}]" }
                 article
             } else {
-                logger.info { "[Summarize] ${article.link} via $provider [${ep.model}@${ep.baseUrl}] → ${out.length} chars" }
+                logger.info { "[Summarize] ${article.link} via $provider [${ep.model}@${ep.baseUrl}] ${content.length} → ${out.length} chars" }
                 article.copy(summary = out)
             }
         } catch (e: BillingException) {

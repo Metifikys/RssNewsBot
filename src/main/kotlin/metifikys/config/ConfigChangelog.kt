@@ -70,6 +70,7 @@ object ConfigChangelog {
         Entry("factCheck", "2026-09-23", "🧐 sampled log-only LLM judge of sent posts vs. their sources, fact_checks + /status line (needs judge; prompts/factcheck.example.yaml)"),
         Entry("admin.inspect", "2026-10-02", "/inspect, pasted post links and forwards → a card about the post with 🔇 keyword / event-type buttons (on with admin.commands)"),
         Entry("categories.*.dedup.digest.updateDiff", "2026-10-02", "a meaningful_update is posted only with facts absent from the earlier posts (LLM diff; start with logOnly: true; render prompt needs newFacts)"),
+        Entry("fetcher.summarizeInputChars", "2026-10-08", "per-article summarize reads up to this much page text (default 12000) instead of the 1500-char stored description"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */

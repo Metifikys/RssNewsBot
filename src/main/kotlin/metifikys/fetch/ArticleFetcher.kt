@@ -1,6 +1,7 @@
 package metifikys.fetch
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import metifikys.config.FetcherConfig
 import metifikys.log.RunContext
 import metifikys.model.Article
 import okhttp3.OkHttpClient
@@ -40,6 +41,8 @@ class ArticleFetcher(
     private val minDescriptionLength: Int = 50,
     /** Maximum characters of extracted text to store as the enriched description. */
     private val maxContentLength: Int = 1500,
+    /** Maximum characters of extracted text kept in [Article.pageText] for the summarizer (`fetcher.summarizeInputChars`). */
+    private val maxPageTextLength: Int = FetcherConfig.DEFAULT_SUMMARIZE_INPUT_CHARS,
     /**
      * Per-host gate shared with [RssFetcher]. Defaults to a private instance so standalone /
      * test construction keeps working; production passes the fetcher's own so feed and page
@@ -220,10 +223,8 @@ class ArticleFetcher(
                 logger.info { "[ArticleFetcher] Preview image for '${article.link}': $image" }
             }
 
-            article.copy(
-                description = if (text.isNullOrBlank()) article.description else text.take(maxContentLength),
-                imageUrl = image ?: article.imageUrl
-            )
+            val enriched = if (text.isNullOrBlank()) article else withText(article, text)
+            enriched.copy(imageUrl = image ?: article.imageUrl)
         } catch (e: Exception) {
             logFetchFailure(article.link, "content+image", e)
             article
@@ -257,7 +258,7 @@ class ArticleFetcher(
             val markdown = fetchMarkdownNew(article.link)?.let { cleanExtractedText(it, article.link) }?.takeIf { it.isNotBlank() }
             if (markdown != null) {
                 logger.info { "[ArticleFetcher] Enriched via markdown.new '${article.link}' (${markdown.length} chars)" }
-                return article.copy(description = markdown.take(maxContentLength))
+                return withText(article, markdown)
             }
 
             // Strategy 2: Fallback to Jsoup HTML extraction; when body extraction yields
@@ -274,13 +275,17 @@ class ArticleFetcher(
                 article
             } else {
                 logger.info { "[ArticleFetcher] Enriched via Jsoup '${article.link}' (${extracted.length} chars)" }
-                article.copy(description = extracted.take(maxContentLength))
+                withText(article, extracted)
             }
         } catch (e: Exception) {
             logFetchFailure(article.link, "content", e)
             article
         }
     }
+
+    /** The stored [Article.description] gets [maxContentLength]; the summarizer's [Article.pageText] gets [maxPageTextLength]. */
+    internal fun withText(article: Article, text: String): Article =
+        article.copy(description = text.take(maxContentLength), pageText = text.take(maxPageTextLength))
 
     /**
      * Page text of [url] for a long-form render (`post.longForm`), cut to [maxChars] — the same

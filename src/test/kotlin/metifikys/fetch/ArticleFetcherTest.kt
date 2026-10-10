@@ -17,6 +17,18 @@ class ArticleFetcherTest {
     private val base = "https://example.com/story"
 
     @Test
+    fun `extracted text - description keeps 1500 chars, the summarizer's pageText keeps the page`() {
+        val article = metifikys.model.Article("tech", "T", base, "rss teaser")
+        val text = "a".repeat(9000)
+        val out = fetcher.withText(article, text)
+        assertEquals(1500, out.description.length)
+        assertEquals(9000, out.pageText?.length)
+
+        val capped = ArticleFetcher(UrlGuard.OFF, enforceUrlValidation = false, maxPageTextLength = 4000).withText(article, text)
+        assertEquals(4000, capped.pageText?.length)
+    }
+
+    @Test
     fun `extractOgImage returns og image when present`() {
         val html = """
             <html><head>

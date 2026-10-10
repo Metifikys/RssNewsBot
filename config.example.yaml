@@ -122,6 +122,8 @@ fetcher:
   pathScopedThrottleHosts: []           # converter hosts throttled per route, e.g. ["192.168.77.7:1200"] (RSSHub)
   privateHostAllowlist: []              # extra LAN hosts the SSRF guard allows, e.g. ["nas.lan"];
                                         # feed hosts are trusted automatically
+  summarizeInputChars: 12000            # article text a feed's `summarize:` model reads (min 1500);
+                                        # the stored description and Step 1 keep 1500
 
 processing:
   staleTimeoutHours: 3

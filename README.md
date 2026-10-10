@@ -107,7 +107,9 @@ via a `/status` admin snapshot.
   against the fallback (e.g. Claude CLI → Codex CLI). Distinct from A/B (`extractAlternate`) and
   backpressure (`batchFallback`).
 - **Per-article summarization** — opt-in per feed; stored on `articles.summary` and used by
-  downstream prompts in place of the raw RSS description.
+  downstream prompts in place of the raw RSS description. The model reads up to
+  `fetcher.summarizeInputChars` (12000) of the extracted page text, while the stored description
+  stays cut at 1500.
 - **Inline prompt overrides** — `dedup.prompts.extractSystem/extractUser/renderSystem/renderUser`
   take priority over the prompt file.
 

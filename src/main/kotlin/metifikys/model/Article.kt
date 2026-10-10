@@ -24,7 +24,13 @@ data class Article(
      * Ephemeral — not persisted. Article page text refetched right before render for a
      * long-form event (`post.longForm`); the renderer uses it instead of [promptText].
      */
-    val fullText: String? = null
+    val fullText: String? = null,
+    /**
+     * Ephemeral — not persisted. Page text extracted at enrichment, cut to
+     * `fetcher.summarizeInputChars` instead of the 1500-char [description] cut: the
+     * per-article summarizer reads the article, not just its first 1500 characters.
+     */
+    val pageText: String? = null
 ) {
     /** Parsed [metaJson]; null when absent or malformed. */
     fun meta(): ArticleMeta? = ArticleMeta.parse(metaJson)

@@ -844,8 +844,19 @@ data class FetcherConfig(
      * `host:port`). Every other fetch — article pages, repoint targets, redirects, discovery,
      * badges — is refused on a non-public address. Empty (default) = only the feed hosts.
      */
-    val privateHostAllowlist: List<String> = emptyList()
-)
+    val privateHostAllowlist: List<String> = emptyList(),
+    /**
+     * How much of an enriched article's page text the per-article summarizer reads. The stored
+     * description (and so Step 1 for an unsummarized article) stays cut at 1500 characters; the
+     * summarizer used to see only those, while the median page is ~9K. A free OpenRouter model
+     * is limited by requests, not tokens, so a longer input costs nothing there.
+     */
+    val summarizeInputChars: Int = DEFAULT_SUMMARIZE_INPUT_CHARS
+) {
+    companion object {
+        const val DEFAULT_SUMMARIZE_INPUT_CHARS = 12_000
+    }
+}
 
 /**
  * Deserializes a [FeedConfig] from either a plain string (URL only) or an object
@@ -2074,6 +2085,9 @@ object ConfigLoader {
                 "fetcher.maxConcurrentFetches must be >= 1 (got ${f.maxConcurrentFetches})"
             }
             require(f.maxAttempts >= 1) { "fetcher.maxAttempts must be >= 1 (got ${f.maxAttempts})" }
+            require(f.summarizeInputChars >= 1500) {
+                "fetcher.summarizeInputChars must be >= 1500, the stored description length (got ${f.summarizeInputChars})"
+            }
             for (entry in f.privateHostAllowlist) {
                 try {
                     metifikys.fetch.UrlGuard.parseTrustEntry(entry)
