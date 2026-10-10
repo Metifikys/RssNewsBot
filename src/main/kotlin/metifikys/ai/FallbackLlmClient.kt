@@ -11,7 +11,7 @@ private val logger = KotlinLogging.logger {}
 /**
  * Decorator that routes a call to [primary]; if the primary throws a failover-worthy
  * exception, it logs a WARN and retries the SAME call against [fallback]. This is a
- * genuine on-failure fallback — distinct from the A/B alternation (`extractAlternate`)
+ * genuine on-failure fallback — distinct from the weighted `providers:` split
  * and the queue-backpressure routing (`batchFallback`), neither of which reacts to a
  * provider actually failing.
  *

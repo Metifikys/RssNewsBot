@@ -219,42 +219,6 @@ class EventExtractorTest {
     }
 
     @Test
-    fun `extract sends every second request to alternate provider`() {
-        val openRouter = mockk<OpenAI>()
-        every { openRouter.isBatchCapable } returns false
-        extractor = EventExtractor(openAI, promptLoader, db, alternateOpenAI = openRouter)
-        every { promptLoader.resolve(any()) } returns okResolved
-        every { promptLoader.substitute(any(), any()) } answers { firstArg() }
-        every { db.fetchRecentEvents(any(), any(), any()) } returns emptyList()
-        every { openAI.completeJson(any(), any(), any()) } returns """
-        {
-          "extractions": [],
-          "shortlist": [
-            {"eventKey":"primary","coreFact":"x","url":"https://a.com/1","status":"new"}
-          ]
-        }
-        """.trimIndent()
-        every { openRouter.completeJson(any(), any(), any()) } returns """
-        {
-          "extractions": [],
-          "shortlist": [
-            {"eventKey":"alternate","coreFact":"x","url":"https://a.com/1","status":"new"}
-          ]
-        }
-        """.trimIndent()
-
-        val first = extractor.extract("games", cat(), listOf(article("https://a.com/1")))
-        val second = extractor.extract("games", cat(), listOf(article("https://a.com/1")))
-        val third = extractor.extract("games", cat(), listOf(article("https://a.com/1")))
-
-        assertEquals("primary", assertIs<ExtractOutcome.Ready>(first).result.shortlist.single().eventKey)
-        assertEquals("alternate", assertIs<ExtractOutcome.Ready>(second).result.shortlist.single().eventKey)
-        assertEquals("primary", assertIs<ExtractOutcome.Ready>(third).result.shortlist.single().eventKey)
-        verify(exactly = 2) { openAI.completeJson(any(), any(), any()) }
-        verify(exactly = 1) { openRouter.completeJson(any(), any(), any()) }
-    }
-
-    @Test
     fun `extract serializes covered events and substitutes into user prompt`() {
         every { promptLoader.resolve(any()) } returns okResolved
         val captured = slot<Map<String, String>>()

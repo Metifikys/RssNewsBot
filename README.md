@@ -84,7 +84,7 @@ via a `/status` admin snapshot.
 ### LLM rendering & routing (see [§4](#llm-routing--multi-provider-support))
 - **Multi-provider**: OpenAI / Anthropic / OpenRouter plus the subscription-billed Claude CLI
   (`claude -p`) and Codex CLI (`codex exec`), mixable per category and per use case
-  (`extract`, `extractAlternate`, `render`, `batch`, `summarize`, `batchFallback`).
+  (`extract`, `render`, `batch`, `summarize`, `batchFallback`, `persona`, `updateDiff`, …).
 - **OpenRouter model ladder** — `openrouter.models` is a priority list walked on failure, so a
   withdrawn free-tier model fails over to the next instead of taking the use case down.
 - **Bounded Step-1 prompt** — `dedup.extractMaxArticles` / `extractMaxPromptChars` keep the
@@ -92,8 +92,10 @@ via a `/status` admin snapshot.
 - **Audience feedback loop** (`feedback:` block) — channel reactions aggregate into an affinity
   table that can re-rank the shortlist (`ranker.reactionWeight`) and brief the extract prompt
   (`{{AUDIENCE_SIGNALS}}`), log-only until switched on.
-- **A/B alternation on Step 1** — when both `extract` and `extractAlternate` are set, every
-  second extract request goes to the "B" side.
+- **Weighted provider split** — any slot can be `{ providers: [ { percent, provider, model }, … ] }`:
+  every call goes to one entry so the day's calls follow the percents exactly (20/10/70 → 2/1/7
+  per 10 calls, interleaved). Tallies are per category + slot in `bot_state`, survive a restart,
+  reset at local midnight. Replaces the old Step 1 A/B (`extractAlternate`) — a 50/50 split.
 - **🌓 Shadow mode** (`llm.shadow`) — a "B" model and/or prompt file runs on exactly the input
   of the live "A" (Step 1: same batch and covered context; render: A's shortlist), in parallel
   on its own thread; only A is posted. Both outputs pass the same post-processing and land in
@@ -104,7 +106,7 @@ via a `/status` admin snapshot.
   `SHADOW_EXTRACT` / `SHADOW_RENDER`.
 - **On-failure fallback** — any sync slot can carry a nested `fallback` provider+model; when the
   primary call fails (usage limit, expired login, bad model, timeout) the same call is retried
-  against the fallback (e.g. Claude CLI → Codex CLI). Distinct from A/B (`extractAlternate`) and
+  against the fallback (e.g. Claude CLI → Codex CLI). Distinct from the weighted split (`providers:`) and
   backpressure (`batchFallback`).
 - **Per-article summarization** — opt-in per feed; stored on `articles.summary` and used by
   downstream prompts in place of the raw RSS description. The model reads up to
@@ -641,11 +643,11 @@ What happens with the result:
   smuggled in RSS titles or descriptions.)
 - **Empty shortlist** → all input articles are marked `PROCESSED` and the cycle skips Step 2.
 
-**A/B alternation.** When both `llm.extract` and `llm.extractAlternate` are configured,
-`EventExtractor` flips between them on a per-request counter — every second extract request
-goes to the "B" side. When only `extract` is set, alternation is suppressed (legacy
-behaviour). When neither is set, the global default is `openai` (plus OpenRouter as
-the auto-derived alternate when an `openrouter:` block exists).
+**Provider split.** `llm.extract` may be a weighted `providers:` split (see §4); a 50/50 split is
+the old A/B pair. Without an `extract` override the default is a built-in 50/50 split of
+`openai` and the OpenRouter `models:` ladder when an `openrouter:` block exists, else `openai`
+alone. A batch submitted by a `batch: true` entry is polled back through the entry matching its
+batch id (`msgbatch_…` = Anthropic) — polling does not count as a pick.
 
 ### Layer 4 — Editorial ranker + meaningful-update cooldown
 
@@ -747,28 +749,53 @@ Three providers, six use cases, all per-category overridable.
 
 | Use case             | Default                                      | Overridable? | Batch-capable provider? |
 |----------------------|----------------------------------------------|--------------|--------------------------|
-| `extract`            | OpenAI (`openai.model`)                      | yes          | OpenAI ✓, Anthropic ✓    |
-| `extractAlternate`   | auto: OpenRouter when configured             | yes          | OpenAI ✓, Anthropic ✓    |
+| `extract`            | 50/50 OpenAI + OpenRouter ladder (else OpenAI) | yes        | OpenAI ✓, Anthropic ✓    |
 | `render`             | OpenRouter when configured, else OpenAI      | yes          | n/a (sync)               |
 | `batch`              | OpenAI (`openai.batchModel`)                 | yes          | OpenAI ✓, Anthropic ✓    |
 | `summarize`          | per-feed `summarize:` provider               | yes          | n/a (sync)               |
 | `batchFallback`      | none                                         | yes          | n/a (sync)               |
 
-Any sync slot (`extract`, `extractAlternate`, `render`, `summarize`, `batchFallback`) may also
+Any sync slot (`extract`, `render`, `summarize`, `batchFallback`, `persona`, `updateDiff`) may also
 carry a nested `fallback: { provider, model }` — an on-failure secondary tried when the primary
 call fails (usage limit, expired login, bad model, exhausted-retry timeout). Sync-only, may chain
-(depth ≤ 3), and independent of the A/B `extractAlternate` and the backpressure `batchFallback`.
+(depth ≤ 3), and independent of the weighted split and the backpressure `batchFallback`.
+
+**Weighted split.** Any slot (also `batch`, `shadow.*`, `factCheck.judge`) may instead list
+several overrides with a share each:
+
+```yaml
+llm:
+  summarize:
+    providers:
+      - { percent: 20, provider: openai,     model: gpt-5-mini-2025-08-07 }
+      - { percent: 10, provider: anthropic,  model: claude-haiku-4-5-20251001 }
+      - { percent: 70, provider: openrouter }          # no model = the openrouter.models ladder
+```
+
+Every call of the slot goes to the entry furthest below its share of today's calls (ties → the
+earlier entry), so 20/10/70 gives exactly 2/1/7 per 10 calls, interleaved, no randomness. The
+tally is per category + slot (`persona` / `updateDiff` count apart from `render` even when they
+inherit its split), stored in `bot_state` under `llm_split:<category>/<slot>`, survives a
+restart and starts over at local midnight. An entry is a full override — its own `batch`,
+`fallback`, model. On `summarize` the feed's value wins: a feed with `summarize: auto` goes through the
+category's `llm.summarize` (split or plain; none = the global sync default), a feed naming a
+provider (`summarize: openrouter`) stays on it — the category override or the split's entry on
+that provider only refines its model, without a pick. It replaces `extractAlternate`
+(a config still carrying it is rejected with a hint).
 
 Validation rules enforced at config load:
 
-- `provider: openrouter` is rejected on `batch` / `extract.batch=true` /
-  `extractAlternate.batch=true` (OpenRouter has no compatible Batch API).
+- `provider: openrouter` is rejected on `batch` / `extract.batch=true` (also inside a split)
+  (OpenRouter has no compatible Batch API).
 - `provider: anthropic` requires the top-level `anthropic:` block.
 - `provider: openrouter` requires the top-level `openrouter:` block.
-- `extractAlternate` without `extract` is rejected — it is the "B" side of an A/B pair.
+- `extractAlternate` is rejected — write `extract: { providers: [...] }` with two 50% entries.
+- A `providers:` split: percents 1..100 summing to exactly 100, no provider/model/fallback of its
+  own, no nested split, no provider+model listed twice; each entry is validated like a plain
+  override. `percent` outside a split is rejected.
 - A `fallback` must differ from its slot's primary and from every other link in the chain
   (cycles rejected), may not exceed depth 3, and may not set `batch: true`.
-- `fallback` is rejected on the `batch` slot and on a `batch: true` extract/extractAlternate
+- `fallback` is rejected on the `batch` slot and on a `batch: true` extract
   leg — the async Batch API path has no sync fallback.
 - `summarize: openrouter` / `summarize: anthropic` on a feed requires the matching
   top-level block.
@@ -1104,7 +1131,7 @@ feeds:                    # plain string OR object form
   - https://example.com/feed
   - url: https://other.com/feed
     fetchFullContent: true
-    summarize: openai     # openai | openrouter | anthropic
+    summarize: openai     # auto (= llm.summarize) | openai | openrouter | anthropic | claudecli | codexcli
     label: "Other News"   # name in the feed-health section / report (default: host + path)
   - url: http://rsshub.lan:1200/telegram/channel/studio
     kind: social          # article | social | release | video — converted / platform feeds
@@ -1121,7 +1148,7 @@ summarizePrompt: …        # for feeds with summarize: set
 
 llm:                      # per-use-case provider+model overrides
   extract:          { provider: …, model: …, batch: true|false }
-  extractAlternate: { provider: …, model: …, batch: true|false }
+                    # any slot instead: { providers: [ { percent: 70, provider: …, model: … }, … ] }  # weighted daily split
   render:           { provider: …, model: …, fallback: { provider: …, model: … } }  # nested on-failure fallback (sync slots)
   batch:            { provider: …, model: … }    # openai|anthropic only
   summarize:        { provider: …, model: … }

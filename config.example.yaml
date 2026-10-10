@@ -446,14 +446,23 @@ categories:
     feeds:
       - https://kotaku.com/feed
     # Per-use-case provider + model (provider = a top-level block). Omitted slots use the defaults.
-    # README → "LLM routing" explains each slot, A/B, fallback and batch.
+    # Any slot may instead be a weighted split: `providers:` entries with a `percent` (sum 100);
+    # the day's calls follow the shares, tallies survive a restart and reset at local midnight.
+    # An entry without `model` on openrouter = the openrouter.models ladder.
+    # README → "LLM routing" explains each slot, the split, fallback and batch.
     llm:
-      extract:          { provider: openai,     model: gpt-5-mini-2025-08-07 }
-      extractAlternate: { provider: anthropic,  model: claude-haiku-4-5-20251001, batch: true }   # B side of Step 1 A/B
+      extract:                          # was extract + extractAlternate (A/B): now a 50/50 split
+        providers:
+          - { percent: 50, provider: openai,    model: gpt-5-mini-2025-08-07 }
+          - { percent: 50, provider: anthropic, model: claude-haiku-4-5-20251001, batch: true }
       render:           { provider: openrouter, model: x-ai/grok-4,
                           fallback: { provider: anthropic, model: claude-haiku-4-5-20251001 } }  # on failure only
       batch:            { provider: openai,     model: gpt-5-mini-2025-08-07 }                   # openai | anthropic
-      summarize:        { provider: openai,     model: gpt-5-mini-2025-08-07 }
+      summarize:                        # used by feeds with `summarize: auto`; a feed naming a provider stays on it
+        providers:
+          - { percent: 20, provider: openai,     model: gpt-5-mini-2025-08-07 }
+          - { percent: 10, provider: anthropic,  model: claude-haiku-4-5-20251001 }
+          - { percent: 70, provider: openrouter }                                             # models: ladder
       batchFallback:    { provider: anthropic,  model: claude-haiku-4-5-20251001 }               # sync, under backpressure
       persona:          { provider: openrouter, model: "provider/your-free-model" }              # post.persona remark
       updateDiff:       { provider: openrouter, model: "provider/your-free-model" }              # dedup.digest.updateDiff check
@@ -537,4 +546,4 @@ categories:
       - url: https://www.pravda.com.ua/rss/
         label: "Українська правда"
         fetchFullContent: false         # true = fetch the article body before summarizing
-        summarize: ""                   # per-article summary: openai | openrouter | anthropic | claudecli | codexcli; "" = RSS text
+        summarize: ""                   # per-article summary: auto (= llm.summarize) | openai | openrouter | anthropic | claudecli | codexcli; "" = RSS text

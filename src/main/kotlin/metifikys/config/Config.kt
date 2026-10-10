@@ -746,7 +746,7 @@ data class AnthropicConfig(
 /**
  * Optional Claude CLI provider. When this block is present, categories may opt into
  * the local `claude -p` CLI (Claude Code print mode) for any sync LLM use case
- * (extract / extractAlternate / render / summarize / batchFallback) via
+ * (extract / render / summarize / batchFallback / …) via
  * [CategoryLlmOverrides], and feeds may declare `summarize: claudecli`. There is no
  * `apiKey` — the subprocess authenticates with the machine's existing `claude` login.
  * The Batch API is NOT supported (a CLI has no batch endpoint), so `llm.batch:
@@ -764,7 +764,7 @@ data class ClaudeCliConfig(
 /**
  * Optional Codex CLI provider. When this block is present, categories may opt into
  * the local `codex exec` CLI (OpenAI Codex non-interactive mode) for any sync LLM use
- * case (extract / extractAlternate / render / summarize / batchFallback) via
+ * case (extract / render / summarize / batchFallback / …) via
  * [CategoryLlmOverrides], and feeds may declare `summarize: codexcli`. There is no
  * `apiKey` — the subprocess authenticates with the machine's existing `codex` login.
  * The Batch API is NOT supported (a CLI has no batch endpoint), so `llm.batch:
@@ -925,7 +925,11 @@ class FeedConfigDeserializer : JsonDeserializer<FeedConfig>() {
 data class FeedConfig(
     val url: String,
     val fetchFullContent: Boolean = false,
-    /** When set, each article from this feed is summarized via the named provider before DB insert. */
+    /**
+     * When set, each article from this feed is summarized before DB insert: a provider name pins that
+     * provider (it wins over the category's `llm.summarize`, which may only refine its model); `auto`
+     * leaves the choice to `llm.summarize` — including a weighted `providers:` split.
+     */
     val summarize: String? = null,
     /** Human name in the feed-health `/status` section and report, and in the Step 1 source hint. */
     val label: String? = null,
@@ -951,7 +955,9 @@ data class FeedConfig(
     val repointLinks: Boolean = false
 ) {
     companion object {
-        val SUMMARIZE_PROVIDERS = setOf("openai", "openrouter", "anthropic", "claudecli", "codexcli")
+        /** `summarize: auto` — the category's `llm.summarize` (plain or a `providers:` split) picks the model. */
+        const val SUMMARIZE_AUTO = "auto"
+        val SUMMARIZE_PROVIDERS = setOf("openai", "openrouter", "anthropic", "claudecli", "codexcli", SUMMARIZE_AUTO)
 
         const val KIND_ARTICLE = "article"
         const val KIND_SOCIAL = "social"
@@ -1005,7 +1011,7 @@ data class CategoryConfig(
      * `llm.batchFallback` when that override is configured. Use it for categories that must
      * publish immediately, or that route through a sync-only provider such as the Claude CLI
      * (`provider: claudecli`), which has no Batch API. Conflicts with any batch override
-     * (`llm.batch`, or `batch: true` on `extract`/`extractAlternate`) and is rejected at load
+     * (`llm.batch`, or `batch: true` on `extract`) and is rejected at load
      * time if combined with one. Defaults to false — categories batch as before.
      */
     val skipBatch: Boolean = false,
@@ -1528,8 +1534,10 @@ data class HashtagsConfig(
 
 /**
  * Lightweight reference to a provider+model: `provider` names a top-level block
- * (`openai` or `openrouter`); `model` is the model id passed to that endpoint.
- * `batch=true` opts the `extract`/`extractAlternate` use cases into the Batch API
+ * (`openai` or `openrouter`); `model` is the model id passed to that endpoint. A blank
+ * `model` is allowed for `openrouter` (= the `openrouter.models` failover ladder) and the
+ * CLI providers (= the CLI's default model).
+ * `batch=true` opts the `extract` use case into the Batch API
  * (50% cost, async). Silently ignored on `render`/`batch`/`summarize`/`batchFallback`
  * — those fields encode batch-ness via their field name. Default `false` ⇒ zero
  * migration; all existing YAMLs are unchanged.
@@ -1537,19 +1545,35 @@ data class HashtagsConfig(
  * [fallback] is the on-actual-failure secondary for this slot: when the primary call
  * fails (usage/credit limit, expired login, bad model, exhausted-retry timeout), the
  * SAME call is retried against the fallback provider+model. Honored on the sync use
- * cases only (`render` / `extract` / `extractAlternate` / `summarize` / `batchFallback`)
+ * cases only (`render` / `extract` / `summarize` / `batchFallback` / …)
  * and wired in by [metifikys.ai.LlmClientsFactory] via [metifikys.ai.FallbackLlmClient].
- * Distinct from the queue-backpressure `batchFallback` slot and the A/B `extractAlternate`
- * slot — neither of those reacts to a provider actually failing. May chain (a fallback may
+ * Distinct from the queue-backpressure `batchFallback` slot and the weighted [providers]
+ * split — neither of those reacts to a provider actually failing. May chain (a fallback may
  * itself have a fallback, up to a small depth); each link must differ from the others and
  * may not set `batch=true` (the fallback always runs on the sync path).
+ *
+ * [providers] turns the slot into a weighted split instead of one provider: every call of
+ * the slot goes to one entry, chosen so that the day's calls follow the entries' [percent]
+ * shares (20/10/70 → of 10 calls exactly 2/1/7). The tallies live in `bot_state` per
+ * category + slot, survive a restart and start over at local midnight — see
+ * [metifikys.ai.LlmSplitter]. An entry is a full override of its own (`batch`, `fallback`,
+ * blank `model` for the OpenRouter ladder); a split itself carries only `providers`.
+ * On `summarize` the feed decides first: `summarize: auto` routes through this override (split
+ * included), a provider name pins that provider and uses only the entry on it.
  */
 data class LlmOverride(
-    val provider: String,
-    val model: String,
+    val provider: String = "",
+    val model: String = "",
     val batch: Boolean = false,
-    val fallback: LlmOverride? = null
-)
+    val fallback: LlmOverride? = null,
+    /** This entry's share of the slot's calls, 1..100 — only on an entry of [providers]. */
+    val percent: Int? = null,
+    /** Weighted split across several overrides (percents sum to 100); null = a single provider. */
+    val providers: List<LlmOverride>? = null
+) {
+    /** The concrete overrides this slot may route to: the split's entries, or this override itself. */
+    fun legs(): List<LlmOverride> = providers ?: listOf(this)
+}
 
 /**
  * Per-use-case overrides inside a category. Any null field falls back to the
@@ -1558,10 +1582,9 @@ data class LlmOverride(
 data class CategoryLlmOverrides(
     val extract: LlmOverride? = null,
     /**
-     * Explicit "B" side of the Step 1 A/B pair. When both `extract` and `extractAlternate`
-     * are set, every second extract request is routed here (full alternation). When only
-     * `extract` is set, alternation is suppressed (legacy behavior). Setting this without
-     * `extract` is a misconfiguration and is rejected at load time.
+     * Removed: the Step 1 A/B pair is now `extract: { providers: [...] }` with two 50% entries.
+     * Kept only so a config still carrying it fails at load with that hint instead of an
+     * "unrecognized field".
      */
     val extractAlternate: LlmOverride? = null,
     val render: LlmOverride? = null,
@@ -1593,8 +1616,8 @@ data class CategoryLlmOverrides(
 /**
  * `llm.shadow`: a "B" model and/or prompt runs on exactly the input the live "A" gets, in parallel,
  * and only A reaches the channel; both outputs land in `shadow_runs` for a side-by-side look
- * (`bench/shadow-dump.mjs`, `/status` 🌓 line). Unlike `extractAlternate` (every second request
- * goes to B and is published), both sides see the same batch and nothing of B is published.
+ * (`bench/shadow-dump.mjs`, `/status` 🌓 line). Unlike a `providers:` split (each call
+ * goes to one side, and that one is published), both sides see the same batch and nothing of B is published.
  *
  * [extract] shadows Step 1 (same articles and covered context, B's own prompt); [render] shadows
  * Step 2 on A's shortlist, so a render prompt change is judged on the same events. B's output goes
@@ -2046,7 +2069,7 @@ object ConfigLoader {
         config.factCheck.takeIf { it.enabled }?.let { fc ->
             val judge = requireNotNull(fc.judge) { "factCheck.judge is required when factCheck.enabled (provider + model of the judge)" }
             validateOverride("factCheck", "judge", judge, config.openrouter, config.anthropic, config.claudeCli, config.codexCli)
-            require(!judge.batch) { "factCheck.judge: batch=true is not supported — the judge runs synchronously" }
+            require(judge.legs().none { it.batch }) { "factCheck.judge: batch=true is not supported — the judge runs synchronously" }
             require(fc.sampleRate in 0.0..1.0) { "factCheck.sampleRate must be in [0.0, 1.0] (got ${fc.sampleRate})" }
             require(fc.retentionDays >= 1) { "factCheck.retentionDays must be >= 1 (got ${fc.retentionDays})" }
             require(fc.queueSize >= 1) { "factCheck.queueSize must be >= 1 (got ${fc.queueSize})" }
@@ -2480,25 +2503,17 @@ object ConfigLoader {
                 }
             }
             category.llm?.let { ovr ->
-                validateOverride(name, "extract", ovr.extract, openRouter, anthropic, config.claudeCli, config.codexCli)
-                validateOverride(name, "extractAlternate", ovr.extractAlternate, openRouter, anthropic, config.claudeCli, config.codexCli)
-                require(ovr.extractAlternate == null || ovr.extract != null) {
-                    "Category '$name' llm.extractAlternate is set but llm.extract is not — extractAlternate is the 'B' side of an A/B pair and requires the 'A' side"
+                require(ovr.extractAlternate == null) {
+                    "Category '$name' llm.extractAlternate was replaced by a weighted split — write " +
+                        "llm.extract: { providers: [ { percent: 50, provider: …, model: … }, { percent: 50, provider: …, model: … } ] }"
                 }
-                ovr.extract?.let { e ->
+                validateOverride(name, "extract", ovr.extract, openRouter, anthropic, config.claudeCli, config.codexCli)
+                ovr.extract?.legs()?.forEach { e ->
                     require(!(e.batch && e.provider in setOf("openrouter", "claudecli", "codexcli"))) {
                         "Category '$name' llm.extract: batch=true is not supported for provider '${e.provider}' (no Batch API)"
                     }
                     require(!(e.batch && e.fallback != null)) {
                         "Category '$name' llm.extract: a fallback together with batch=true is inert — the batch leg runs async and never uses the sync fallback. Drop one."
-                    }
-                }
-                ovr.extractAlternate?.let { e ->
-                    require(!(e.batch && e.provider in setOf("openrouter", "claudecli", "codexcli"))) {
-                        "Category '$name' llm.extractAlternate: batch=true is not supported for provider '${e.provider}' (no Batch API)"
-                    }
-                    require(!(e.batch && e.fallback != null)) {
-                        "Category '$name' llm.extractAlternate: a fallback together with batch=true is inert — the batch leg runs async and never uses the sync fallback. Drop one."
                     }
                 }
                 validateOverride(name, "render", ovr.render, openRouter, anthropic, config.claudeCli, config.codexCli)
@@ -2516,20 +2531,14 @@ object ConfigLoader {
                     }
                     validateOverride(name, "shadow.extract", s.extract, openRouter, anthropic, config.claudeCli, config.codexCli)
                     validateOverride(name, "shadow.render", s.render, openRouter, anthropic, config.claudeCli, config.codexCli)
-                    require(s.extract?.batch != true && s.render?.batch != true) {
+                    require(listOfNotNull(s.extract, s.render).flatMap { it.legs() }.none { it.batch }) {
                         "Category '$name' llm.shadow: batch=true is not supported — the shadow runs synchronously next to the live call"
                     }
                     require(s.sampleRate in 0.0..1.0) { "Category '$name' llm.shadow.sampleRate must be in [0.0, 1.0] (got ${s.sampleRate})" }
                     require(s.queueSize >= 1) { "Category '$name' llm.shadow.queueSize must be >= 1 (got ${s.queueSize})" }
                     require(s.promptFile == null || s.promptFile.isNotBlank()) { "Category '$name' llm.shadow.promptFile must not be blank" }
-                    if (ovr.extractAlternate != null && s.extract != null) {
-                        logger.warn {
-                            "Category '$name' sets both llm.extractAlternate (every second Step 1 goes to B and is PUBLISHED) " +
-                                "and llm.shadow.extract — consider dropping extractAlternate: the shadow compares on the same batch"
-                        }
-                    }
                 }
-                ovr.batch?.let { b ->
+                ovr.batch?.legs()?.forEach { b ->
                     require(b.provider in setOf("openai", "anthropic")) {
                         "Category '$name' llm.batch: batch override only supports provider: openai or anthropic (OpenRouter, Claude CLI, and Codex CLI have no Batch API)"
                     }
@@ -2541,11 +2550,8 @@ object ConfigLoader {
                     require(ovr.batch == null) {
                         "Category '$name' sets skipBatch: true but also configures llm.batch — remove one (skipBatch means the category never uses the Batch API)"
                     }
-                    require(ovr.extract?.batch != true) {
+                    require(ovr.extract?.legs()?.none { it.batch } != false) {
                         "Category '$name' sets skipBatch: true but also llm.extract.batch: true — skipBatch means no Batch API at all"
-                    }
-                    require(ovr.extractAlternate?.batch != true) {
-                        "Category '$name' sets skipBatch: true but also llm.extractAlternate.batch: true — skipBatch means no Batch API at all"
                     }
                 }
             }
@@ -2758,9 +2764,21 @@ object ConfigLoader {
         openRouter: OpenRouterConfig?,
         anthropic: AnthropicConfig?,
         claudeCli: ClaudeCliConfig?,
-        codexCli: CodexCliConfig?
+        codexCli: CodexCliConfig?,
+        /** True for an entry of a `providers:` split — the one place a `percent` belongs. */
+        splitEntry: Boolean = false
     ) {
         if (ovr == null) return
+        ovr.providers?.let { entries ->
+            validateSplit(category, useCase, ovr, entries)
+            entries.forEachIndexed { i, e ->
+                validateOverride(category, "$useCase.providers[$i]", e, openRouter, anthropic, claudeCli, codexCli, splitEntry = true)
+            }
+            return
+        }
+        require(splitEntry || ovr.percent == null) {
+            "Category '$category' llm.$useCase: percent is only meaningful on an entry of a providers: split"
+        }
         validateOverrideNode(category, useCase, ovr, openRouter, anthropic, claudeCli, codexCli)
         // On-failure fallback chain: each link must be a valid sync override, must not repeat
         // a provider+model already in the chain (cycle), and must not run deeper than
@@ -2776,6 +2794,30 @@ object ConfigLoader {
         }
     }
 
+    /**
+     * The shape of a `providers:` split: no provider of its own, entries that are plain overrides
+     * with a 1..100 percent summing to exactly 100, and no two entries on the same provider+model
+     * (they would share one tally). The entries themselves are validated by the caller.
+     */
+    private fun validateSplit(category: String, useCase: String, split: LlmOverride, entries: List<LlmOverride>) {
+        require(split.provider.isBlank() && split.model.isBlank() && !split.batch && split.fallback == null && split.percent == null) {
+            "Category '$category' llm.$useCase: a providers: split takes no provider/model/batch/fallback/percent of its own — put them on the entries"
+        }
+        require(entries.isNotEmpty()) { "Category '$category' llm.$useCase: providers: must list at least one entry" }
+        entries.forEachIndexed { i, e ->
+            require(e.providers == null) { "Category '$category' llm.$useCase.providers[$i]: a split cannot nest another providers: split" }
+            val p = requireNotNull(e.percent) { "Category '$category' llm.$useCase.providers[$i]: percent is required" }
+            require(p in 1..100) { "Category '$category' llm.$useCase.providers[$i]: percent must be in 1..100 (got $p)" }
+        }
+        val sum = entries.sumOf { it.percent ?: 0 }
+        require(sum == 100) { "Category '$category' llm.$useCase: providers percents must sum to 100 (got $sum)" }
+        val dup = entries.groupBy { splitKeyOf(it) }.filterValues { it.size > 1 }.keys
+        require(dup.isEmpty()) { "Category '$category' llm.$useCase: providers lists ${dup.joinToString()} more than once — merge their percents" }
+    }
+
+    /** Same identity as [metifikys.ai.LlmSplitter.legKey]: provider/model, plus the batch flag. */
+    private fun splitKeyOf(ovr: LlmOverride): String = keyOf(ovr) + if (ovr.batch) "+batch" else ""
+
     /** Validates a single override in isolation (provider name, required block, model). */
     private fun validateOverrideNode(
         category: String,
@@ -2789,8 +2831,8 @@ object ConfigLoader {
         require(ovr.provider in setOf("openai", "openrouter", "anthropic", "claudecli", "codexcli")) {
             "Category '$category' llm.$useCase: provider must be 'openai', 'openrouter', 'anthropic', 'claudecli', or 'codexcli', got '${ovr.provider}'"
         }
-        // The CLI providers are the ones where a blank model is valid (it means "CLI default").
-        require(ovr.provider == "claudecli" || ovr.provider == "codexcli" || ovr.model.isNotBlank()) {
+        // A blank model is valid for the CLI providers ("CLI default") and OpenRouter (the `models:` ladder).
+        require(ovr.provider in setOf("claudecli", "codexcli", "openrouter") || ovr.model.isNotBlank()) {
             "Category '$category' llm.$useCase: model must not be blank"
         }
         if (ovr.provider == "openrouter") {

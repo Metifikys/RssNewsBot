@@ -751,70 +751,133 @@ class ConfigLoaderBranchesTest {
         assertTrue(ex.message!!.contains("requires top-level anthropic"))
     }
 
+    /** A config whose `sports` category carries [llm] (indented YAML under `llm:`), with all provider blocks. */
+    private fun splitYaml(llm: String) = """
+telegram:
+  botToken: "t"
+openai:
+  apiKey: "sk"
+openrouter:
+  apiKey: "or"
+  model: "or-m"
+anthropic:
+  apiKey: "ak"
+  model: "claude"
+database:
+  path: "/tmp/test.db"
+scheduler:
+  intervalMinutes: 60
+categories:
+  sports:
+    emoji: "⚽"
+    channelId: "@sports"
+    feeds:
+      - https://example.com/rss
+    llm:
+""".trimStart() + llm.trimIndent().prependIndent("      ")
+
     @Test
-    fun `llm extractAlternate without extract throws`() {
-        val yaml = """
-            telegram:
-              botToken: "t"
-            openai:
-              apiKey: "sk"
-            openrouter:
-              apiKey: "or"
-              model: "or-m"
-            database:
-              path: "/tmp/test.db"
-            scheduler:
-              intervalMinutes: 60
-            categories:
-              sports:
-                emoji: "⚽"
-                channelId: "@sports"
-                feeds:
-                  - https://example.com/rss
-                llm:
-                  extractAlternate:
-                    provider: "openrouter"
-                    model: "or-x"
-        """.trimIndent()
-        val ex = assertThrows<IllegalArgumentException> { load(yaml) }
-        assertTrue(ex.message!!.contains("extractAlternate is set but llm.extract is not"))
+    fun `llm extractAlternate is rejected with a hint to the providers split`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(splitYaml("""
+                extract: { provider: openai, model: gpt-a }
+                extractAlternate: { provider: anthropic, model: claude-b }
+            """))
+        }
+        assertTrue(ex.message!!.contains("extractAlternate was replaced by a weighted split"))
     }
 
     @Test
-    fun `llm extract and extractAlternate together pass`() {
-        val yaml = """
-            telegram:
-              botToken: "t"
-            openai:
-              apiKey: "sk"
-            anthropic:
-              apiKey: "ak"
-              model: "claude"
-            database:
-              path: "/tmp/test.db"
-            scheduler:
-              intervalMinutes: 60
-            categories:
-              sports:
-                emoji: "⚽"
-                channelId: "@sports"
-                feeds:
-                  - https://example.com/rss
-                llm:
-                  extract:
-                    provider: "openai"
-                    model: "gpt-a"
-                  extractAlternate:
-                    provider: "anthropic"
-                    model: "claude-b"
-        """.trimIndent()
-        val cfg = load(yaml)
+    fun `llm providers split on any slot passes and keeps entries in order`() {
+        val cfg = load(splitYaml("""
+            summarize:
+              providers:
+                - { percent: 20, provider: openai, model: gpt-5-mini }
+                - { percent: 10, provider: anthropic, model: claude-haiku }
+                - { percent: 70, provider: openrouter }
+            render:
+              providers:
+                - { percent: 50, provider: openai, model: gpt-a }
+                - { percent: 50, provider: openrouter, model: or-x, fallback: { provider: openai, model: gpt-b } }
+        """))
         val ovr = cfg.categories["sports"]?.llm
         assertNotNull(ovr)
-        assertEquals("openai", ovr.extract?.provider)
-        assertEquals("gpt-a", ovr.extract?.model)
-        assertEquals("anthropic", ovr.extractAlternate?.provider)
-        assertEquals("claude-b", ovr.extractAlternate?.model)
+        assertEquals(listOf(20, 10, 70), ovr.summarize?.providers?.map { it.percent })
+        assertEquals(listOf("openai", "anthropic", "openrouter"), ovr.summarize?.legs()?.map { it.provider })
+        assertEquals("", ovr.summarize?.providers?.last()?.model)
+        assertEquals("gpt-b", ovr.render?.providers?.last()?.fallback?.model)
+    }
+
+    @Test
+    fun `llm providers split percents must sum to 100`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(splitYaml("""
+                render:
+                  providers:
+                    - { percent: 50, provider: openai, model: gpt-a }
+                    - { percent: 40, provider: openrouter }
+            """))
+        }
+        assertTrue(ex.message!!.contains("must sum to 100 (got 90)"))
+    }
+
+    @Test
+    fun `llm providers split entry needs a percent`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(splitYaml("""
+                render:
+                  providers:
+                    - { percent: 100, provider: openai, model: gpt-a }
+                    - { provider: openrouter }
+            """))
+        }
+        assertTrue(ex.message!!.contains("providers[1]: percent is required"))
+    }
+
+    @Test
+    fun `llm providers split rejects a provider of its own and duplicate entries`() {
+        val own = assertThrows<IllegalArgumentException> {
+            load(splitYaml("""
+                render:
+                  provider: openai
+                  model: gpt-a
+                  providers:
+                    - { percent: 100, provider: openai, model: gpt-a }
+            """))
+        }
+        assertTrue(own.message!!.contains("takes no provider/model/batch/fallback/percent of its own"))
+        val dup = assertThrows<IllegalArgumentException> {
+            load(splitYaml("""
+                render:
+                  providers:
+                    - { percent: 50, provider: openai, model: gpt-a }
+                    - { percent: 50, provider: openai, model: gpt-a }
+            """))
+        }
+        assertTrue(dup.message!!.contains("more than once"))
+    }
+
+    @Test
+    fun `llm providers split entries are validated like a plain override`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(splitYaml("""
+                render:
+                  providers:
+                    - { percent: 50, provider: openai, model: "" }
+                    - { percent: 50, provider: openrouter }
+            """))
+        }
+        assertTrue(ex.message!!.contains("render.providers[0]: model must not be blank"))
+    }
+
+    @Test
+    fun `percent outside a providers split throws`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(splitYaml("""
+                render: { provider: openai, model: gpt-a, percent: 50 }
+            """))
+        }
+        assertTrue(ex.message!!.contains("percent is only meaningful on an entry of a providers: split"))
     }
 
     @Test
@@ -1341,109 +1404,42 @@ class ConfigLoaderBranchesTest {
     }
 
     @Test
-    fun `extractAlternate batch=true with openrouter provider throws`() {
-        val yaml = """
-            telegram:
-              botToken: "t"
-            openai:
-              apiKey: "sk"
-            openrouter:
-              apiKey: "or"
-              model: "or-m"
-            database:
-              path: "/tmp/test.db"
-            scheduler:
-              intervalMinutes: 60
-            categories:
-              sports:
-                emoji: "⚽"
-                channelId: "@sports"
-                feeds:
-                  - https://example.com/rss
-                llm:
-                  extract:
-                    provider: "openai"
-                    model: "gpt-a"
-                  extractAlternate:
-                    provider: "openrouter"
-                    model: "or-x"
-                    batch: true
-        """.trimIndent()
-        val ex = assertThrows<IllegalArgumentException> { load(yaml) }
+    fun `extract split entry batch=true with openrouter provider throws`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(splitYaml("""
+                extract:
+                  providers:
+                    - { percent: 50, provider: openai, model: gpt-a }
+                    - { percent: 50, provider: openrouter, model: or-x, batch: true }
+            """))
+        }
         assertTrue(ex.message!!.contains("batch=true is not supported for provider 'openrouter'"))
     }
 
     @Test
-    fun `mixed mode extract batch=true extractAlternate batch=false passes`() {
-        val yaml = """
-            telegram:
-              botToken: "t"
-            openai:
-              apiKey: "sk"
-            anthropic:
-              apiKey: "ak"
-              model: "claude"
-            database:
-              path: "/tmp/test.db"
-            scheduler:
-              intervalMinutes: 60
-            categories:
-              sports:
-                emoji: "⚽"
-                channelId: "@sports"
-                feeds:
-                  - https://example.com/rss
-                llm:
-                  extract:
-                    provider: "anthropic"
-                    model: "claude-batch"
-                    batch: true
-                  extractAlternate:
-                    provider: "openai"
-                    model: "gpt-sync"
-        """.trimIndent()
-        val cfg = load(yaml)
+    fun `mixed mode extract split with a batch and a sync entry passes`() {
+        val cfg = load(splitYaml("""
+            extract:
+              providers:
+                - { percent: 50, provider: anthropic, model: claude-batch, batch: true }
+                - { percent: 50, provider: openai, model: gpt-sync }
+        """))
         val ovr = cfg.categories["sports"]?.llm
         assertNotNull(ovr)
-        assertEquals(true, ovr.extract?.batch)
-        assertEquals(false, ovr.extractAlternate?.batch)
+        assertEquals(listOf(true, false), ovr.extract?.legs()?.map { it.batch })
     }
 
     @Test
-    fun `both extract and extractAlternate batch=true with anthropic passes`() {
-        val yaml = """
-            telegram:
-              botToken: "t"
-            openai:
-              apiKey: "sk"
-            anthropic:
-              apiKey: "ak"
-              model: "claude"
-            database:
-              path: "/tmp/test.db"
-            scheduler:
-              intervalMinutes: 60
-            categories:
-              sports:
-                emoji: "⚽"
-                channelId: "@sports"
-                feeds:
-                  - https://example.com/rss
-                llm:
-                  extract:
-                    provider: "anthropic"
-                    model: "claude-a"
-                    batch: true
-                  extractAlternate:
-                    provider: "anthropic"
-                    model: "claude-b"
-                    batch: true
-        """.trimIndent()
-        val cfg = load(yaml)
-        val ovr = cfg.categories["sports"]?.llm
-        assertNotNull(ovr)
-        assertEquals(true, ovr.extract?.batch)
-        assertEquals(true, ovr.extractAlternate?.batch)
+    fun `skipBatch rejects a batch=true entry inside an extract split`() {
+        val ex = assertThrows<IllegalArgumentException> {
+            load(splitYaml("""
+                extract:
+                  providers:
+                    - { percent: 50, provider: anthropic, model: claude-a, batch: true }
+                    - { percent: 50, provider: openai, model: gpt-a }
+            """).replace("    llm:\n", "    skipBatch: true\n    llm:\n"))
+        }
+        assertTrue(ex.message!!.contains("skipBatch: true but also llm.extract.batch: true"))
     }
 
     // ─── OpenRouter `models:` priority ladder ───

@@ -100,6 +100,17 @@ class FeedConfigDeserializerTest {
     }
 
     @Test
+    fun `object with summarize auto parses`() {
+        val feed = parse(
+            """
+            url: "https://example.com/rss"
+            summarize: auto
+            """
+        )
+        assertEquals(FeedConfig.SUMMARIZE_AUTO, feed.summarize)
+    }
+
+    @Test
     fun `object with blank summarize collapses to null`() {
         val feed = parse(
             """

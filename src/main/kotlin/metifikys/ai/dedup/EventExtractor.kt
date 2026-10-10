@@ -33,7 +33,6 @@ import metifikys.model.effectiveNewsworthiness
 import java.time.Duration
 import java.time.LocalDateTime
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.atomic.AtomicLong
 
 private val logger = KotlinLogging.logger {}
 
@@ -93,9 +92,6 @@ data class Step1Evaluation(
  * - `{{CURRENT_BATCH_JSON}}` — serialized input articles (0-based indexing in the prompt).
  * - `{{PREVIOUSLY_COVERED_EVENTS_JSON}}` — structured events already covered in prior cycles.
  *
- * When [alternateOpenAI] is configured, every second request is sent there so Step 1 can
- * A/B test OpenAI against an alternate provider such as OpenRouter.
- *
  * Returns an [ExtractionResult] with a shortlist of events to be rendered by Step 2.
  * Returns null (without throwing) for any parse/network failure — the caller should
  * fall back to the legacy single-step flow for that category. [BillingException] is
@@ -106,8 +102,6 @@ class EventExtractor(
     private val promptLoader: PromptLoader,
     private val db: NewsDatabase,
     private val json: Json = defaultJson,
-    private val alternateOpenAI: LlmClient? = null,
-    private val requestCounter: AtomicLong = AtomicLong(0),
     /** With `enabled`, every Step 1 result is also recorded as story clusters (`event_articles`). */
     private val storyIntel: StoryIntelConfig = StoryIntelConfig(),
     /** "Now" of the post-processing (cooldown, posts cap, anti-bubble, row stamps); golden tests pin it. */
@@ -148,12 +142,6 @@ class EventExtractor(
          */
         @EncodeDefault(EncodeDefault.Mode.NEVER)
         val source: String? = null
-    )
-
-    private data class SelectedClient(
-        val client: LlmClient,
-        val providerLabel: String,
-        val requestNumber: Long
     )
 
     private data class CooldownDrop(
@@ -233,18 +221,16 @@ class EventExtractor(
         )
         val userPrompt = promptLoader.substitute(prompts.extractUser, vars)
         val systemPrompt = promptLoader.substitute(prompts.extractSystem, vars)
-        val selectedClient = selectClient()
 
         logger.info {
-            "[Category:$category][Dedup] Step 1 request#${selectedClient.requestNumber} " +
-                "via ${selectedClient.providerLabel}: articles=${articles.size}, " +
+            "[Category:$category][Dedup] Step 1: articles=${articles.size}, " +
                 "coveredContext=${covered.size}, promptBytes=${userPrompt.length}"
         }
 
         // Batch path: submit asynchronously, return PendingBatch for the caller to handle
-        if (selectedClient.client.isBatchCapable) {
+        if (openAI.isBatchCapable) {
             val articleLinksStr = articles.map { it.link }.joinToString("\n")
-            val future = selectedClient.client.submitExtractBatch(
+            val future = openAI.submitExtractBatch(
                 category = category,
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
@@ -255,11 +241,11 @@ class EventExtractor(
 
         // Sync path. llm.shadow.extract: B gets the same batch and context now, on its own thread;
         // it is handed A's answer (or null) whatever happens below, and never delays A.
-        val shadowHandle = startShadow(category, cat, articles, coveredRows, vars, prompts, selectedClient.client)
+        val shadowHandle = startShadow(category, cat, articles, coveredRows, vars, prompts, openAI)
         var aRaw: String? = null
         try {
             val raw = try {
-                selectedClient.client.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt, maxRetry = 3)
+                openAI.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt, maxRetry = 3)
             } catch (e: BillingException) {
                 throw e
             } catch (e: InterruptedException) {
@@ -269,7 +255,7 @@ class EventExtractor(
                 throw e
             } catch (e: Exception) {
                 logger.warn(e) {
-                    "[Category:$category][Dedup] Step 1 LLM call failed via ${selectedClient.providerLabel} - falling back to legacy"
+                    "[Category:$category][Dedup] Step 1 LLM call failed - falling back to legacy"
                 }
                 return ExtractOutcome.FallbackToLegacy
             }
@@ -277,7 +263,7 @@ class EventExtractor(
 
             if (raw.isBlank()) {
                 logger.warn {
-                    "[Category:$category][Dedup] Step 1 returned blank content via ${selectedClient.providerLabel} - falling back to legacy"
+                    "[Category:$category][Dedup] Step 1 returned blank content - falling back to legacy"
                 }
                 return ExtractOutcome.FallbackToLegacy
             }
@@ -681,24 +667,6 @@ class EventExtractor(
     /** One category's affinity rows as a scorer; separate fun so tests can seed the table. */
     private fun affinityScoresFor(category: String): AffinityScores =
         AffinityScores.of(db.fetchAudienceAffinity().filter { it.category == category })
-
-    private fun selectClient(): SelectedClient {
-        val requestNumber = requestCounter.incrementAndGet()
-        val alternate = alternateOpenAI
-        return if (alternate != null && requestNumber % 2L == 0L) {
-            SelectedClient(
-                client = alternate,
-                providerLabel = "alternate-openrouter",
-                requestNumber = requestNumber
-            )
-        } else {
-            SelectedClient(
-                client = openAI,
-                providerLabel = "primary-openai",
-                requestNumber = requestNumber
-            )
-        }
-    }
 
     /**
      * Hallucination guard for `eventDate` (the trackers' input, same spirit as the URL filter):

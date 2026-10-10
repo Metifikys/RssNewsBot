@@ -60,6 +60,84 @@ class LlmClientsFactoryTest {
         llm = llm
     )
 
+    private fun split(vararg entries: LlmOverride) = LlmOverride(providers = entries.toList())
+
+    // ─── weighted providers split ───
+
+    @Test
+    fun `summarize auto follows the category split and a blank openrouter entry walks the ladder`() {
+        val factory = LlmClientsFactory(
+            config(withAnthropic = true, orModels = listOf("or/m1", "or/m2")), db, splitter = LlmSplitter(null)
+        )
+        val cat = cat(
+            CategoryLlmOverrides(
+                summarize = split(
+                    LlmOverride("openai", "gpt-mini", percent = 20),
+                    LlmOverride("anthropic", "claude-haiku", percent = 10),
+                    LlmOverride("openrouter", percent = 70)
+                )
+            )
+        )
+        val models = (1..10).map {
+            val c = factory.forSummarize(cat, "auto")
+            if (c is FallbackLlmClient) c.primary.endpoint.model else c.endpoint.model
+        }
+        assertEquals(2, models.count { it == "gpt-mini" })
+        assertEquals(1, models.count { it == "claude-haiku" })
+        assertEquals(7, models.count { it == "or/m1" })
+    }
+
+    @Test
+    fun `a feed naming a provider stays on it and takes only the split entry on that provider`() {
+        val splitter = LlmSplitter(null)
+        val factory = LlmClientsFactory(config(withAnthropic = true), db, splitter = splitter)
+        val cat = cat(
+            CategoryLlmOverrides(
+                summarize = split(LlmOverride("openai", "gpt-mini", percent = 30), LlmOverride("anthropic", "claude-haiku", percent = 70))
+            )
+        )
+        repeat(3) { assertEquals("claude-haiku", factory.forSummarize(cat, "anthropic").endpoint.model) }
+        repeat(3) { assertEquals("gpt-mini", factory.forSummarize(cat, "openai").endpoint.model) }
+        // No entry on openrouter: the feed's provider with its global default.
+        assertEquals("router-default", factory.forSummarize(cat, "openrouter").endpoint.model)
+        assertTrue(splitter.snapshot().isEmpty(), "a pinned feed never counts as a pick")
+    }
+
+    @Test
+    fun `summarize auto without a category override uses the global sync default`() {
+        assertEquals("router-default", LlmClientsFactory(config(), db).forSummarize(cat(), "auto").endpoint.model)
+        assertEquals("gpt-default", LlmClientsFactory(config(withOpenRouter = false), db).forSummarize(null, "auto").endpoint.model)
+        val plain = cat(CategoryLlmOverrides(summarize = LlmOverride("openai", "gpt-mini")))
+        assertEquals("gpt-mini", LlmClientsFactory(config(), db).forSummarize(plain, "auto").endpoint.model)
+    }
+
+    @Test
+    fun `batchFallback and render keep separate tallies although both meter as RENDER`() {
+        val shared = split(LlmOverride("openai", "gpt-a", percent = 50), LlmOverride("openai", "gpt-b", percent = 50))
+        val factory = LlmClientsFactory(config(), db, splitter = LlmSplitter(null))
+        val cat = cat(CategoryLlmOverrides(render = shared, batchFallback = shared))
+        assertEquals("gpt-a", factory.forRender(cat).endpoint.model)
+        assertEquals("gpt-a", factory.forBatchFallback(cat)!!.endpoint.model)
+        assertEquals("gpt-b", factory.forRender(cat).endpoint.model)
+    }
+
+    @Test
+    fun `forExtractResume picks the batch entry by batch id and does not count as a pick`() {
+        val splitter = LlmSplitter(null)
+        val factory = LlmClientsFactory(config(withAnthropic = true), db, splitter = splitter)
+        val cat = cat(
+            CategoryLlmOverrides(
+                extract = split(
+                    LlmOverride("openai", "gpt-batch", batch = true, percent = 50),
+                    LlmOverride("anthropic", "claude-batch", batch = true, percent = 50)
+                )
+            )
+        )
+        assertTrue(factory.forExtractResume(cat, "msgbatch_01abc") is AnthropicWithBatch)
+        assertTrue(factory.forExtractResume(cat, "batch_abc") is OpenAIWithBatch)
+        assertTrue(splitter.snapshot().isEmpty())
+    }
+
     @Test
     fun `forRender with no override picks openrouter when present`() {
         val factory = LlmClientsFactory(config(withOpenRouter = true), db)
@@ -114,49 +192,43 @@ class LlmClientsFactoryTest {
     }
 
     @Test
-    fun `forExtract with no override returns primary openai + alternate openrouter`() {
-        val factory = LlmClientsFactory(config(withOpenRouter = true), db)
-        val (primary, alternate) = factory.forExtract(null)
-        assertEquals("https://api.openai.com/v1", primary.endpoint.baseUrl)
-        assertEquals("gpt-default", primary.endpoint.model)
-        assertNotNull(alternate)
-        assertEquals("https://openrouter.ai/api/v1", alternate.endpoint.baseUrl)
-        assertEquals("router-default", alternate.endpoint.model)
+    fun `forExtract with no override alternates openai and openrouter as a built-in 50-50 split`() {
+        val factory = LlmClientsFactory(config(withOpenRouter = true), db, splitter = LlmSplitter(null))
+        val first = factory.forExtract(null)
+        assertEquals("https://api.openai.com/v1", first.endpoint.baseUrl)
+        assertEquals("gpt-default", first.endpoint.model)
+        val second = factory.forExtract(null)
+        assertEquals("https://openrouter.ai/api/v1", second.endpoint.baseUrl)
+        assertEquals("router-default", second.endpoint.model)
+        assertEquals("gpt-default", factory.forExtract(null).endpoint.model)
     }
 
     @Test
-    fun `forExtract with no openrouter returns null alternate`() {
+    fun `forExtract with no openrouter always uses openai`() {
         val factory = LlmClientsFactory(config(withOpenRouter = false), db)
-        val (primary, alternate) = factory.forExtract(null)
-        assertEquals("https://api.openai.com/v1", primary.endpoint.baseUrl)
-        assertNull(alternate)
+        repeat(3) { assertEquals("https://api.openai.com/v1", factory.forExtract(null).endpoint.baseUrl) }
     }
 
     @Test
-    fun `forExtract with override suppresses alternation`() {
+    fun `forExtract with a plain override always uses it`() {
         val factory = LlmClientsFactory(config(), db)
         val cat = cat(CategoryLlmOverrides(extract = LlmOverride("openrouter", "alt-model")))
-        val (primary, alternate) = factory.forExtract(cat)
-        assertEquals("https://openrouter.ai/api/v1", primary.endpoint.baseUrl)
-        assertEquals("alt-model", primary.endpoint.model)
-        assertNull(alternate)
+        repeat(3) {
+            val client = factory.forExtract(cat)
+            assertEquals("https://openrouter.ai/api/v1", client.endpoint.baseUrl)
+            assertEquals("alt-model", client.endpoint.model)
+        }
     }
 
     @Test
-    fun `forExtract with extract and extractAlternate returns both clients`() {
-        val factory = LlmClientsFactory(config(withAnthropic = true), db)
+    fun `forExtract with a 50-50 providers split alternates the two entries`() {
+        val factory = LlmClientsFactory(config(withAnthropic = true), db, splitter = LlmSplitter(null))
         val cat = cat(
             CategoryLlmOverrides(
-                extract = LlmOverride("openai", "gpt-a"),
-                extractAlternate = LlmOverride("anthropic", "claude-b")
+                extract = split(LlmOverride("openai", "gpt-a", percent = 50), LlmOverride("anthropic", "claude-b", percent = 50))
             )
         )
-        val (primary, alternate) = factory.forExtract(cat)
-        assertEquals("https://api.openai.com/v1", primary.endpoint.baseUrl)
-        assertEquals("gpt-a", primary.endpoint.model)
-        assertNotNull(alternate)
-        assertEquals("https://api.anthropic.com/v1", alternate.endpoint.baseUrl)
-        assertEquals("claude-b", alternate.endpoint.model)
+        assertEquals(listOf("gpt-a", "claude-b", "gpt-a", "claude-b"), (1..4).map { factory.forExtract(cat).endpoint.model })
     }
 
     @Test
@@ -267,13 +339,12 @@ class LlmClientsFactoryTest {
     }
 
     @Test
-    fun `forExtract with anthropic override suppresses alternation`() {
+    fun `forExtract with anthropic override uses anthropic`() {
         val factory = LlmClientsFactory(config(withAnthropic = true), db)
         val cat = cat(CategoryLlmOverrides(extract = LlmOverride("anthropic", "claude-extract")))
-        val (primary, alternate) = factory.forExtract(cat)
-        assertEquals("https://api.anthropic.com/v1", primary.endpoint.baseUrl)
-        assertEquals("claude-extract", primary.endpoint.model)
-        assertNull(alternate)
+        val client = factory.forExtract(cat)
+        assertEquals("https://api.anthropic.com/v1", client.endpoint.baseUrl)
+        assertEquals("claude-extract", client.endpoint.model)
     }
 
     @Test
@@ -558,24 +629,22 @@ class LlmClientsFactoryTest {
                 extract = LlmOverride("claudecli", "claude-x", fallback = LlmOverride("codexcli", "codex-y"))
             )
         )
-        val (primary, alternate) = factory.forExtract(cat)
-        assertTrue(primary is FallbackLlmClient)
-        assertNull(alternate)
+        assertTrue(factory.forExtract(cat) is FallbackLlmClient)
     }
 
     @Test
-    fun `forExtract wraps the alternate leg independently of the primary`() {
-        val factory = LlmClientsFactory(config(withClaudeCli = true, withCodexCli = true), db)
+    fun `forExtract wraps each split entry in its own fallback chain`() {
+        val factory = LlmClientsFactory(config(withClaudeCli = true, withCodexCli = true), db, splitter = LlmSplitter(null))
         val cat = cat(
             CategoryLlmOverrides(
-                extract = LlmOverride("openai", "gpt-a"),
-                extractAlternate = LlmOverride("claudecli", "claude-x", fallback = LlmOverride("codexcli", "codex-y"))
+                extract = split(
+                    LlmOverride("openai", "gpt-a", percent = 50),
+                    LlmOverride("claudecli", "claude-x", fallback = LlmOverride("codexcli", "codex-y"), percent = 50)
+                )
             )
         )
-        val (primary, alternate) = factory.forExtract(cat)
-        assertFalse(primary is FallbackLlmClient) // extract leg has no fallback
-        assertNotNull(alternate)
-        assertTrue(alternate is FallbackLlmClient)
+        assertFalse(factory.forExtract(cat) is FallbackLlmClient) // openai entry has no fallback
+        assertTrue(factory.forExtract(cat) is FallbackLlmClient)
     }
 
     @Test
@@ -588,7 +657,7 @@ class LlmClientsFactoryTest {
                 extract = LlmOverride("openai", "gpt-a", batch = true, fallback = LlmOverride("codexcli", "codex-y"))
             )
         )
-        val (primary, _) = factory.forExtract(cat)
+        val primary = factory.forExtract(cat)
         assertFalse(primary is FallbackLlmClient)
         assertTrue(primary is OpenAIWithBatch)
     }
@@ -665,11 +734,10 @@ class LlmClientsFactoryTest {
     }
 
     @Test
-    fun `forExtract default alternate honors the models ladder`() {
-        val factory = LlmClientsFactory(config(orModels = listOf("or/m1", "or/m2")), db)
-        val (primary, alternate) = factory.forExtract(null)
-        assertEquals("gpt-default", primary.endpoint.model)
-        assertNotNull(alternate)
+    fun `forExtract default openrouter half honors the models ladder`() {
+        val factory = LlmClientsFactory(config(orModels = listOf("or/m1", "or/m2")), db, splitter = LlmSplitter(null))
+        assertEquals("gpt-default", factory.forExtract(null).endpoint.model)
+        val alternate = factory.forExtract(null)
         assertTrue(alternate is FallbackLlmClient)
         assertEquals("or/m1", alternate.primary.endpoint.model)
     }

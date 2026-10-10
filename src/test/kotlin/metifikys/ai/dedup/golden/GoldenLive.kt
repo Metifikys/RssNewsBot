@@ -23,10 +23,10 @@ object GoldenLive {
         require(provider.isNotBlank()) { "expected <provider>:<model>, got '$spec'" }
         val cat = config.categories[categoryName] ?: error("category '$categoryName' is not in the config")
         val pinned: CategoryConfig = cat.copy(
-            llm = (cat.llm ?: CategoryLlmOverrides()).copy(extract = LlmOverride(provider, model), extractAlternate = null)
+            llm = (cat.llm ?: CategoryLlmOverrides()).copy(extract = LlmOverride(provider, model))
         )
         val patched = config.copy(categories = config.categories + (categoryName to pinned))
-        return LlmClientsFactory(patched, mockk<NewsDatabase>(relaxed = true)).forExtract(pinned).first
+        return LlmClientsFactory(patched, mockk<NewsDatabase>(relaxed = true)).forExtract(pinned)
     }
 
     /** `gpt-5.5` → `gpt-5.5`, `minimax/minimax-m3:free` → `minimax_minimax-m3_free`: safe in a file name. */

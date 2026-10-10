@@ -571,7 +571,7 @@ class DigestCycle(
             db.fetchProcessingByCategory(categoryName)
         }
 
-        val (primaryClient, _) = llmClientsFactory.forExtract(catCfg)
+        val primaryClient = llmClientsFactory.forExtractResume(catCfg, record.batchId)
         val extractor = EventExtractor(
             openAI = primaryClient,
             promptLoader = promptLoader,

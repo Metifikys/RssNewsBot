@@ -8,6 +8,17 @@ single **Unreleased** section.
 ## [Unreleased]
 
 ### Added
+- **Weighted provider split (`llm.<slot>.providers`)** — any LLM slot (`extract`, `render`,
+  `summarize`, `batch`, `batchFallback`, `persona`, `updateDiff`, `shadow.*`, `factCheck.judge`)
+  can list several provider+model entries with a `percent` each (sum 100). Each call goes to the
+  entry furthest below its share of today's calls, so 20/10/70 is exactly 2/1/7 per 10 calls.
+  Tallies per category + slot live in `bot_state` (`llm_split:<category>/<slot>`), survive a
+  restart and reset at local midnight. An `openrouter` entry without `model` uses the
+  `openrouter.models` ladder. Feeds opt in with `summarize: auto`; a feed
+  naming a provider (`summarize: openrouter`) stays pinned to it.
+  **Breaking:** `llm.extractAlternate` is removed (rejected at load with a hint) — use a 50/50
+  `extract.providers` split; the default no-override extract is now a built-in 50/50 split of
+  OpenAI and the OpenRouter ladder (same behaviour as before, tallied per day).
 - **Post presentation block (`categories.<name>.post`)** — deterministic additions to the
   outgoing bullet only; `summaries`, `digest_messages` and the event-key matching keep the clean
   text, so no non-article URL can leak into the previous-digest URL set. Four optional parts:

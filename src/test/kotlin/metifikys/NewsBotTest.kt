@@ -70,7 +70,7 @@ class NewsBotTest {
 
         every { llmClientsFactory.forRender(any()) } returns openAI
         every { llmClientsFactory.forBatch(any()) } returns openAIBatch
-        every { llmClientsFactory.forExtract(any()) } returns Pair(openAI, null)
+        every { llmClientsFactory.forExtract(any()) } returns openAI
         every { llmClientsFactory.forSummarize(any(), any()) } returns openAI
         every { llmClientsFactory.forBatchFallback(any()) } returns null
 

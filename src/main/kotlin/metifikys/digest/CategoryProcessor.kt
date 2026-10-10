@@ -23,11 +23,9 @@ import java.time.Duration
 import java.time.LocalDateTime
 import java.util.concurrent.Callable
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
 
 private val logger = KotlinLogging.logger {}
 
@@ -80,7 +78,6 @@ open class CategoryProcessor(
         const val EXTRACT_ARTICLE_JSON_OVERHEAD = 80
     }
 
-    private val extractorCounters = ConcurrentHashMap<String, AtomicLong>()
 
     /**
      * Hard keyword mute applied before Step-1, per category: the global `preferences.mute` list
@@ -252,19 +249,14 @@ open class CategoryProcessor(
             val cappedLinks = capped.map { it.link }
             db.markProcessing(cappedLinks)
 
-            val extractor = eventExtractor ?: run {
-                val (primary, alternate) = llmClientsFactory.forExtract(categoryConfig)
-                EventExtractor(
-                    openAI = primary,
-                    promptLoader = promptLoader,
-                    db = db,
-                    alternateOpenAI = alternate,
-                    requestCounter = extractorCounters.getOrPut(name) { AtomicLong(0) },
-                    storyIntel = config.storyIntel,
-                    shadow = step1Shadow(name, categoryConfig, resolvedDedup),
-                    mutedEventTypes = ::mutedEventTypes
-                )
-            }
+            val extractor = eventExtractor ?: EventExtractor(
+                openAI = llmClientsFactory.forExtract(categoryConfig),
+                promptLoader = promptLoader,
+                db = db,
+                storyIntel = config.storyIntel,
+                shadow = step1Shadow(name, categoryConfig, resolvedDedup),
+                mutedEventTypes = ::mutedEventTypes
+            )
             val outcome = try {
                 extractor.extract(name, categoryConfig, capped)
             } catch (e: BillingException) {
