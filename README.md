@@ -209,6 +209,14 @@ via a `/status` admin snapshot.
     channel shows just its Instant View card (no text, source or footer). Any Telegraph failure or timeout sends the long post
     as before. The account (`telegraph:` at the top level) uses `TELEGRAPH_TOKEN` / `accessToken`,
     else a token created once and kept in `bot_state`; pages are recorded in `telegraph_pages`.
+    With **rich** the long post is instead one Bot API 10.1 rich message (`sendRichMessage`, HTML
+    form, [`RichPost`](src/main/kotlin/metifikys/format/RichPost.kt)): the headline as a heading, the
+    picture, every paragraph, the fact lines of the footer (persona, badges, intro, 🧭, 🔗, story
+    lines), the sources collapsed in «🔗 Джерела · N» with a `Читати на <host>` button, and the
+    hashtags as plain text (the HTML form, not rich Markdown, so a `#tag` line is never a heading);
+    the 📰 also line is not repeated. No telegra.ph page is made. A refusal is retried once without
+    the picture; after that the post goes the classic way (the Telegraph page when that is on).
+    `digest_messages.text` keeps the clean topic, so threads, reactions and `/inspect` are unchanged.
     *Not implemented, by decision:* feeding a long post from the transcript of the video it embeds
     (idea 20). Every keyless route (watch-page caption tracks / timedtext, the innertube player
     endpoint, `yt-dlp --write-auto-subs`) automates access to YouTube outside its API, which

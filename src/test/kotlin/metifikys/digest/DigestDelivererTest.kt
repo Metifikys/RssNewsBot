@@ -929,6 +929,74 @@ class DigestDelivererTest {
         assertFalse("⚡" in sent)
     }
 
+    // ── post.longForm.rich ──────────────────────────────────────────────────────
+
+    private class RichRun(
+        val db: NewsDatabase,
+        val sender: TelegramSender,
+        val htmls: List<String>,
+        val publisher: metifikys.telegraph.TelegraphPublisher
+    )
+
+    /** One long-form delivery with `post.longForm.rich`; [answers] are sendRichMessage's results in turn. */
+    private fun richDelivery(answers: List<SentRef?>, telegraphOn: Boolean = true): RichRun {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val htmls = mutableListOf<String>()
+        every { sender.sendRichMessage(any(), capture(htmls), any(), any(), any()) } returnsMany answers
+        every { sender.sendToChannel(any(), any(), any(), any(), any(), any()) } returns listOf(SentRef(-100L, 51L))
+        val publisher = mockk<metifikys.telegraph.TelegraphPublisher>()
+        every { publisher.publish(any(), any(), any(), any(), any()) } returns "https://telegra.ph/Story-10-11"
+        val withImage = article(1).copy(imageUrl = "https://img.example/1.jpg")
+        val body = "Перший абзац. ".repeat(40).trim() + "\n\n" + "Другий абзац. ".repeat(40).trim()
+        val summary = "• 🎮 **Story.** $body\n[Title 1](https://example.com/1)"
+        val long = shortlistItem("evt-1", withImage.link).copy(depth = ShortlistItem.DEPTH_LONG)
+        val post = PostConfig(
+            hashtags = HashtagsConfig(category = "#tech"),
+            longForm = metifikys.config.LongFormConfig(
+                telegraph = if (telegraphOn) metifikys.config.LongFormTelegraphConfig() else null,
+                rich = metifikys.config.LongFormRichConfig()
+            )
+        )
+        DigestDeliverer(configWithPost(post, enableImages = true), db, sender, telegraph = publisher)
+            .deliver("tech", summary, listOf(withImage), listOf(long))
+        return RichRun(db, sender, htmls, publisher)
+    }
+
+    @Test
+    fun `rich long-form goes out as one rich message — no telegraph page, no classic post`() {
+        val run = richDelivery(listOf(SentRef(-100L, 61L)))
+        val html = run.htmls.single()
+        assertTrue(html.startsWith("<h2>🎮 Story</h2><figure><img src=\"https://img.example/1.jpg\"/></figure><p>Перший абзац."), html)
+        assertTrue("<p>Другий абзац." in html, html)
+        assertTrue("<details><summary>🔗 Джерела · 1</summary>" in html && "Читати на example.com" in html, html)
+        assertTrue(html.endsWith("<p>#tech</p>"), html)
+        verify(exactly = 0) { run.sender.sendToChannel(any(), any(), any(), any(), any(), any()) }
+        verify(exactly = 0) { run.publisher.publish(any(), any(), any(), any(), any()) }
+        // The post is recorded like any other: the clean topic, under the rich message's id.
+        verify { run.db.insertDigestMessages(match { rows -> rows.single().messageId == 61L && rows.single().text?.startsWith("🎮 **Story.**") == true }) }
+    }
+
+    @Test
+    fun `a rich message refused with its picture is sent once more without it`() {
+        val run = richDelivery(listOf(null, SentRef(-100L, 62L)))
+        assertEquals(2, run.htmls.size)
+        assertTrue("<figure>" in run.htmls[0])
+        assertFalse("<figure>" in run.htmls[1])
+        verify(exactly = 0) { run.sender.sendToChannel(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `a refused rich message falls back to the telegraph page, or to the classic long post`() {
+        val withPage = richDelivery(listOf(null, null))
+        verify { withPage.publisher.publish(any(), any(), any(), any(), any()) }
+        verify { withPage.sender.sendToChannel("@tech", any(), true, null, "https://telegra.ph/Story-10-11", false) }
+
+        val plain = richDelivery(listOf(null, null), telegraphOn = false)
+        verify { plain.sender.sendToChannel("@tech", any(), true, null, "https://img.example/1.jpg", true) }
+    }
+
     // ── dedup.digest.antiBubble ─────────────────────────────────────────────────
 
     private fun exploreDelivery(post: PostConfig?, sendOk: Boolean = true): Triple<NewsDatabase, List<String>, List<DigestMessageRow>> {

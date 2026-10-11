@@ -45,4 +45,7 @@ class FooterLines {
 
     /** Every line, slot by slot in [Slot] order, each slot's lines in the order they were added. */
     fun build(): List<String> = Slot.entries.flatMap { lines[it].orEmpty() }
+
+    /** The lines of one [slot], in the order they were added. */
+    fun lines(slot: Slot): List<String> = lines[slot].orEmpty().toList()
 }

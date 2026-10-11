@@ -1417,7 +1417,21 @@ data class LongFormConfig(
     /** Characters of the refetched article text passed to the renderer for a long item. */
     val sourceChars: Int = 5000,
     /** Publish the long post as a telegra.ph page (Instant View) as well; see [LongFormTelegraphConfig]. */
-    val telegraph: LongFormTelegraphConfig? = null
+    val telegraph: LongFormTelegraphConfig? = null,
+    /** Send the long post as one Bot API 10.1 rich message instead; see [LongFormRichConfig]. */
+    val rich: LongFormRichConfig? = null
+)
+
+/**
+ * `post.longForm.rich`: the long post goes out as one rich message (`sendRichMessage`) — the
+ * headline as a heading, the picture, the paragraphs, the fact lines of the footer, the sources
+ * collapsed in «🔗 Джерела · N» with a button to the article, the hashtags as plain text — and no
+ * telegra.ph page is made. Should Telegram refuse it (also once more without the picture), the
+ * post goes the classic way: the Telegraph page when [LongFormConfig.telegraph] is on, else the
+ * long text with the picture as preview.
+ */
+data class LongFormRichConfig(
+    val enabled: Boolean = true
 )
 
 /**

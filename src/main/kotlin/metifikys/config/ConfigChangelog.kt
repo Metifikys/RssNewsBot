@@ -74,6 +74,7 @@ object ConfigChangelog {
         Entry("categories.*.post.discussion", "2026-10-10", "🗣 reply under a post summing up its HN thread (top comments → llm.discussion; minComments, maxPerDigest; start with logOnly: true)"),
         Entry("categories.*.llm.discussion", "2026-10-10", "the model of the post.discussion summary (else llm.render), metered as DISCUSSION"),
         Entry("categories.*.llm.summarize.providers", "2026-10-10", "⚖️ any llm slot (extract, render, summarize, …) can be a weighted split: providers: [{ percent, provider, model }], daily tallies in bot_state; replaces extractAlternate"),
+        Entry("categories.*.post.longForm.rich", "2026-10-11", "📰 long post as one Bot API 10.1 rich message: heading, picture, sources collapsed, hashtags as text; no telegra.ph page (refused → telegraph / classic post)"),
         Entry("admin.threads", "2026-10-11", "🧵 admin chat threads (private-chat topics): status snapshot + notices, /inspect cards and the /raw browser each in their own thread; /thread prints a thread's id"),
     )
 

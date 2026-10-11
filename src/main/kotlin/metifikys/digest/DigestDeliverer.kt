@@ -23,6 +23,8 @@ import metifikys.format.AlsoLine
 import metifikys.format.FooterLines
 import metifikys.format.FooterLines.Slot
 import metifikys.format.Hashtags
+import metifikys.format.RichHtml
+import metifikys.format.RichPost
 import metifikys.format.TopicDecorator
 import metifikys.format.TopicFormatter
 import metifikys.model.Article
@@ -216,20 +218,26 @@ class DigestDeliverer(
                 personaKey = null
                 personaWriter.write(categoryName, categoryConfig, personaCfg, item, topic)
             } else null
-            val footer = buildFooter(
+            val footerLines = buildFooter(
                 categoryName, item, topicArticles, postCfg, badgeDeadline, introBudget, storyLines, articleByLink, feedLabels,
                 eventKey?.let { crossLinkByKey[it] },
                 exploreLine = if (explore) antiBubbleLabel(categoryConfig) else null,
                 personaLine = persona?.line
             )
+            val footer = footerLines.build()
             val variant = if (explore) DigestMessageRow.VARIANT_EXPLORE else persona?.variant
+            // post.longForm.rich: the long post as one rich message (no telegra.ph page); a refusal
+            // falls through to the classic long post below.
+            val richRef = if (postCfg?.longForm?.rich?.enabled == true && item?.isLongForm == true) {
+                sendRichLongForm(categoryName, categoryConfig, item, topic, footerLines, image, articleByLink, feedLabels, replyTo)
+            } else null
             // Long-form (post.longForm): a text message with the image as a large link preview
             // above it, so neither the body nor the footer is squeezed into the 1024-char caption.
             // A long post that fits a caption anyway still goes out as a normal photo post.
             // With post.longForm.telegraph the text also goes to a telegra.ph page, and the post
             // (a teaser, or the full text) carries the page as its preview — Telegram's ⚡ Instant
             // View; no page (any Telegraph failure) → the long post as above.
-            val telegraphCfg = postCfg?.longForm?.telegraph?.takeIf { it.enabled && item?.isLongForm == true }
+            val telegraphCfg = postCfg?.longForm?.telegraph?.takeIf { it.enabled && item?.isLongForm == true && richRef == null }
             val pageUrl = if (telegraphCfg != null && telegraph != null && item != null) {
                 publishPage(categoryName, categoryConfig, item, topic, image, articleByLink, feedLabels)
             } else null
@@ -244,13 +252,15 @@ class DigestDeliverer(
                     TelegraphPage.teaser(topic, pageUrl)
                 }
                 TopicDecorator.decorate(body, footer, TopicDecorator.TEXT_BUDGET)
-            } else if (item?.isLongForm == true && image != null) {
+            } else if (item?.isLongForm == true && image != null && richRef == null) {
                 TopicDecorator.decorate(topic, footer, TopicDecorator.TEXT_BUDGET)
                     .takeIf { it.length > TopicDecorator.CAPTION_BUDGET }
             } else null
             val budget = if (image != null) TopicDecorator.CAPTION_BUDGET else TopicDecorator.TEXT_BUDGET
             val outgoing = longOutgoing ?: TopicDecorator.decorate(topic, footer, budget)
-            val refs: List<SentRef> = if (longOutgoing != null) {
+            val refs: List<SentRef> = if (richRef != null) {
+                listOf(richRef)
+            } else if (longOutgoing != null) {
                 val preview = pageUrl ?: image
                 logger.info {
                     "[Category:$categoryName][LongForm] $eventKey: ${outgoing.length} chars as text + " +
@@ -614,8 +624,8 @@ class DigestDeliverer(
         crossLink: String? = null,
         exploreLine: String? = null,
         personaLine: String? = null
-    ): List<String> {
-        if (post == null) return FooterLines().add(Slot.EXPLORE, exploreLine).build()
+    ): FooterLines {
+        if (post == null) return FooterLines().add(Slot.EXPLORE, exploreLine)
         val footer = FooterLines()
         footer.add(Slot.PERSONA, personaLine)
         footer.add(Slot.EXPLORE, exploreLine)
@@ -646,7 +656,7 @@ class DigestDeliverer(
         if (tags.isNotEmpty()) footer.add(Slot.HASHTAGS, tags.joinToString(" "))
         val lines = footer.build()
         if (lines.isNotEmpty()) logger.debug { "[Category:$categoryName][Post] footer: $lines" }
-        return lines
+        return footer
     }
 
     /**
@@ -687,6 +697,23 @@ class DigestDeliverer(
         feedLabels: Map<String, String>
     ): String? {
         val publisher = telegraph ?: return null
+        val channel = categoryConfig.channelId.trim().takeIf { it.startsWith("@") && it.length > 1 }
+            ?.let { TelegraphPage.Link(it, "https://t.me/${it.drop(1)}") }
+        val content = TelegraphPage.content(topic, image, eventSources(categoryConfig, item, topic, articleByLink, feedLabels), channel)
+        return publisher.publish(categoryName, item.eventKey, TelegraphPage.title(topic), content, channel?.url)
+    }
+
+    /**
+     * The «Джерела» of a long post: the topic's links, then the event's other batch articles named
+     * as in the 📰 line (`post.also.names`, else the feed label, else the domain) with their titles.
+     */
+    private fun eventSources(
+        categoryConfig: CategoryConfig,
+        item: ShortlistItem,
+        topic: String,
+        articleByLink: Map<String, Article>,
+        feedLabels: Map<String, String>
+    ): List<TelegraphPage.Link> {
         val names = categoryConfig.post?.also?.takeIf { it.enabled }?.names.orEmpty()
         val others = item.sourceLinks.map { link ->
             val host = AlsoLine.hostOf(link)
@@ -695,10 +722,37 @@ class DigestDeliverer(
             val title = articleByLink[link]?.title?.replace(Regex("""\s+"""), " ")?.trim()
             TelegraphPage.Link(if (title.isNullOrEmpty()) name else "$name — $title", link)
         }
-        val channel = categoryConfig.channelId.trim().takeIf { it.startsWith("@") && it.length > 1 }
-            ?.let { TelegraphPage.Link(it, "https://t.me/${it.drop(1)}") }
-        val content = TelegraphPage.content(topic, image, TelegraphPage.topicLinks(topic) + others, channel)
-        return publisher.publish(categoryName, item.eventKey, TelegraphPage.title(topic), content, channel?.url)
+        return TelegraphPage.topicLinks(topic) + others
+    }
+
+    /**
+     * `post.longForm.rich`: [topic] as one rich message ([RichPost.longForm]) — sources collapsed,
+     * footer facts as paragraphs. A refusal is retried once without the picture (Telegram may not
+     * be able to fetch it); null after that, and the caller sends the classic long post.
+     */
+    private fun sendRichLongForm(
+        categoryName: String,
+        categoryConfig: CategoryConfig,
+        item: ShortlistItem,
+        topic: String,
+        footer: FooterLines,
+        image: String?,
+        articleByLink: Map<String, Article>,
+        feedLabels: Map<String, String>,
+        replyTo: Long?
+    ): SentRef? {
+        val label = "[Category:$categoryName][LongForm][Rich] ${item.eventKey}"
+        val sources = eventSources(categoryConfig, item, topic, articleByLink, feedLabels).map { RichHtml.Link(it.label, it.url) }
+        for (picture in listOfNotNull(image).plus<String?>(null)) {
+            val html = RichPost.longForm(topic, footer, picture, sources)
+            val ref = sender.sendRichMessage(categoryConfig.channelId, html, replyToMessageId = replyTo)
+            if (ref != null) {
+                logger.info { "$label: rich message, ${html.length} chars, ${sources.size} source(s)" + if (picture == null && image != null) ", without the picture $image" else "" }
+                return ref
+            }
+        }
+        logger.warn { "$label: Telegram refused the rich message — sending the classic long post" }
+        return null
     }
 
     /**

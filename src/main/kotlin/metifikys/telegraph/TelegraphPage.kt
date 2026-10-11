@@ -9,6 +9,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import metifikys.format.TopicFormatter
+import metifikys.format.TopicParts
 
 /**
  * A long-form topic as a telegra.ph page, and the channel post that points to it. Pure: no DB,
@@ -35,23 +36,11 @@ object TelegraphPage {
     /** The `link` channel post: the page's Instant View card and nothing else (a hidden link to it). */
     fun linkOnly(pageUrl: String): String = "[$HIDDEN_LINK_TEXT]($pageUrl)"
 
-    /** The topic cut into its title line, body paragraphs and trailing source-link block (if any). */
-    private data class Parts(val title: String?, val body: List<String>, val link: String?)
-
-    private val BLOCK_BREAK = Regex("""\n[ \t\r]*\n\s*""")
     private val BOLD = Regex("""\*\*(.+?)\*\*""", RegexOption.DOT_MATCHES_ALL)
     private val INLINE = Regex("""\*\*(.+?)\*\*|`([^`]+)`|${TopicFormatter.MARKDOWN_LINK.pattern}""", RegexOption.DOT_MATCHES_ALL)
     private val WHITESPACE = Regex("""\s+""")
 
-    private fun parts(topic: String): Parts {
-        val blocks = topic.trim().split(BLOCK_BREAK).map { it.trim() }.filter { it.isNotEmpty() }
-        if (blocks.isEmpty()) return Parts(null, emptyList(), null)
-        val title = blocks.first().takeIf { BOLD.containsMatchIn(it) }
-        val rest = if (title != null) blocks.drop(1) else blocks
-        val link = rest.lastOrNull()?.takeIf { TopicFormatter.MARKDOWN_LINK.matchEntire(it) != null }
-        val body = if (link != null) rest.dropLast(1) else rest
-        return Parts(title, body, link)
-    }
+    private fun parts(topic: String): TopicParts = TopicParts.of(topic)
 
     /** A title derived from a lead paragraph (no `**headline**`, e.g. tech bullets) stays this short. */
     const val MAX_LEAD_TITLE = 100

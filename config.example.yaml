@@ -395,6 +395,10 @@ categories:
           enabled: false
           mode: teaser                  # teaser = lead paragraph + ⚡ link; full = whole post + ⚡ link;
                                         # link = only the page's Instant View card, no text
+        # One Bot API 10.1 rich message instead: heading, picture, paragraphs, sources under
+        # «🔗 Джерела», hashtags as text; no telegra.ph page. Refused by Telegram → telegraph / classic post.
+        rich:
+          enabled: false
       # ── Story lines ── facts about the story, no LLM (need storyIntel.enabled)
       storyLines:
         hype:                           # 📢 9 видань · 1 першоджерело
