@@ -202,8 +202,36 @@ class TelegramSender(
         /** The message is gone or cannot be edited — the caller should post a fresh one. */
         NOT_FOUND,
         /** Transient failure (rate limit, network); worth retrying later. */
-        FAILED
+        FAILED,
+        /**
+         * Telegram refused the new content itself (a 400 other than "not modified" or a missing
+         * message) — only [editRichMessage] reports it; the caller falls back to a classic message.
+         */
+        REJECTED
     }
+
+    /** Bot API 10.1 `InputRichMessage`, HTML form, with the uploaded media its `tg://photo?id=` links name. */
+    @Serializable
+    private data class InputRichMessageDto(val html: String, val media: List<InputRichMessageMediaDto>? = null)
+
+    /** Bot API `InputRichMessageMedia`: [id] as used in `tg://photo?id=<id>`, the file as `attach://<id>`. */
+    @Serializable
+    private data class InputRichMessageMediaDto(val id: String, val media: InputMediaPhotoDto)
+
+    @Serializable
+    private data class SendRichMessageRequest(
+        val chat_id: String,
+        val rich_message: InputRichMessageDto,
+        val reply_parameters: ReplyParameters? = null,
+        val disable_notification: Boolean? = null
+    )
+
+    @Serializable
+    private data class EditRichMessageRequest(
+        val chat_id: String,
+        val message_id: Long,
+        val rich_message: InputRichMessageDto
+    )
 
     @Serializable
     private data class SendMessageResponse(
@@ -252,6 +280,9 @@ class TelegramSender(
 
         val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
         val PNG_TYPE = "image/png".toMediaType()
+
+        /** 400 descriptions that mean the message to edit is gone or locked, not that its new content is bad. */
+        val MESSAGE_GONE = listOf("message to edit not found", "message can't be edited", "MESSAGE_ID_INVALID")
 
         /** Matches the `<a href="url">label</a>` anchors emitted by [TopicFormatter.toHtml]. */
         val HTML_ANCHOR = Regex("""<a href="([^"]*)">(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
@@ -376,6 +407,64 @@ class TelegramSender(
         } catch (e: Exception) {
             logger.error(e) { "Telegram sendMediaGroup failed for $channelId" }
             emptyList()
+        }
+    }
+
+    /**
+     * Sends a Bot API 10.1 rich message: [html] is its `rich_message.html` (built with
+     * [metifikys.format.RichHtml]). [attachments] are PNGs the HTML names as `tg://photo?id=<key>`,
+     * uploaded in the same multipart request; without them the call is plain JSON. One message, no
+     * chunking (the rich limit is 32 768 characters) and no plain-text retry: on any failure the
+     * caller falls back to its classic post. Same pacer and 429 handling as every other call.
+     * Returns the delivered message's [SentRef], or null.
+     */
+    fun sendRichMessage(
+        chatId: String,
+        html: String,
+        replyToMessageId: Long? = null,
+        silent: Boolean = false,
+        attachments: Map<String, ByteArray> = emptyMap()
+    ): SentRef? {
+        val media = attachments.keys.map { InputRichMessageMediaDto(it, InputMediaPhotoDto("photo", "attach://$it")) }
+        val rich = InputRichMessageDto(html, media.ifEmpty { null })
+        val quiet = if (silent) true else null
+        val result = if (attachments.isEmpty()) {
+            post("sendRichMessage", json.encodeToString(SendRichMessageRequest(chatId, rich, replyParams(replyToMessageId), quiet)), chatId)
+        } else {
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("chat_id", chatId)
+                .addFormDataPart("rich_message", json.encodeToString(rich))
+                .apply {
+                    replyParams(replyToMessageId)?.let { addFormDataPart("reply_parameters", json.encodeToString(it)) }
+                    if (silent) addFormDataPart("disable_notification", "true")
+                    for ((id, bytes) in attachments) addFormDataPart(id, "$id.png", bytes.toRequestBody(PNG_TYPE))
+                }
+                .build()
+            post("sendRichMessage", body, chatId)
+        }
+        return (result as? SendResult.Ok)?.ref
+    }
+
+    /**
+     * Replaces a message's content with a rich message ([html] as in [sendRichMessage]) —
+     * `editMessageText` with `rich_message`, which also turns a plain text message into a rich one.
+     * "Message is not modified" counts as [EditResult.OK]; a missing or uneditable message is
+     * [EditResult.NOT_FOUND]; any other 400 means Telegram refused the content: [EditResult.REJECTED].
+     */
+    fun editRichMessage(chatId: String, messageId: Long, html: String): EditResult {
+        val payload = json.encodeToString(EditRichMessageRequest(chatId, messageId, InputRichMessageDto(html)))
+        return when (val res = post("editMessageText", payload, chatId)) {
+            is SendResult.Ok -> EditResult.OK
+            is SendResult.Transient -> EditResult.FAILED
+            is SendResult.BadRequest -> {
+                val description = res.description.orEmpty()
+                when {
+                    description.contains("not modified", ignoreCase = true) -> EditResult.OK
+                    MESSAGE_GONE.any { description.contains(it, ignoreCase = true) } -> EditResult.NOT_FOUND
+                    else -> EditResult.REJECTED
+                }
+            }
         }
     }
 

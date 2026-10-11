@@ -126,7 +126,7 @@ class TrackerUpdater(
                         logger.info { "[Category:$category][Tracker:${tracker.id}] edited msg $messageId ($changed item(s) touched)" }
                         return
                     }
-                    TelegramSender.EditResult.FAILED -> {
+                    TelegramSender.EditResult.FAILED, TelegramSender.EditResult.REJECTED -> {
                         logger.warn { "[Category:$category][Tracker:${tracker.id}] edit of msg $messageId failed — retrying after the next digest" }
                         return
                     }
