@@ -480,6 +480,32 @@ class DigestCycleTest {
     }
 
     @Test
+    fun `entries dated before the retention window are never ingested`() {
+        // The cleanup prunes rows by pub_date: a stored 2016 post would be deleted on the next
+        // maintenance tick and come back as new on the poll after it, every time.
+        val server = serverRss(
+            rssWithDatedItems(
+                "https://example.com/ancient" to "Mon, 04 Jan 2016 10:00:00 GMT",
+                "https://example.com/recent" to java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
+                    .format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC).minusDays(1))
+            )
+        )
+        val fetcher = RssFetcher(enforceUrlValidation = false, maxAttempts = 1, retryDelayMs = 0)
+        try {
+            val config = cfg(mapOf("tech" to cat(known(urlOf(server)))))
+            val processor = RecordingCategoryProcessor(config, db)
+
+            cycle(config, fetcher, processor).runCategory("tech")
+
+            assertEquals(listOf("https://example.com/recent"), processor.calls.single().second.map { it.link })
+            assertTrue(db.findExistingLinks(listOf("https://example.com/ancient")).isEmpty())
+        } finally {
+            server.stop(0)
+            fetcher.shutdown()
+        }
+    }
+
+    @Test
     fun `covered events survive retention cleanup as long as the affinity lookback needs them`() {
         // covered_events is the join partner of every affinity input, so pruning it at
         // summaryHistory.retentionDays (14) would silently truncate feedback.lookbackDays (90).
@@ -559,6 +585,22 @@ class DigestCycleTest {
                 <title>Feed</title>
                 <link>https://example.com</link>
                 $items
+              </channel>
+            </rss>
+        """.trimIndent().toByteArray()
+    }
+
+    private fun rssWithDatedItems(vararg items: Pair<String, String>): ByteArray {
+        val xml = items.joinToString("\n") { (link, date) ->
+            "<item><title>Title $link</title><link>$link</link><description>desc</description><pubDate>$date</pubDate></item>"
+        }
+        return """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel>
+                <title>Feed</title>
+                <link>https://example.com</link>
+                $xml
               </channel>
             </rss>
         """.trimIndent().toByteArray()

@@ -309,8 +309,8 @@ class DigestCycle(
         catCfg: metifikys.config.CategoryConfig,
         fetchDeadlineNanos: Long
     ): Boolean {
-        val rawArticles = fetcher.fetchCategory(name, catCfg.feeds, fetchDeadlineNanos)
-        logger.info { "[Cycle:$name] Fetched ${rawArticles.size} article(s)." }
+        val fetched = fetcher.fetchCategory(name, catCfg.feeds, fetchDeadlineNanos)
+        logger.info { "[Cycle:$name] Fetched ${fetched.size} article(s)." }
 
         // The fetch stage swallows interrupts by design (returns what it got, flag restored).
         // A cancelled worker stops here: nothing was inserted yet and the feed content is
@@ -318,6 +318,15 @@ class DigestCycle(
         if (Thread.currentThread().isInterrupted()) {
             logger.warn { "[Cycle:$name] cancelled during fetch — deferring to the next cycle." }
             return false
+        }
+
+        // Entries dated before the retention window: the cleanup deletes rows by `pub_date`, so
+        // link-dedup cannot remember them — stored, they would be pruned on the next maintenance
+        // tick and come back as new on the poll after it (openai.com/news ships posts from 2016).
+        val retentionCutoff = LocalDateTime.now().minusDays(config.processing.articleRetentionDays)
+        val (expired, rawArticles) = fetched.partition { it.pubDate.isBefore(retentionCutoff) }
+        if (expired.isNotEmpty()) {
+            logger.info { "[Cycle:$name] Skipped ${expired.size} entr(ies) dated before the ${config.processing.articleRetentionDays}-day retention window." }
         }
 
         // A feed that never brought a link before (just added to the config) hands over its whole

@@ -14,7 +14,9 @@ single **Unreleased** section.
   feed-quality metrics. Only what it publishes afterwards reaches the digest, so adding a company
   blog with 1000+ entries no longer floods the queue with years-old posts. Known feeds win a link
   both bring in the same pass. A changed feed `url` counts as a new feed; so does every feed of a
-  fresh, empty database.
+  fresh, empty database. Entries dated before `processing.articleRetentionDays` are skipped at
+  ingest: the cleanup prunes by `pub_date`, so such a row (openai.com/news reaches back to 2015)
+  was deleted every maintenance tick and re-ingested as news on the next poll.
 - **Weighted provider split (`llm.<slot>.providers`)** — any LLM slot (`extract`, `render`,
   `summarize`, `batch`, `batchFallback`, `persona`, `updateDiff`, `shadow.*`, `factCheck.judge`)
   can list several provider+model entries with a `percent` each (sum 100). Each call goes to the
