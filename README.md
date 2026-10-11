@@ -321,7 +321,13 @@ via a `/status` admin snapshot.
 - **Living trackers** (`trackers:` per category) — e.g. a pinned "📅 Найближчі релізи" message
   the bot edits after every digest from `release_date` / `delay` events and their `eventDate`
   (year cross-checked against the article), with `⏳ було <old date>` on a delay, a
-  "released this week" section, and a link to the latest post per story.
+  "released this week" section, and a link to the latest post per story. With `rich: true` the
+  message is a Bot API 10.1 rich message: a table per section (this week, next week, later,
+  released), a day-precise date as a date-time entity (`<tg-time format="wd">`, every reader sees
+  it in their own zone and language) with a self-updating countdown (`format="r"`), a month /
+  quarter as text, the undated entries collapsed, and `Оновлено <relative time>` in the header. The
+  existing pinned text message is edited into the rich one (an edit can change the kind); a refused
+  rich edit or post goes out as the classic text.
 - **Breaking lane** (`dedup.digest.breakingNewsworthiness`) — one post-ranker item at or above
   the threshold skips the weak-shortlist hold-back, so a lone top story goes out at once; and a
   **posts-per-story cap** (`dedup.digest.maxPostsPerEvent`) that no newsworthiness score can

@@ -470,6 +470,8 @@ categories:
         pinned: true                    # needs the bot's "edit messages" right in the channel
         releasedRetentionDays: 7
         showUndated: false              # true = list TBA entries too
+        rich: false                     # true = Bot API 10.1 rich message: a table per week, dates in each
+                                        # reader's zone with a live countdown; the pin is edited in place
     feeds:
       - https://kotaku.com/feed
     # Per-use-case provider + model (provider = a top-level block). Omitted slots use the defaults.

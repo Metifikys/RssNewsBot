@@ -1119,7 +1119,15 @@ data class TrackerConfig(
      * extraction prompt emits `eventDate`, every entry is undated and the calendar would be a
      * bare list of titles; with dates flowing, TBA rows are mostly noise.
      */
-    val showUndated: Boolean = false
+    val showUndated: Boolean = false,
+    /**
+     * Render the message as a Bot API 10.1 rich message: a table per week (this week, next week,
+     * later, released) with the dates as date-time entities — every reader sees them in their own
+     * zone, with a self-updating "in N days" — and the undated entries collapsed. The existing
+     * pinned message is edited in place (an edit turns a text message into a rich one); should
+     * Telegram refuse the rich form, the classic text goes out instead.
+     */
+    val rich: Boolean = false
 )
 
 /**
