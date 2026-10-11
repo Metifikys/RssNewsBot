@@ -221,6 +221,10 @@ weekly:
         eventTypes: [release_date, delay]
         byEventDate: false              # true = by the release's own date (sparse)
   # Album of the stories' pictures before the roundup text
+  # The whole roundup as one Bot API 10.1 rich message: heading, the album's pictures as a collage,
+  # numbered bullets, the barometer chart uploaded with it, the hashtag. Refused → the classic posts.
+  rich:
+    enabled: false
   album:
     enabled: false
     minPhotos: 2                        # fewer usable pictures → text only

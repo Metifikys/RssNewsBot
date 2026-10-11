@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test
 import java.io.File
 import java.time.LocalDateTime
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WeeklyDigestTest {
@@ -255,6 +256,78 @@ class WeeklyDigestTest {
             checkOk = { "3" !in it }
         )
         assertEquals(listOf("text"), filtered.calls)
+    }
+
+    // ── weekly.rich ─────────────────────────────────────────────────────────
+
+    private class RichWeeklyRun(val htmls: List<String>, val attachments: List<Map<String, ByteArray>>, val calls: List<String>)
+
+    /** Three stories with pictures (album on), a png barometer and a hashtag; [answers] are sendRichMessage's results in turn. */
+    private fun richWeeklyRun(answers: List<SentRef?>): RichWeeklyRun {
+        val urls = listOf("https://a.com/1", "https://b.com/2", "https://c.com/3")
+        val db = historyDb(10)
+        every { db.fetchRecentEvents("games", any(), any()) } returns urls.mapIndexed { i, u ->
+            CoveredEventRow("games", "k$i", "Story $i", "", "release_date", "fact $i", 8 - i, 8, 8, u, LocalDateTime.now())
+        }
+        every { db.fetchRecentRejectedEvents(any(), any(), any(), any()) } returns emptyList()
+        every { db.fetchArticlesByLinks(any()) } answers {
+            firstArg<List<String>>().map { link ->
+                Article(category = "games", title = link, link = link, description = "d", imageUrl = "https://img/${urls.indexOf(link) + 1}.jpg")
+            }
+        }
+        val embedder = mockk<Embedder>()
+        every { embedder.embed(any(), any(), any()) } answers {
+            firstArg<List<String>>().mapIndexed { i, _ -> FloatArray(4).also { it[i % 4] = 1f } }
+        }
+        val llm = mockk<LlmClient>()
+        every { llm.complete(any(), any()) } returns "📅 Тиждень\n" + urls.mapIndexed { i, u -> "• Story $i [S$i]($u)" }.joinToString("\n")
+        val factory = mockk<LlmClientsFactory>()
+        every { factory.forRender(any()) } returns llm
+        val calls = mutableListOf<String>()
+        val htmls = mutableListOf<String>()
+        val attachments = mutableListOf<Map<String, ByteArray>>()
+        val queue = ArrayDeque(answers)
+        val sender = mockk<TelegramSender>()
+        every { sender.sendRichMessage("@g", capture(htmls), any(), any(), capture(attachments)) } answers { calls += "rich"; queue.removeFirst() }
+        every { sender.sendToChannel(any(), any(), any(), any(), any()) } answers { calls += "text"; listOf(SentRef(-1L, 1L)) }
+        every { sender.sendMediaGroup(any(), any()) } answers { calls += "album"; listOf(SentRef(-1L, 5L), SentRef(-1L, 6L)) }
+        every { sender.sendPhotoBytes(any(), any(), any(), any()) } answers { calls += "chart"; SentRef(-1L, 7L) }
+        val weekly = WeeklyConfig(
+            enabled = true, minMentions = 1, showMentions = false, hashtag = "#тиждень",
+            album = metifikys.config.WeeklyAlbumConfig(enabled = true),
+            barometer = metifikys.config.BarometerConfig(enabled = true, weeks = 4, minWeeks = 4, format = "png"),
+            rich = metifikys.config.WeeklyRichConfig(enabled = true)
+        )
+        WeeklyDigest(config(weekly, storyIntel = true), db, factory, embedder, sender, weekly, File(".")) { true }.runForCategory("games")
+        return RichWeeklyRun(htmls, attachments, calls)
+    }
+
+    @Test
+    fun `a rich roundup is one message — collage, numbered bullets, the chart uploaded with it, the hashtag`() {
+        val run = richWeeklyRun(listOf(SentRef(-1L, 9L)))
+        assertEquals(listOf("rich"), run.calls)
+        val html = run.htmls.single()
+        assertTrue(html.startsWith(
+            "<h2>📅 Тиждень</h2><tg-collage><img src=\"https://img/1.jpg\"/><img src=\"https://img/2.jpg\"/><img src=\"https://img/3.jpg\"/></tg-collage>" +
+                "<ol><li>Story 0 <a href=\"https://a.com/1\">S0</a></li>"
+        ), html)
+        assertTrue("<figure><img src=\"tg://photo?id=barometer\"/><figcaption>📊 Барометр індустрії за нашими джерелами (4 тиж." in html, html)
+        assertTrue(html.endsWith("<p>#тиждень</p>"), html)
+        val png = run.attachments.single()["barometer"]!!
+        val img = javax.imageio.ImageIO.read(png.inputStream())
+        assertEquals(1200 to 675, img.width to img.height)
+    }
+
+    @Test
+    fun `a refused rich roundup is retried without media, then the classic posts go out`() {
+        val bare = richWeeklyRun(listOf(null, SentRef(-1L, 9L)))
+        assertEquals(listOf("rich", "rich"), bare.calls)
+        assertFalse("<tg-collage>" in bare.htmls[1] || "<figure>" in bare.htmls[1], bare.htmls[1])
+        assertTrue("<p>📊 Барометр індустрії (4 тиж., за нашими джерелами)</p>" in bare.htmls[1], bare.htmls[1])
+        assertTrue(bare.attachments[1].isEmpty())
+
+        val classic = richWeeklyRun(listOf(null, null))
+        assertEquals(listOf("rich", "rich", "album", "text", "chart"), classic.calls)
     }
 
     @Test

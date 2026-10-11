@@ -318,6 +318,12 @@ via a `/status` admin snapshot.
   deduplicated, judged by the category's `post.images` picker and a HEAD preflight: `image/…`, at
   most `maxBytes`), the header line as the caption of the first photo; `minPhotos`..`maxPhotos`
   (2..5). Fewer usable pictures or a failed album → the text alone, as before.
+- **Rich weekly roundup** (opt-in, `weekly.rich`) — the album, the text and the barometer photo
+  become ONE Bot API 10.1 rich message ([`RichPost.weekly`](src/main/kotlin/metifikys/format/RichPost.kt)):
+  the header as a heading, the album's pictures (same choice, so `weekly.album` decides) as a
+  collage, the bullets as a numbered list, the leaderboard, the barometer chart uploaded in the same
+  multipart request (`tg://photo?id=barometer`) with its caption, the hashtag. A refusal is retried
+  once without media (no collage, the sparkline block in place of the chart); then the classic posts.
 - **Living trackers** (`trackers:` per category) — e.g. a pinned "📅 Найближчі релізи" message
   the bot edits after every digest from `release_date` / `delay` events and their `eventDate`
   (year cross-checked against the article), with `⏳ було <old date>` on a delay, a

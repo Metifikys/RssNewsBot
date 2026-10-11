@@ -22,6 +22,7 @@ import metifikys.fetch.ImageCandidate
 import metifikys.fetch.ImagePicker
 import metifikys.fetch.ImageProbe
 import metifikys.fetch.UrlGuard
+import metifikys.format.RichPost
 import metifikys.format.TopicFormatter
 import metifikys.log.RunContext
 import metifikys.model.Article
@@ -470,6 +471,8 @@ class WeeklyDigest(
         var header: String? = null
         // The story URLs of the kept bullets, in order — the weekly.album pictures.
         val bulletUrls = mutableListOf<String>()
+        // The kept bullets with their badges, for weekly.rich's numbered list.
+        val bulletTexts = mutableListOf<String>()
         for ((i, seg) in segments.withIndex()) {
             val urls = TopicFormatter.extractUrls(seg)
             // The first segment before any bullet, if it carries no link, is the header line.
@@ -489,6 +492,7 @@ class WeeklyDigest(
             if (out.isNotEmpty()) out.append("\n\n")
             out.append("• ").append(bullet)
             bullets++
+            bulletTexts += bullet
             (story?.url ?: urls.firstOrNull())?.let { bulletUrls += it }
         }
 
@@ -496,13 +500,19 @@ class WeeklyDigest(
             logger.warn { "[Weekly:$name] no postable bullets after filtering — skipping post." }
             return
         }
-        leaderboardBlock(name)?.let { out.append("\n\n").append(it) }
+        val leaderboard = leaderboardBlock(name)
+        leaderboard?.let { out.append("\n\n").append(it) }
         val barometer = barometerFor(name)
         barometer?.text?.let { out.append("\n\n").append(it) }
-        weekly.hashtag?.trim()?.takeIf { it.isNotEmpty() }?.let { out.append("\n\n").append(it) }
+        val hashtag = weekly.hashtag?.trim()?.takeIf { it.isNotEmpty() }
+        hashtag?.let { out.append("\n\n").append(it) }
 
+        val photos = albumPhotos(name, catCfg, bulletUrls)
+        // weekly.rich: all of it as one rich message; a refusal falls through to the classic posts.
+        val title = header ?: "${catCfg.emoji} Головне за тиждень"
+        if (weekly.rich.enabled && sendRich(name, channelId, title, photos.orEmpty(), bulletTexts, leaderboard, barometer, hashtag)) return
         // weekly.album: the stories' pictures go first, the text right after; no album → text only.
-        albumPhotos(name, catCfg, bulletUrls)?.let { photos -> sendAlbum(name, channelId, photos, header) }
+        photos?.let { sendAlbum(name, channelId, it, header) }
         val sent = sender.sendToChannel(channelId, out.toString(), disablePreview = true).isNotEmpty()
         if (sent) {
             logger.info { "[Weekly:$name] weekly roundup posted to $channelId ($bullets bullet(s))." }
@@ -556,8 +566,47 @@ class WeeklyDigest(
         }
     }
 
-    /** The barometer for one roundup: a PNG to post after it, or a text block to put in it. */
-    private class BarometerOut(val png: ByteArray?, val caption: String, val text: String?)
+    /**
+     * `weekly.rich`: the roundup as one rich message ([RichPost.weekly]) with the barometer chart
+     * uploaded alongside; a refusal is retried once without media (no collage, the sparkline in
+     * place of the chart). True once Telegram took one of them.
+     */
+    private fun sendRich(
+        name: String,
+        channelId: String,
+        title: String,
+        photos: List<String>,
+        bullets: List<String>,
+        leaderboard: String?,
+        barometer: BarometerOut?,
+        hashtag: String?
+    ): Boolean {
+        for (withMedia in listOf(true, false)) {
+            val png = barometer?.png?.takeIf { withMedia }
+            val blocks = listOfNotNull(leaderboard, if (png == null) barometer?.sparkline else null)
+            val html = RichPost.weekly(
+                title, if (withMedia) photos else emptyList(), bullets, blocks,
+                chartId = png?.let { BAROMETER_ATTACHMENT }, chartCaption = barometer?.caption, hashtag = hashtag
+            )
+            val attachments = png?.let { mapOf(BAROMETER_ATTACHMENT to it) }.orEmpty()
+            if (sender.sendRichMessage(channelId, html, attachments = attachments) != null) {
+                logger.info {
+                    "[Weekly:$name][Rich] roundup posted to $channelId as one rich message (${bullets.size} bullet(s), " +
+                        "${if (withMedia) photos.size else 0} picture(s), chart ${if (png != null) "attached" else "as text"})"
+                }
+                return true
+            }
+            if (!withMedia || (photos.isEmpty() && barometer?.png == null)) break
+        }
+        logger.warn { "[Weekly:$name][Rich] Telegram refused the rich roundup — sending the classic posts" }
+        return false
+    }
+
+    /**
+     * The barometer for one roundup: a PNG to post after it, or a text block to put in it; the
+     * [sparkline] block is there either way (the rich roundup's fallback when its media are refused).
+     */
+    private class BarometerOut(val png: ByteArray?, val caption: String, val text: String?, val sparkline: String)
 
     /**
      * `weekly.barometer` for [name]: counts the category's `event_history` and, in `png` format,
@@ -586,15 +635,16 @@ class WeeklyDigest(
         }
         logger.info { "[Weekly:$name][Barometer] ${result.series.joinToString { "${it.id}=${it.counts}" }}" }
         val caption = Barometer.caption(result)
-        if (cfg.format == BarometerConfig.FORMAT_TEXT) return BarometerOut(null, caption, Barometer.textBlock(result))
+        val sparkline = Barometer.textBlock(result)
+        if (cfg.format == BarometerConfig.FORMAT_TEXT) return BarometerOut(null, caption, sparkline, sparkline)
         return try {
             val title = "Барометр індустрії · $name"
             val subtitle = "${result.weekStarts.size} тижнів до ${result.weekStarts.last().plusDays(6).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))} · за нашими джерелами"
-            BarometerOut(BarometerChart.render(result, title, subtitle), caption, null)
+            BarometerOut(BarometerChart.render(result, title, subtitle), caption, null, sparkline)
         } catch (e: Throwable) {
             // AWT on a server without its native libraries fails with an Error, not an Exception.
             logger.warn(e) { "[Weekly:$name][Barometer] chart rendering failed — the sparkline goes into the roundup instead" }
-            BarometerOut(null, caption, Barometer.textBlock(result))
+            BarometerOut(null, caption, sparkline, sparkline)
         }
     }
 
@@ -702,6 +752,9 @@ class WeeklyDigest(
 
         /** How far before the barometer window `event_history` is read for release dates inside it. */
         private const val BAROMETER_RELEASE_LOOKBACK_DAYS = 365L
+
+        /** The id the barometer chart is uploaded under in a rich roundup (`tg://photo?id=barometer`). */
+        private const val BAROMETER_ATTACHMENT = "barometer"
 
         /** Per-candidate `coreFact` cap in the LLM prompt JSON (article descriptions can be long). */
         private const val MAX_CANDIDATE_COREFACT_CHARS = 400

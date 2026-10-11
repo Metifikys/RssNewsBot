@@ -310,6 +310,8 @@ data class WeeklyConfig(
     val barometer: BarometerConfig = BarometerConfig(),
     /** An album of the stories' pictures before the roundup text; see [WeeklyAlbumConfig]. */
     val album: WeeklyAlbumConfig = WeeklyAlbumConfig(),
+    /** The whole roundup as one Bot API 10.1 rich message; see [WeeklyRichConfig]. */
+    val rich: WeeklyRichConfig = WeeklyRichConfig(),
     /**
      * Categories that participate. Empty = every category that has a `dedup:` block (only those
      * accumulate the `covered_events` / `rejected_events` the ranker needs). Names must exist.
@@ -330,6 +332,18 @@ data class WeeklyConfig(
  * whole album over one bad photo. Fewer than [minPhotos] usable pictures, or any album failure →
  * the text alone, as before. At most [maxPhotos] (Telegram allows 2–10).
  */
+/**
+ * `weekly.rich`: the roundup goes out as ONE Bot API 10.1 rich message instead of album, text and
+ * barometer photo — the header as a heading, the stories' pictures as a collage (the `album` choice,
+ * so `album.enabled` decides whether there are any), the bullets as a numbered list, the leaderboard,
+ * the barometer chart uploaded with the message (or its sparkline block) and the hashtag. A refusal
+ * is retried once without media (no collage, the sparkline instead of the chart); after that the
+ * classic posts go out.
+ */
+data class WeeklyRichConfig(
+    val enabled: Boolean = false
+)
+
 data class WeeklyAlbumConfig(
     val enabled: Boolean = false,
     val minPhotos: Int = 2,
