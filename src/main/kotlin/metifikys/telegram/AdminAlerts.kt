@@ -11,14 +11,16 @@ private val logger = KotlinLogging.logger {}
  */
 class AdminAlerts(
     private val chatId: String?,
-    private val sender: TelegramSender
+    private val sender: TelegramSender,
+    /** The chat's thread for alerts (`admin.threads.status`); null = its main thread. */
+    private val threadId: Long? = null
 ) {
     val enabled: Boolean get() = !chatId.isNullOrBlank()
 
     fun send(text: String, silent: Boolean = false): Boolean {
         val chat = chatId?.trim()?.takeIf { it.isNotEmpty() } ?: return false
         return try {
-            (sender.sendMessageWithKeyboard(chat, text, silent = silent) != null).also { ok ->
+            (sender.sendMessageWithKeyboard(chat, text, silent = silent, threadId = threadId) != null).also { ok ->
                 if (!ok) logger.warn { "[Admin] alert to $chat not delivered: ${text.lineSequence().first()}" }
             }
         } catch (e: Exception) {

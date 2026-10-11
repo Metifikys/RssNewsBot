@@ -13,8 +13,8 @@ private val logger = KotlinLogging.logger {}
  * polling, and commands never run concurrently with each other.
  *
  * Handlers are registered by name ([register]); `/help` is built in and also answers an
- * unknown command. Replies are separate plain-text messages to the chat the command came from
- * (the rolling status snapshot is untouched — [StatusPoster] deletes only its own message).
+ * unknown command. Replies are separate plain-text messages to the chat and thread the command
+ * came from (the rolling status snapshot is untouched — [StatusPoster] deletes only its own message).
  *
  * Telegram keeps undelivered updates for 24 h, so a command sent during a long outage would run
  * hours late; commands older than [maxAgeSeconds] are refused with a "stale" reply instead.
@@ -30,10 +30,16 @@ class AdminCommandRouter(
     /** A parsed command: [name] lowercased without the slash and `@BotName`, [args] tokenized. */
     data class Command(val name: String, val args: List<String>)
 
-    /** Where a command came from, and how to answer it. */
-    class Context(val chatId: String, val fromId: Long, val updateId: Long, private val sender: TelegramSender) {
+    /** Where a command came from (chat and thread), and how to answer it — in that same thread. */
+    class Context(
+        val chatId: String,
+        val fromId: Long,
+        val updateId: Long,
+        private val sender: TelegramSender,
+        val threadId: Long? = null
+    ) {
         fun reply(text: String) {
-            if (sender.sendMessageWithKeyboard(chatId, text) == null) {
+            if (sender.sendMessageWithKeyboard(chatId, text, threadId = threadId) == null) {
                 logger.warn { "[Admin] reply to $chatId failed" }
             }
         }
@@ -92,12 +98,12 @@ class AdminCommandRouter(
         if (cmd == null) {
             val route = messageRoutes.firstOrNull { r -> runCatching { r.accepts(m) }.getOrDefault(false) } ?: return
             if (!auth.allowsCommand(m)) return
-            val ctx = Context(m.chatId.toString(), m.fromId ?: return, m.updateId, sender)
+            val ctx = Context(m.chatId.toString(), m.fromId ?: return, m.updateId, sender, m.threadId)
             executor.execute { runMessage(route, m, ctx) }
             return
         }
         if (!auth.allowsCommand(m)) return
-        val ctx = Context(m.chatId.toString(), m.fromId ?: return, m.updateId, sender)
+        val ctx = Context(m.chatId.toString(), m.fromId ?: return, m.updateId, sender, m.threadId)
         executor.execute { run(cmd, m, ctx) }
     }
 

@@ -396,6 +396,17 @@ via a `/status` admin snapshot.
   already hit it. Buttons: 🔇 the franchise and 2–4 keyword candidates (in-category / global, the same
   DB mute as `/mute`) and 🔇 the event type in this category. Same users and chats as the commands;
   in a group with privacy mode on only `/inspect` reaches the bot, so prefer the private chat.
+- **Raw feed browser** (on with `admin.commands`) —
+  [`RawBrowser`](src/main/kotlin/metifikys/telegram/RawBrowser.kt): `/raw` (or `/raw <cat>`) opens a
+  keyboard of categories → their configured feeds; a feed sends its 10 latest articles (insert order),
+  one message each: title and link, `published → fetched`, the row's status in words (queued, Step 0
+  mute, `new_feed` backlog, semantic duplicate of #id, processed), what Step 1 left behind (the
+  `event_articles` event and its status, the `rejected_events` verdict with scores, the channel post
+  of the event) and the stored text (`articles.description`) plus the AI summary as collapsed quotes.
+- **Admin chat threads** (`admin.threads`) — with Threaded Mode on in @BotFather the private chat
+  with the bot gets topics; `status` takes the status snapshot and everything the bot posts on its
+  own (alerts, mute proposals, moderation), `inspect` the `/inspect` cards, `raw` the `/raw` browser.
+  A command's own reply goes back to the thread it came from; `/thread` prints a thread's id.
 - **CLI login health** (opt-in, `health.enabled`) —
   [`CliHealthMonitor`](src/main/kotlin/metifikys/ai/CliHealthMonitor.kt) gets the outcome of every
   `claude -p` / `codex exec` run, classified by the shared
@@ -1082,7 +1093,7 @@ first cycle.
 | `preferences`     | no       | Global `mute:` keyword blocklist                            |
 | `feedback`        | no       | Reaction-feedback aggregation (off by default)              |
 | `weekly`          | no       | Weekly top-story roundup (off by default); `weekly.barometer` adds the industry chart, `weekly.album` a photo album before it |
-| `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`), and with them the post inspector (`inspect.enabled`, default on) |
+| `admin`           | no       | `statusChatId` enables the `/status` poster; `userIds` + `commands.enabled` turn on admin commands (needs `telegram.updatesPolling`), and with them the post inspector (`inspect.enabled`, default on) and `/raw`; `threads.status` / `inspect` / `raw` route them to topics of the admin chat |
 | `health`          | no       | `claude` / `codex` login + usage-limit alerts in the admin chat, idle probe, `setup-token` expiry (off by default) |
 | `feedHealth`      | no       | Per-feed fetch health + the `/status` 📡 Feeds anomalies: `enabled`, `windowDays` (14, max 30), `statusSection`, `thresholds`; `candidates` (candidate feeds + autodiscovery, own `enabled`) (off by default) |
 | `storyIntel`      | no       | Record story clusters in `event_articles` and delivered events in `event_history`: `enabled`, `retentionDays` (180, ≥ `weekly.lookbackDays`), `historyRetentionDays` (1095), `domainAliases` (off by default; the story lines need it) |

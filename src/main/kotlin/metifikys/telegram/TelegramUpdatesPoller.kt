@@ -133,7 +133,8 @@ class TelegramUpdatesPoller(
                         updateId = u.updateId, chatId = m.chat.id, chatType = m.chat.type, fromId = m.from?.id,
                         messageId = m.messageId, date = m.date, text = m.text,
                         forwardChatId = origin?.chat?.id ?: legacy?.id,
-                        forwardMessageId = origin?.messageId ?: legacy?.let { m.forwardFromMessageId }
+                        forwardMessageId = origin?.messageId ?: legacy?.let { m.forwardFromMessageId },
+                        threadId = m.messageThreadId
                     )
                 )
             }
@@ -144,7 +145,8 @@ class TelegramUpdatesPoller(
                 router.onCallback(
                     IncomingCallback(
                         updateId = u.updateId, id = c.id, fromId = c.from.id, data = c.data.orEmpty(),
-                        chatId = c.message?.chat?.id, messageId = c.message?.messageId
+                        chatId = c.message?.chat?.id, messageId = c.message?.messageId,
+                        threadId = c.message?.messageThreadId
                     )
                 )
             }
@@ -246,6 +248,8 @@ class TelegramUpdatesPoller(
         val from: UserDto? = null,
         val date: Long = 0,
         val text: String? = null,
+        /** The topic of a private chat with topics on, or of a forum group; absent in the main thread. */
+        @SerialName("message_thread_id") val messageThreadId: Long? = null,
         @SerialName("forward_origin") val forwardOrigin: ForwardOriginDto? = null,
         @SerialName("forward_from_chat") val forwardFromChat: ChatDto? = null,
         @SerialName("forward_from_message_id") val forwardFromMessageId: Long? = null

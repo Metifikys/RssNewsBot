@@ -20,7 +20,9 @@ class StatusPoster(
     private val chatId: String,
     private val sender: TelegramSender,
     private val statusCommand: StatusCommand,
-    private val errorLog: CycleErrorLog
+    private val errorLog: CycleErrorLog,
+    /** The chat's thread for the snapshot (`admin.threads.status`); null = its main thread. */
+    private val threadId: Long? = null
 ) {
     @Volatile
     private var lastMessageId: Long? = null
@@ -38,7 +40,7 @@ class StatusPoster(
             // not a reason to skip the new post.
             sender.deleteMessage(chatId, previous)
         }
-        val newId = sender.sendMessageReturningId(chatId, built.text)
+        val newId = sender.sendMessageReturningId(chatId, built.text, threadId)
         if (newId != null) {
             lastMessageId = newId
             errorLog.clearUpTo(built.errorCommitToken)

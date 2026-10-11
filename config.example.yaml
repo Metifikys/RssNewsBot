@@ -283,7 +283,7 @@ admin:
   statusChatId: null                    # e.g. "123456789"; null = no status post
   userIds: []                           # who may run commands / press buttons, e.g. [123456789]
   commands:
-    enabled: false                      # /help /status /pause /resume /run /mute /unmute /mutes /inspect
+    enabled: false                      # /help /status /pause /resume /run /mute /unmute /mutes /inspect /raw /thread
   muteSuggestions:                      # weekly "mute this?" with [in category] [global] [no]
     enabled: false
     everyDays: 7
@@ -296,6 +296,10 @@ admin:
     categories: []                      # empty = every category
   inspect:                              # /inspect <post link>, a pasted link or a forwarded post → a card + 🔇 buttons
     enabled: true                       # only with commands.enabled; false = no /inspect, links/forwards ignored
+  threads:                              # topics of statusChatId (@BotFather → Threaded Mode); /thread prints an id
+    status: null                        # status snapshot, alerts, mute proposals, moderation; null = main thread
+    inspect: null                       # /inspect cards
+    raw: null                           # /raw: category → feed → its 10 latest articles
 
 categories:
   tech:

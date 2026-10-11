@@ -477,6 +477,30 @@ class TelegramSenderTest {
     }
 
     @Test
+    fun `admin messages carry message_thread_id only when a thread is given`() {
+        val bodies = mutableListOf<String>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { ex ->
+            bodies += ex.requestBody.readBytes().toString(Charsets.UTF_8)
+            val resp = """{"ok":true,"result":{"message_id":9,"chat":{"id":555}}}""".toByteArray()
+            ex.sendResponseHeaders(200, resp.size.toLong())
+            ex.responseBody.use { it.write(resp) }
+        }
+        server.start()
+        try {
+            val s = TelegramSender("tok", apiBaseUrl = "http://127.0.0.1:${server.address.port}", pacer = noPacing())
+            assertEquals(9L, s.sendMessageWithKeyboard("555", "hi", threadId = 42L))
+            assertEquals(9L, s.sendMessageReturningId("555", "status", threadId = 43L))
+            assertEquals(9L, s.sendMessageWithKeyboard("555", "main"))
+            assertTrue(bodies[0].contains(""""message_thread_id":42"""), bodies[0])
+            assertTrue(bodies[1].contains(""""message_thread_id":43"""), bodies[1])
+            assertTrue("message_thread_id" !in bodies[2], bodies[2])
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun `a rejected album returns nothing`() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { ex ->

@@ -10,6 +10,7 @@ private val logger = KotlinLogging.logger {}
  * A `message` update reduced to what command routing needs. [date] is Telegram's epoch seconds.
  * [forwardChatId] / [forwardMessageId] are set when the message is a forward of a CHANNEL post
  * (`forward_origin.type = channel`, or the older `forward_from_chat`): the original post's ids.
+ * [threadId] is the topic the message was sent in (`message_thread_id`); null = the main thread.
  */
 data class IncomingMessage(
     val updateId: Long,
@@ -20,12 +21,14 @@ data class IncomingMessage(
     val date: Long,
     val text: String?,
     val forwardChatId: Long? = null,
-    val forwardMessageId: Long? = null
+    val forwardMessageId: Long? = null,
+    val threadId: Long? = null
 )
 
 /**
  * A `callback_query` update (an inline button press). [chatId]/[messageId] identify the message
- * that carried the keyboard; they are null when Telegram no longer has it.
+ * that carried the keyboard; they are null when Telegram no longer has it. [threadId] is that
+ * message's topic.
  */
 data class IncomingCallback(
     val updateId: Long,
@@ -33,7 +36,8 @@ data class IncomingCallback(
     val fromId: Long,
     val data: String,
     val chatId: Long?,
-    val messageId: Long?
+    val messageId: Long?,
+    val threadId: Long? = null
 )
 
 /**

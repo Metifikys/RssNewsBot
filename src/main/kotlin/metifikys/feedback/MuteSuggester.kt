@@ -100,7 +100,9 @@ class MuteSuggester(
         for (row in accepted) {
             val id = db.insertMuteSuggestion(row)
             val stored = row.copy(id = id)
-            val messageId = sender.sendMessageWithKeyboard(chatId, render(stored), keyboard(stored), silent = true)
+            val messageId = sender.sendMessageWithKeyboard(
+                chatId, render(stored), keyboard(stored), silent = true, threadId = config.admin.threads.status
+            )
             if (messageId != null) {
                 db.setMuteSuggestionMessage(id, chatId.toLongOrNull() ?: 0L, messageId)
                 posted++

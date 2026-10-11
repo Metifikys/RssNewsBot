@@ -72,6 +72,7 @@ object ConfigChangelog {
         Entry("categories.*.dedup.digest.updateDiff", "2026-10-02", "a meaningful_update is posted only with facts absent from the earlier posts (LLM diff; start with logOnly: true; render prompt needs newFacts)"),
         Entry("fetcher.summarizeInputChars", "2026-10-08", "per-article summarize reads up to this much page text (default 12000) instead of the 1500-char stored description"),
         Entry("categories.*.llm.summarize.providers", "2026-10-10", "⚖️ any llm slot (extract, render, summarize, …) can be a weighted split: providers: [{ percent, provider, model }], daily tallies in bot_state; replaces extractAlternate"),
+        Entry("admin.threads", "2026-10-11", "🧵 admin chat threads (private-chat topics): status snapshot + notices, /inspect cards and the /raw browser each in their own thread; /thread prints a thread's id"),
     )
 
     /** Entries whose path does not occur in [presentPaths] (schema-form paths found in the YAML). */

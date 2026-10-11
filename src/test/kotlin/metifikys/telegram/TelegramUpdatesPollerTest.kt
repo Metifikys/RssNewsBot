@@ -134,6 +134,39 @@ class TelegramUpdatesPollerTest {
     }
 
     @Test
+    fun `a command and a button press from a thread keep the thread, and the reply goes back into it`() {
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val router = AdminCommandRouter(AdminAuth(admin), sender, direct)
+        val callbacks = AdminCallbackRouter(AdminAuth(admin), sender, direct)
+        val threads = Collections.synchronizedList(mutableListOf<Long?>())
+        val done = CountDownLatch(2)
+        router.register("where", "/where", "test") { _, ctx ->
+            threads += ctx.threadId
+            ctx.reply("here")
+            done.countDown()
+        }
+        callbacks.register("raw") { cb, _ ->
+            threads += cb.threadId
+            done.countDown()
+        }
+        val now = System.currentTimeMillis() / 1000
+        val cmd = """{"update_id":40,"message":{"message_id":5,"message_thread_id":42,"date":$now,""" +
+            """"chat":{"id":7,"type":"private"},"from":{"id":7},"text":"/where"}}"""
+        val press = """{"update_id":41,"callback_query":{"id":"cb2","from":{"id":7},"data":"raw:home",""" +
+            """"message":{"message_id":44,"message_thread_id":77,"date":0,"chat":{"id":555,"type":"private"}}}}"""
+        val base = fakeApi("[$cmd,$press]")
+        val poller = TelegramUpdatesPoller("t", db, router, callbacks, apiBaseUrl = base, longPollSeconds = 1)
+        poller.start()
+        try {
+            assertTrue(done.await(10, TimeUnit.SECONDS))
+        } finally {
+            poller.stop()
+        }
+        assertEquals(listOf<Long?>(42L, 77L), threads.toList())
+        io.mockk.verify { sender.sendMessageWithKeyboard("7", "here", threadId = 42L) }
+    }
+
+    @Test
     fun `a forwarded channel post reaches the message routes with its origin, old and new forward fields`() {
         val sender = mockk<TelegramSender>(relaxed = true)
         val router = AdminCommandRouter(AdminAuth(admin), sender, direct)

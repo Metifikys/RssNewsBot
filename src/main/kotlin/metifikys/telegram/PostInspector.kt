@@ -48,11 +48,15 @@ class PostInspector(
             if (refs.isEmpty()) {
                 ctx.reply("Використання: /inspect https://t.me/c/<id>/<msg> — або просто надішли посилання на пост чи перешли його сюди.")
             } else {
-                inspect(refs, ctx.chatId)
+                inspect(refs, ctx.chatId, threadOf(ctx))
             }
         }
-        router.registerMessageHandler("inspect", ::accepts) { m, ctx -> inspect(refsOf(m), ctx.chatId) }
+        router.registerMessageHandler("inspect", ::accepts) { m, ctx -> inspect(refsOf(m), ctx.chatId, threadOf(ctx)) }
     }
+
+    /** `admin.threads.inspect` in the admin chat, else the thread the request came from. */
+    private fun threadOf(ctx: AdminCommandRouter.Context): Long? =
+        config.admin.threadFor(ctx.chatId, config.admin.threads.inspect, ctx.threadId)
 
     /** A forwarded channel post or a message with post links; cheap, runs on the poller thread. */
     fun accepts(m: IncomingMessage): Boolean = PostLinks.forwarded(m) != null || PostLinks.parse(m.text).isNotEmpty()
@@ -60,8 +64,8 @@ class PostInspector(
     private fun refsOf(m: IncomingMessage): List<PostRef> =
         (listOfNotNull(PostLinks.forwarded(m)) + PostLinks.parse(m.text)).distinct().take(PostLinks.MAX_LINKS)
 
-    /** One card (or a "not found" line) per ref, sent to [chatId]. */
-    fun inspect(refs: List<PostRef>, chatId: String) {
+    /** One card (or a "not found" line) per ref, sent to [chatId] / [threadId]. */
+    fun inspect(refs: List<PostRef>, chatId: String, threadId: Long? = null) {
         val misses = mutableListOf<String>()
         for (ref in refs) {
             val found = try {
@@ -78,14 +82,14 @@ class PostInspector(
                 is Resolved.Post -> {
                     val inspection = load(found.first, found.chunks)
                     val kb = keyboardFor(found.first, inspection)
-                    if (sender.sendMessageWithKeyboard(chatId, PostCard.render(inspection), kb, html = true) == null) {
+                    if (sender.sendMessageWithKeyboard(chatId, PostCard.render(inspection), kb, html = true, threadId = threadId) == null) {
                         logger.warn { "[Inspect] card for ${ref.display()} not sent" }
                     }
                     logger.info { "[Inspect] card for ${found.first.category} ${found.first.chatId}/${found.first.messageId} (${found.first.eventKey})" }
                 }
             }
         }
-        if (misses.isNotEmpty()) sender.sendMessageWithKeyboard(chatId, misses.joinToString("\n"))
+        if (misses.isNotEmpty()) sender.sendMessageWithKeyboard(chatId, misses.joinToString("\n"), threadId = threadId)
     }
 
     sealed interface Resolved {

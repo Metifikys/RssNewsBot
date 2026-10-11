@@ -52,10 +52,21 @@ class AdminCommands(
         router.register("mute", "/mute <слово|\"фраза\"|type:тип> [cat]", "заглушити слово або тип подій у категорії") { cmd, ctx -> mute(cmd.args, ctx) }
         router.register("unmute", "/unmute <слово|type:тип> [cat]", "зняти mute, доданий ботом") { cmd, ctx -> unmute(cmd.args, ctx) }
         router.register("mutes", "/mutes [yaml]", "усі mute і їхні джерела") { cmd, ctx -> listMutes(cmd.args, ctx) }
+        router.register("thread", "/thread", "id цього треду для admin.threads") { _, ctx -> thread(ctx) }
     }
 
     private fun status(ctx: AdminCommandRouter.Context) {
-        if (sender.sendMessageReturningId(ctx.chatId, status.build()) == null) ctx.reply("⚠️ не вдалося надіслати знімок")
+        if (sender.sendMessageReturningId(ctx.chatId, status.build(), ctx.threadId) == null) ctx.reply("⚠️ не вдалося надіслати знімок")
+    }
+
+    /** The id of the thread the command came from, and what `admin.threads` maps where. */
+    private fun thread(ctx: AdminCommandRouter.Context) {
+        val t = config.admin.threads
+        fun id(v: Long?) = v?.toString() ?: "—"
+        ctx.reply(
+            "Цей тред: ${ctx.threadId?.let { "message_thread_id = $it" } ?: "основний (без message_thread_id)"}\n" +
+                "admin.threads: status ${id(t.status)} · inspect ${id(t.inspect)} · raw ${id(t.raw)}"
+        )
     }
 
     /** The category named by [arg], or null after telling the admin which ones exist. */

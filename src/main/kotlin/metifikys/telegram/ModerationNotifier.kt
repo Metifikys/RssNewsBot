@@ -84,7 +84,9 @@ class ModerationNotifier(
                 val emoji = config.categories[p.category]?.emoji.orEmpty()
                 val state = KeyboardState(p.chatId, p.messageId, p.muteKeyword, muted = false, signal = null,
                     canDelete = true, withFeedback = p.eventKey != null)
-                if (sender.sendMessageWithKeyboard(chat, render(p, emoji), keyboard(state), silent = true, html = true) == null) {
+                if (sender.sendMessageWithKeyboard(
+                        chat, render(p, emoji), keyboard(state), silent = true, html = true, threadId = config.admin.threads.status
+                    ) == null) {
                     logger.warn { "[Moderation:${p.category}] message for ${p.chatId}/${p.messageId} not sent" }
                 }
             } catch (e: Exception) {

@@ -83,6 +83,15 @@ data class ArticleRecord(
     val summary: String? = null
 )
 
+/** An `articles` row as `/raw` shows it: the bookkeeping plus the stored text and the dedup pointer. */
+data class RawArticle(
+    val record: ArticleRecord,
+    /** `description`: the feed's text, or the fetched page text with `fetchFullContent` (both capped at ingest). */
+    val text: String,
+    /** Canonical article id of a semantic-dedup [metifikys.model.ArticleStatus.DUPLICATE]; null otherwise. */
+    val duplicateOf: Int? = null
+)
+
 /** Ingested articles and their UNPROCESSED → PROCESSING → PROCESSED / DUPLICATE lifecycle. */
 interface ArticleStore {
     /**
@@ -173,6 +182,9 @@ interface ArticleStore {
 
     /** The rows of [links] with status and clocks, in the order of [links] (unknown links skipped). */
     fun fetchArticleRecordsByLinks(links: Collection<String>): List<ArticleRecord>
+
+    /** The [limit] articles [feedUrl] brought into [category] last (newest ingest first), for `/raw`. */
+    fun fetchLatestArticlesOfFeed(category: String, feedUrl: String, limit: Int): List<RawArticle>
 }
 
 internal class ArticleRepository : ArticleStore {
@@ -435,21 +447,37 @@ internal class ArticleRepository : ArticleStore {
             val a = ArticlesTable
             a.select(a.id, a.category, a.title, a.link, a.feedUrl, a.pubDate, a.fetchedAt, a.status, a.dropReason, a.summary)
                 .where { a.link inList wanted }
-                .associate {
-                    it[a.link] to ArticleRecord(
-                        id = it[a.id],
-                        category = it[a.category],
-                        title = it[a.title],
-                        link = it[a.link],
-                        feedUrl = it[a.feedUrl],
-                        pubDate = it[a.pubDate],
-                        fetchedAt = it[a.fetchedAt],
-                        status = it[a.status],
-                        dropReason = it[a.dropReason],
-                        summary = it[a.summary]
-                    )
-                }
+                .associate { it[a.link] to it.toRecord() }
         }
         return wanted.mapNotNull { byLink[it] }
+    }
+
+    override fun fetchLatestArticlesOfFeed(category: String, feedUrl: String, limit: Int): List<RawArticle> {
+        if (limit <= 0) return emptyList()
+        return transaction {
+            val a = ArticlesTable
+            // id = insert order: "the last ones the feed brought", whatever dates the feed claims.
+            a.selectAll()
+                .where { (a.category eq category) and (a.feedUrl eq feedUrl) }
+                .orderBy(a.id, SortOrder.DESC)
+                .limit(limit)
+                .map { RawArticle(it.toRecord(), it[a.description], it[a.duplicateOf]) }
+        }
+    }
+
+    private fun ResultRow.toRecord(): ArticleRecord {
+        val a = ArticlesTable
+        return ArticleRecord(
+            id = this[a.id],
+            category = this[a.category],
+            title = this[a.title],
+            link = this[a.link],
+            feedUrl = this[a.feedUrl],
+            pubDate = this[a.pubDate],
+            fetchedAt = this[a.fetchedAt],
+            status = this[a.status],
+            dropReason = this[a.dropReason],
+            summary = this[a.summary]
+        )
     }
 }

@@ -256,4 +256,22 @@ class PostInspectorTest {
         verify { sender.sendMessageWithKeyboard("7", match { it.startsWith("Використання: /inspect") }, null, false, false) }
         assertTrue("/inspect <посилання на пост>" in router.helpText())
     }
+
+    @Test
+    fun `threads - in the admin chat cards go to admin threads inspect, the usage reply to the sender's thread`() {
+        seed()
+        val threaded = config.copy(admin = config.admin.copy(threads = metifikys.config.AdminThreadsConfig(inspect = 15L)))
+        val router = AdminCommandRouter(AdminAuth(threaded.admin), sender, Executor { it.run() }, clock = { Instant.now() })
+        PostInspector(threaded, db, mutes, sender) { now }.registerAll(router)
+        val nowSec = Instant.now().epochSecond
+        fun msg(chatId: Long, text: String, thread: Long?) = IncomingMessage(1, chatId, "private", 7, 10, nowSec, text, threadId = thread)
+
+        router.onMessage(msg(555, "https://t.me/c/9876543210/15205", thread = 3))
+        verify(exactly = 1) { sender.sendMessageWithKeyboard("555", match { "signal_veil" in it }, any(), any(), true, 15L) }
+        router.onMessage(msg(555, "/inspect", thread = 3))
+        verify { sender.sendMessageWithKeyboard("555", match { it.startsWith("Використання: /inspect") }, null, false, false, 3L) }
+        // Another chat's thread ids are its own: the card answers where the link came from.
+        router.onMessage(msg(7, "https://t.me/c/9876543210/15205", thread = 4))
+        verify(exactly = 1) { sender.sendMessageWithKeyboard("7", match { "signal_veil" in it }, any(), any(), true, 4L) }
+    }
 }

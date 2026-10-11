@@ -73,6 +73,9 @@ interface RejectedEventStore {
         statuses: Set<String> = setOf("rejected")
     ): Map<Pair<String, String>, Int>
 
+    /** The newest Step 1 rejection / duplicate of each of [urls] in [category], keyed by url (`/raw`). */
+    fun fetchRejectedEventsByUrls(category: String, urls: Collection<String>): Map<String, RejectedEventRow>
+
     /** Deletes rejected-event log entries older than [days] days. */
     fun deleteOldRejectedEvents(days: Long = 30)
 }
@@ -121,26 +124,40 @@ internal class RejectedEventRepository : RejectedEventStore {
                 }
                 .orderBy(RejectedEventsTable.extractedAt, SortOrder.DESC)
                 .limit(limit)
-                .map {
-                    RejectedEventRow(
-                        category = it[RejectedEventsTable.category],
-                        eventKey = it[RejectedEventsTable.eventKey],
-                        subject = it[RejectedEventsTable.subject],
-                        franchise = it[RejectedEventsTable.franchise],
-                        eventType = it[RejectedEventsTable.eventType],
-                        coreFact = it[RejectedEventsTable.coreFact],
-                        importance = it[RejectedEventsTable.importance],
-                        newsworthiness = it[RejectedEventsTable.newsworthiness],
-                        digestFit = it[RejectedEventsTable.digestFit],
-                        url = it[RejectedEventsTable.url],
-                        status = it[RejectedEventsTable.status],
-                        relatedPreviousEventKey = it[RejectedEventsTable.relatedPreviousEventKey],
-                        articleIndex = it[RejectedEventsTable.articleIndex],
-                        extractedAt = it[RejectedEventsTable.extractedAt]
-                    )
-                }
+                .map { it.toRow() }
         }
     }
+
+    override fun fetchRejectedEventsByUrls(category: String, urls: Collection<String>): Map<String, RejectedEventRow> {
+        val wanted = urls.filter { it.isNotBlank() }.distinct()
+        if (wanted.isEmpty()) return emptyMap()
+        return transaction {
+            RejectedEventsTable
+                .selectAll()
+                .where { (RejectedEventsTable.category eq category) and (RejectedEventsTable.url inList wanted) }
+                .orderBy(RejectedEventsTable.extractedAt, SortOrder.ASC)
+                .map { it.toRow() }
+                // Ascending, so the newest extraction of a url overwrites the older ones.
+                .associateBy { it.url }
+        }
+    }
+
+    private fun ResultRow.toRow() = RejectedEventRow(
+        category = this[RejectedEventsTable.category],
+        eventKey = this[RejectedEventsTable.eventKey],
+        subject = this[RejectedEventsTable.subject],
+        franchise = this[RejectedEventsTable.franchise],
+        eventType = this[RejectedEventsTable.eventType],
+        coreFact = this[RejectedEventsTable.coreFact],
+        importance = this[RejectedEventsTable.importance],
+        newsworthiness = this[RejectedEventsTable.newsworthiness],
+        digestFit = this[RejectedEventsTable.digestFit],
+        url = this[RejectedEventsTable.url],
+        status = this[RejectedEventsTable.status],
+        relatedPreviousEventKey = this[RejectedEventsTable.relatedPreviousEventKey],
+        articleIndex = this[RejectedEventsTable.articleIndex],
+        extractedAt = this[RejectedEventsTable.extractedAt]
+    )
 
     override fun countRejectedFranchisesSince(
         since: LocalDateTime,

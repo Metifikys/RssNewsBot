@@ -164,7 +164,35 @@ data class AdminConfig(
     /** One moderation message per published post in the admin chat; off by default. */
     val moderation: ModerationConfig = ModerationConfig(),
     /** `/inspect`, pasted post links and forwarded posts → a card about the post; on with [commands]. */
-    val inspect: AdminInspectConfig = AdminInspectConfig()
+    val inspect: AdminInspectConfig = AdminInspectConfig(),
+    /** Threads (topics) of [statusChatId] that the bot's admin messages go to; none = the main thread. */
+    val threads: AdminThreadsConfig = AdminThreadsConfig()
+) {
+    /**
+     * Where an answer to a message from [chatId] / thread [origin] goes: the [configured] thread
+     * when the message came from the admin chat (thread ids mean nothing in another chat), else
+     * back to [origin].
+     */
+    fun threadFor(chatId: String, configured: Long?, origin: Long?): Long? =
+        if (configured != null && chatId == statusChatId?.trim()) configured else origin
+}
+
+/**
+ * Threads of the admin chat (`message_thread_id`): a private chat with the bot gets topics once
+ * Threaded Mode is on in @BotFather, a group once Topics is on. `/thread` sent in a thread answers
+ * with its id. Null = that output goes where it went before.
+ *
+ *  - [status]: the rolling status snapshot, operator alerts, mute proposals, moderation messages —
+ *    everything the bot posts on its own;
+ *  - [inspect]: the `/inspect` cards (links / forwards sent from any thread land here);
+ *  - [raw]: the `/raw` browser and the article messages it sends.
+ *
+ * A command's own reply (usage, errors, `/mutes`, …) always goes to the thread it was sent from.
+ */
+data class AdminThreadsConfig(
+    val status: Long? = null,
+    val inspect: Long? = null,
+    val raw: Long? = null
 )
 
 /**

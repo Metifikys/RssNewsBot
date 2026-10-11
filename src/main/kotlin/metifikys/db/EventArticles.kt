@@ -83,6 +83,9 @@ interface EventArticleStore {
     /** Event key of each of [articleIds] in [category] that has a row; the Layer 2 anchor lookup. */
     fun fetchEventKeysByArticleIds(category: String, articleIds: Collection<Int>): Map<Int, String>
 
+    /** The row of each of [articleIds] in [category] that has one: its event, role and Step 1 status (`/raw`). */
+    fun fetchEventArticlesByArticleIds(category: String, articleIds: Collection<Int>): Map<Int, EventArticleRow>
+
     /**
      * Moves the members of [fromKey] under [toKey] with [role] (Layer 3.5 found the event is a copy
      * of an already covered one). Returns the number of rows moved.
@@ -161,6 +164,15 @@ internal class EventArticleRepository : EventArticleStore {
                 .select(EventArticlesTable.articleId, EventArticlesTable.eventKey)
                 .where { (EventArticlesTable.category eq category) and (EventArticlesTable.articleId inList articleIds.distinct()) }
                 .associate { it[EventArticlesTable.articleId] to it[EventArticlesTable.eventKey] }
+        }
+    }
+
+    override fun fetchEventArticlesByArticleIds(category: String, articleIds: Collection<Int>): Map<Int, EventArticleRow> {
+        if (articleIds.isEmpty()) return emptyMap()
+        return transaction {
+            EventArticlesTable.selectAll()
+                .where { (EventArticlesTable.category eq category) and (EventArticlesTable.articleId inList articleIds.distinct()) }
+                .associate { it[EventArticlesTable.articleId] to it.toRow() }
         }
     }
 

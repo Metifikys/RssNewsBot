@@ -69,7 +69,9 @@ class TelegramSender(
         val parse_mode: String? = null,
         val disable_web_page_preview: Boolean? = null,
         val reply_parameters: ReplyParameters? = null,
-        val link_preview_options: LinkPreviewOptions? = null
+        val link_preview_options: LinkPreviewOptions? = null,
+        /** Forum topic / private-chat thread (Bot API 9.3); null = the chat's main thread. */
+        val message_thread_id: Long? = null
     )
 
     /**
@@ -155,7 +157,8 @@ class TelegramSender(
         val parse_mode: String? = null,
         val disable_web_page_preview: Boolean? = null,
         val disable_notification: Boolean? = null,
-        val reply_markup: InlineKeyboardMarkup? = null
+        val reply_markup: InlineKeyboardMarkup? = null,
+        val message_thread_id: Long? = null
     )
 
     /** `editMessageText` for the admin chat; a null [reply_markup] removes the keyboard. */
@@ -508,17 +511,18 @@ class TelegramSender(
      *
      * Intentionally stays on legacy Markdown (its input is controlled status text, not LLM output),
      * unlike the digest channel path which renders HTML. See [sendToChannel].
+     * [threadId] targets a thread of the chat (`admin.threads.status`); null = its main thread.
      */
-    fun sendMessageReturningId(chatId: String, text: String): Long? {
+    fun sendMessageReturningId(chatId: String, text: String, threadId: Long? = null): Long? {
         val markdownPayload = json.encodeToString(
-            SendMessageRequest(chatId, text, parse_mode = "Markdown", disable_web_page_preview = true)
+            SendMessageRequest(chatId, text, parse_mode = "Markdown", disable_web_page_preview = true, message_thread_id = threadId)
         )
         return when (val res = post("sendMessage", markdownPayload, chatId)) {
             is SendResult.Ok -> res.ref.messageId
             // Same policy as the channel path: only retry as plain text on a 400 markup error.
             is SendResult.BadRequest -> {
                 val plainPayload = json.encodeToString(
-                    SendMessageRequest(chatId, text.stripMarkdown(), parse_mode = null, disable_web_page_preview = true)
+                    SendMessageRequest(chatId, text.stripMarkdown(), parse_mode = null, disable_web_page_preview = true, message_thread_id = threadId)
                 )
                 (post("sendMessage", plainPayload, chatId) as? SendResult.Ok)?.ref?.messageId
             }
@@ -588,14 +592,16 @@ class TelegramSender(
      * retried once as plain text, as on the channel path). Over-long text is cut to one message.
      * Returns the message id, or null when nothing was sent. Goes through the per-chat pacer
      * like every other call, so a burst of admin messages spaces itself out in the admin chat
-     * without touching the channels' slots.
+     * without touching the channels' slots. [threadId] targets a thread of the chat (a private
+     * chat's topic, `admin.threads`); null = its main thread.
      */
     fun sendMessageWithKeyboard(
         chatId: String,
         text: String,
         keyboard: List<List<InlineButton>>? = null,
         silent: Boolean = false,
-        html: Boolean = false
+        html: Boolean = false,
+        threadId: Long? = null
     ): Long? {
         val body = cutForAdmin(text, html)
         fun attempt(t: String, parseMode: String?): SendResult = post(
@@ -604,7 +610,8 @@ class TelegramSender(
                 KeyboardMessageRequest(
                     chatId, t, parseMode, disable_web_page_preview = true,
                     disable_notification = if (silent) true else null,
-                    reply_markup = keyboard?.toMarkup()
+                    reply_markup = keyboard?.toMarkup(),
+                    message_thread_id = threadId
                 )
             ),
             chatId

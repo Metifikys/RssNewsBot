@@ -58,6 +58,7 @@ import metifikys.telegram.AdminCommandRouter
 import metifikys.telegram.AdminCommands
 import metifikys.telegram.ModerationNotifier
 import metifikys.telegram.PostInspector
+import metifikys.telegram.RawBrowser
 import metifikys.telegram.RunListener
 import metifikys.telegram.RunQueued
 import metifikys.telegram.StatusCommand
@@ -120,7 +121,7 @@ class NewsBot(
      */
     private val cliHealthMonitor: CliHealthMonitor? =
         if (config.health.enabled) {
-            val alerts = AdminAlerts(config.admin.statusChatId, sender)
+            val alerts = AdminAlerts(config.admin.statusChatId, sender, config.admin.threads.status)
             CliHealthMonitor(config, db, alert = { text, silent -> alerts.send(text, silent) })
         } else null,
     llmClientsFactory: LlmClientsFactory = LlmClientsFactory(config, db, llmCallRecorder, cliHealthMonitor),
@@ -203,11 +204,11 @@ class NewsBot(
         StatusCommand(config, db, errorLog, sender::rateLimitsLast24h, pauseStore, cliHealthMonitor?.let { m -> m::statusLine })
 
     private val statusPoster: StatusPoster? = config.admin.statusChatId?.let { chatId ->
-        StatusPoster(chatId, sender, statusCommand, errorLog)
+        StatusPoster(chatId, sender, statusCommand, errorLog, config.admin.threads.status)
     }
 
     /** Operator alerts (prompt problems, CLI login) to the admin chat; no-op without `admin.statusChatId`. */
-    private val adminAlerts = AdminAlerts(config.admin.statusChatId, sender)
+    private val adminAlerts = AdminAlerts(config.admin.statusChatId, sender, config.admin.threads.status)
 
     private val promptValidator = PromptValidator(promptLoader)
 
@@ -357,6 +358,12 @@ class NewsBot(
                 inspector.registerAll(router)
                 callbackRouter?.register(PostInspector.NAMESPACE) { cb, parts -> inspector.handleCallback(cb, parts) }
             }
+        }
+        // `/raw`: category → feed → its latest articles as stored (on with the commands).
+        commandRouter?.let { router ->
+            val raw = RawBrowser(config, db, sender)
+            raw.registerAll(router)
+            callbackRouter?.register(RawBrowser.NAMESPACE) { cb, parts -> raw.handleCallback(cb, parts) }
         }
     }
 
