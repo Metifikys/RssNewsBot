@@ -12,17 +12,22 @@ class TelegramSenderRichTest {
 
     private class Call(val path: String, val contentType: String, val body: String)
 
-    /** A fake Bot API: records every call and answers with [status] / [response] (mutable per test). */
+    /**
+     * A fake Bot API: records every call and answers with [status] / [response] (mutable per test),
+     * or — when set — with [script] by call index.
+     */
     private class FakeApi : AutoCloseable {
         val calls = mutableListOf<Call>()
         var status = 200
         var response = """{"ok":true,"result":{"message_id":42,"chat":{"id":-100123}}}"""
+        var script: ((Int) -> Pair<Int, String>)? = null
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/") { ex ->
-                calls += Call(ex.requestURI.path, ex.requestHeaders.getFirst("Content-Type").orEmpty(), ex.requestBody.readBytes().toString(Charsets.ISO_8859_1))
-                val bytes = response.toByteArray()
+                calls += Call(ex.requestURI.path, ex.requestHeaders.getFirst("Content-Type").orEmpty(), ex.requestBody.readBytes().toString(Charsets.UTF_8))
+                val (code, body) = script?.invoke(calls.size - 1) ?: (status to response)
+                val bytes = body.toByteArray()
                 ex.responseHeaders.add("Content-Type", "application/json")
-                ex.sendResponseHeaders(status, bytes.size.toLong())
+                ex.sendResponseHeaders(code, bytes.size.toLong())
                 ex.responseBody.use { it.write(bytes) }
             }
             start()
@@ -62,6 +67,18 @@ class TelegramSenderRichTest {
         api.response = """{"ok":false,"error_code":400,"description":"Bad Request: can't parse rich message"}"""
         assertNull(api.sender.sendRichMessage("@ch", "<h2>x</h2>"))
         assertEquals(1, api.calls.size)
+    }
+
+    @Test
+    fun `a time token is a tg-time entity in an ordinary post, and the plain-text retry keeps its text`() = FakeApi().use { api ->
+        api.script = { i ->
+            if (i == 0) 400 to """{"ok":false,"error_code":400,"description":"Bad Request: can't parse entities"}"""
+            else 200 to """{"ok":true,"result":{"message_id":42,"chat":{"id":-100123}}}"""
+        }
+        api.sender.sendToChannel("@ch", "**MMX**\n\n📅 ⟦t:1792400400:wD|19.10.2026⟧")
+        assertEquals(2, api.calls.size)
+        assertTrue("""📅 <tg-time unix=\"1792400400\" format=\"wD\">19.10.2026</tg-time>""" in api.calls[0].body, api.calls[0].body)
+        assertTrue(""""text":"MMX\n\n📅 19.10.2026"""" in api.calls[1].body, api.calls[1].body)
     }
 
     @Test

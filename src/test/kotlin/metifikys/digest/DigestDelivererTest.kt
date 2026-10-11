@@ -997,6 +997,27 @@ class DigestDelivererTest {
         verify { plain.sender.sendToChannel("@tech", any(), true, null, "https://img.example/1.jpg", true) }
     }
 
+    // ── post.dateLine ───────────────────────────────────────────────────────────
+
+    @Test
+    fun `post dateLine puts the event's day under the bullet as time tokens, before the hashtags`() {
+        val db = mockk<NewsDatabase>(relaxed = true)
+        every { db.fetchRecentSummaries(any(), any()) } returns emptyList()
+        val sender = mockk<TelegramSender>(relaxed = true)
+        val sent = slot<String>()
+        every { sender.sendToChannel(any(), capture(sent), any(), any()) } returns listOf(SentRef(-100L, 71L))
+        val day = java.time.LocalDate.now().plusDays(3)
+        val item = shortlistItem("evt-1", "https://example.com/1").copy(eventDate = day.toString())
+        val post = PostConfig(hashtags = HashtagsConfig(category = "#tech"), dateLine = metifikys.config.DateLineConfig())
+        DigestDeliverer(configWithPost(post), db, sender)
+            .deliver("tech", "• **Story.**\n\n[Src](https://example.com/1)", listOf(article(1)), listOf(item))
+        val unix = day.atTime(12, 0).atZone(java.time.ZoneId.systemDefault()).toEpochSecond()
+        val date = day.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy"))
+        assertEquals("**Story.**\n\n[Src](https://example.com/1)\n\n📅 ⟦t:$unix:wD|$date⟧ · ⟦t:$unix:r|$date⟧\n#tech", sent.captured)
+        // The stored summary is the clean topic: no footer, no token.
+        verify { db.saveSummary("tech", match { "⟦" !in it }, 1) }
+    }
+
     // ── dedup.digest.antiBubble ─────────────────────────────────────────────────
 
     private fun exploreDelivery(post: PostConfig?, sendOk: Boolean = true): Triple<NewsDatabase, List<String>, List<DigestMessageRow>> {

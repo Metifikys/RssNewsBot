@@ -77,6 +77,7 @@ object ConfigChangelog {
         Entry("categories.*.post.longForm.rich", "2026-10-11", "📰 long post as one Bot API 10.1 rich message: heading, picture, sources collapsed, hashtags as text; no telegra.ph page (refused → telegraph / classic post)"),
         Entry("categories.*.trackers[].rich", "2026-10-11", "📅 tracker as a Bot API 10.1 rich message: a table per week, dates in the reader's zone with a live countdown; the pinned text message is edited into it"),
         Entry("weekly.rich", "2026-10-11", "🗞 weekly roundup as one Bot API 10.1 rich message: collage of the album's pictures, numbered bullets, the barometer chart uploaded with it (refused → the classic posts)"),
+        Entry("categories.*.post.dateLine", "2026-10-11", "📅 the event's day (eventDate, a single day from today on) as date-time entities: each reader's zone and language, live countdown (eventTypes)"),
         Entry("admin.threads", "2026-10-11", "🧵 admin chat threads (private-chat topics): status snapshot + notices, /inspect cards and the /raw browser each in their own thread; /thread prints a thread's id"),
     )
 

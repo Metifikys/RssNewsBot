@@ -284,6 +284,9 @@ class TelegramSender(
         /** 400 descriptions that mean the message to edit is gone or locked, not that its new content is bad. */
         val MESSAGE_GONE = listOf("message to edit not found", "message can't be edited", "MESSAGE_ID_INVALID")
 
+        /** The `<tg-time …>` / `</tg-time>` tags of a date-time entity; the plain-text retry keeps their fallback text. */
+        val TG_TIME_TAG = Regex("""</?tg-time[^>]*>""")
+
         /** Matches the `<a href="url">label</a>` anchors emitted by [TopicFormatter.toHtml]. */
         val HTML_ANCHOR = Regex("""<a href="([^"]*)">(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
     }
@@ -840,6 +843,7 @@ class TelegramSender(
      */
     private fun String.htmlToPlainText(): String =
         HTML_ANCHOR.replace(this) { "${it.groupValues[2]}: ${it.groupValues[1]}" }
+            .replace(TG_TIME_TAG, "")
             .replace("<b>", "").replace("</b>", "")
             .replace("<i>", "").replace("</i>", "")
             .replace("<code>", "").replace("</code>", "")

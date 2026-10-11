@@ -58,12 +58,23 @@ object TopicFormatter {
      */
     val MARKDOWN_LINK = Regex(LINK)
 
+    // A date-time entity a footer line asks for (`post.dateLine`): ⟦t:<unix>:<format>|<fallback>⟧.
+    // Only a valid Bot API format matches; anything else stays (escaped) text.
+    private const val TIME_TOKEN = """⟦t:(\d{1,12}):(r|w?[dD]?[tT]?)\|([^⟧\n]*)⟧"""
+
     // Inline Markdown we convert to Telegram HTML, in one pass: **bold**, `code`, and
-    // [label](url) links anywhere in the text (not just a trailing one).
+    // [label](url) links anywhere in the text (not just a trailing one), and time tokens.
     private val INLINE_HTML = Regex(
-        """\*\*(.+?)\*\*|`([^`]+)`|$LINK""",
+        """\*\*(.+?)\*\*|`([^`]+)`|$LINK|$TIME_TOKEN""",
         RegexOption.DOT_MATCHES_ALL
     )
+
+    /**
+     * A token [toHtml] turns into a `<tg-time>` date-time entity: every reader sees [unix] in their
+     * own zone and language as [format] says (`r` relative, `w` weekday, `d`/`D` date, `t`/`T` time);
+     * [fallback] is the text of a client without the entity and of the plain-text retry.
+     */
+    fun timeToken(unix: Long, format: String, fallback: String): String = "⟦t:$unix:$format|$fallback⟧"
 
     fun applyStrictLayout(topic: String): String {
         val match = TOPIC_SHAPE.matchEntire(topic) ?: run {
@@ -159,12 +170,16 @@ object TopicFormatter {
             val code = m.groups[2]
             val linkLabel = m.groups[3]
             val linkUrl = m.groups[4]
+            val timeUnix = m.groups[5]
             when {
                 bold != null -> sb.append("<b>").append(escapeHtml(bold.value)).append("</b>")
                 code != null -> sb.append("<code>").append(escapeHtml(code.value)).append("</code>")
                 linkLabel != null && linkUrl != null ->
                     sb.append("<a href=\"").append(escapeHtmlAttribute(linkUrl.value)).append("\">")
                         .append(escapeHtml(linkLabel.value)).append("</a>")
+                timeUnix != null ->
+                    sb.append("<tg-time unix=\"").append(timeUnix.value).append("\" format=\"").append(m.groups[6]?.value.orEmpty())
+                        .append("\">").append(escapeHtml(m.groups[7]?.value.orEmpty())).append("</tg-time>")
             }
             last = m.range.last + 1
         }

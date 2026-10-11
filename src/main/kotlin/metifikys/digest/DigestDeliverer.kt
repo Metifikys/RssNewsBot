@@ -20,6 +20,7 @@ import metifikys.discussion.DiscussionReplier
 import metifikys.enrich.BadgeResolver
 import metifikys.enrich.WikipediaIntroProvider
 import metifikys.format.AlsoLine
+import metifikys.format.DateLine
 import metifikys.format.FooterLines
 import metifikys.format.FooterLines.Slot
 import metifikys.format.Hashtags
@@ -633,6 +634,7 @@ class DigestDeliverer(
         if (badgeResolver != null && enabledBadges.isNotEmpty()) {
             footer.addAll(Slot.BADGES, badgeResolver.resolve(enabledBadges, item, topicArticles, badgeDeadline, "[Category:$categoryName]"))
         }
+        post.dateLine?.takeIf { it.enabled }?.let { footer.add(Slot.DATE, DateLine.line(item, it)) }
         val introCfg = post.intro
         if (introProvider != null && introCfg != null && introCfg.enabled && item != null && introBudget.remaining > 0) {
             val line = try {

@@ -1172,7 +1172,21 @@ data class PostConfig(
     /** `💬 …` — the editor persona's one-line remark under the top event, as an A/B test; see [PersonaConfig]. */
     val persona: PersonaConfig? = null,
     /** `🗣 Обговорення на HN …` — a reply under a post summing up its discussion thread; see [DiscussionConfig]. */
-    val discussion: DiscussionConfig? = null
+    val discussion: DiscussionConfig? = null,
+    /** `📅 <day> · <in N days>` — the event's own day in each reader's zone; see [DateLineConfig]. */
+    val dateLine: DateLineConfig? = null
+)
+
+/**
+ * `post.dateLine`: a footer line with the event's day — `📅 понеділок, 19 жовтня 2026 р. · через 8 днів`
+ * — for a post whose Step 1 `eventDate` is a single day from today on (a month, a quarter or a year
+ * gets no line). Both parts are date-time entities (Bot API 9.5, `<tg-time>` in HTML), so every
+ * reader sees them in their own zone and language and the countdown updates itself. [eventTypes]
+ * limits it to those Step 1 types; empty = any type. Needs `eventDate` in the extract prompt.
+ */
+data class DateLineConfig(
+    val enabled: Boolean = true,
+    val eventTypes: List<String> = emptyList()
 )
 
 /**

@@ -191,6 +191,12 @@ via a `/status` admin snapshot.
     NVD's score before the CNA's; the provider keeps NVD's 5 requests / 30 s window, 50 with
     `badges.nvdApiKey` / env `NVD_API_KEY`); analyzed records cached 7 days, pending 6 h, misses 3 h.
     *This product uses the NVD API but is not endorsed or certified by the NVD.*
+  - **dateLine** — `📅 понеділок, 19 жовтня 2026 р. · через 8 днів` right after the badges, for an
+    item whose Step 1 `eventDate` is a single day from today on (of `eventTypes`, empty = any): both
+    parts are date-time entities (Bot API 9.5, `<tg-time>` works in ordinary HTML posts too), so
+    every reader sees the day in their own zone and language and the countdown keeps itself current.
+    The footer carries a `⟦t:<unix>:<format>|<fallback>⟧` token ([`DateLine`](src/main/kotlin/metifikys/format/DateLine.kt))
+    that `TopicFormatter.toHtml` renders; the plain-text retry keeps the fallback date.
   - **intro** — the first time a franchise appears in the category, one Wikipedia line
     (`📚 Team Cherry: австралійська студія відеоігор · Вікіпедія`), remembered in `entity_intros`.
     An article counts only when it is on topic (`intro.topicWords`: video game / developer / studio …;

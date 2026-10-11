@@ -33,9 +33,9 @@ class FooterLinesTest {
     }
 
     @Test
-    fun `the priority order is persona, badges, intro, explore, cross-link, story, also, hashtags`() {
+    fun `the priority order is persona, badges, date, intro, explore, cross-link, story, also, hashtags`() {
         assertEquals(
-            listOf("PERSONA", "BADGES", "INTRO", "EXPLORE", "CROSS_LINK", "STORY", "ALSO", "HASHTAGS"),
+            listOf("PERSONA", "BADGES", "DATE", "INTRO", "EXPLORE", "CROSS_LINK", "STORY", "ALSO", "HASHTAGS"),
             Slot.entries.map { it.name }
         )
     }

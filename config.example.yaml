@@ -376,6 +376,11 @@ categories:
         github: false                   # ⭐ GitHub: 12.3k · Rust (repository links)
         trailer: false                  # ▶️ Трейлер (YouTube video the article embeds)
         cve: false                      # 🛡 CVE-2021-44228: CVSS 10.0, критична (tech)
+      # 📅 the event's own day (Step 1 eventDate, a single day from today on) in each reader's zone,
+      # with a live countdown; eventTypes [] = any type
+      dateLine:
+        enabled: false
+        eventTypes: [release_date, delay]
       # 📚 Team Cherry: австралійська студія відеоігор · Вікіпедія — first mention of a name
       intro:
         enabled: true

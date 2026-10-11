@@ -16,6 +16,8 @@ class FooterLines {
         PERSONA,
         /** Live-data badges (Steam / HN / GitHub) and the `▶️` trailer link, in provider order. */
         BADGES,
+        /** `📅` the event's own day as a date-time entity, in each reader's zone (`post.dateLine`). */
+        DATE,
         /** `📚` the first-mention Wikipedia intro. */
         INTRO,
         /** `🧭` the anti-bubble marker (editorial 8). */
