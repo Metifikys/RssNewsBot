@@ -1943,7 +1943,7 @@ data class RankerConfig(
  * Per-category configuration for the embedding-based semantic-dedup detector.
  * The detector runs after `db.insertArticles(...)` in each cycle, embeds new
  * articles via OpenAI `text-embedding-3-small` by default, and logs candidates
- * above [threshold] without mutating article state.
+ * above [threshold]; it mutates article state only through the opt-in [hardThreshold].
  *
  * Thresholds and windows are per-category because (e.g.) a tech feed with heavy
  * paraphrasing may want a lower threshold than a breaking-news feed where
@@ -1988,9 +1988,9 @@ data class SemanticDedupConfig(
      */
     val eventHardThreshold: Double? = null,
     /**
-     * Cosine threshold for the *hard* reject. When non-null AND a new article's top-1
-     * neighbour is already in status PROCESSED (sent to Telegram) AND their cosine
-     * meets this threshold, the new article is marked [metifikys.model.ArticleStatus.DUPLICATE]
+     * Cosine threshold for the *hard* reject. When non-null AND a new article's closest
+     * PROCESSED neighbour (sent to Telegram; not necessarily top-1) meets this
+     * threshold, the new article is marked [metifikys.model.ArticleStatus.DUPLICATE]
      * with `duplicate_of` pointing at the canonical row — and the LLM pipeline never
      * sees it. Matches against UNPROCESSED / PROCESSING / DUPLICATE neighbours are NOT
      * hard-rejected (the LLM dedupes those within-batch anyway).

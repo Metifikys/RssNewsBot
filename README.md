@@ -526,9 +526,13 @@ via a `/status` admin snapshot.
 ## End-to-end pipeline
 
 One category's path, top to bottom. In per-category mode each category runs this on its own
-scheduler thread; with `fetcher.intervalMinutes` set, the upper half (fetch → insert →
-SemanticDedupDetector) ticks on the ingest timer and the lower half (CategoryProcessor onward)
-on the digest timer. The trailing cleanup and status post run on the separate maintenance tick.
+scheduler thread; with an ingest cadence set (`categories.<name>.fetchIntervalMinutes`, else
+`fetcher.intervalMinutes`), the ingest half (fetch → summarize → insert → SemanticDedupDetector)
+ticks on its own timer and the digest half (ready query → CategoryProcessor onward) on the digest
+timer. The trailing cleanup and status post run on the separate maintenance tick.
+
+Summarization comes before embedding: the Layer 2 vector is built from
+`title + (summary | description)`, so feeds with `summarize:` are embedded by their LLM summary.
 
 ```
 config.yaml ──► AppConfig (env overrides + validation)
@@ -539,11 +543,14 @@ config.yaml ──► AppConfig (env overrides + validation)
        ▼                                       │
 RssFetcher (Rome + SSRF guard + retry)         │
        │                                       │
+       ├─ entries dated before articleRetentionDays → skipped
        ▼                                       │
-Pre-link-dedup ─► findExistingLinks() ─────────┤  Layer 1
+Pre-link-dedup ─► findExistingLinkFeeds() ─────┤  Layer 1
        │                                       │
+       ├─ same link from another feed → feed sighting (metrics)
+       ├─ a new feed's first poll → stored as seen, never queued
        ▼                                       │
-ArticleFetcher (Jsoup, optional full-page)     │
+ArticleFetcher (Jsoup: full text, og:image)    │
        │                                       │
        ▼                                       │
 ArticleSummarizer (per-feed `summarize:`)      │
@@ -553,21 +560,30 @@ NewsDatabase.insertArticles (insertIgnore)     │
        │                                       │
        ▼                                       │
 SemanticDedupDetector ─► [HIT] / [REJECT] ─────┤  Layer 2
-       │                                       │
+       │   embeds title + (summary | description)
+ ─ ─ ─ ┼ ─ ─ ─ ingest ▲ / ▼ digest ─ ─ ─ ─ ─ ─ ┤
        ▼                                       │
-CategoryProcessor.process(byCategory) ─────────┤
+db.fetchReadyForDigest ─► CategoryProcessor ───┤
        │                                       │
+       ├─ Step 0: keyword mute (preferences.mute + category mute + /mute)
        ├─ pre-cycle gates: minArticles, batch backpressure
        │                                       │
        ▼                                       │
 EventExtractor (Step 1, JSON mode) ────────────┤  Layer 3
        │                                       │
-       ├─ URL whitelist filter ────────────────┤
+       ├─ URL whitelist + eventDate guard ─────┤
        ├─ meaningful_update cooldown ──────────┤  Layer 4
+       ├─ maxPostsPerEvent, orphan update→new ─┤  Layer 4
+       ├─ event-type mutes (`/mute type:…`) ───┤
        ├─ ShortlistRanker.rank ────────────────┤  Layer 4
+       ├─ affinity term + anti-bubble pick ────┤
+       ├─ weak shortlist: hold back below minStrongItems unless breaking lane
        │                                       │
        ▼                                       │
-EventSemanticAnalyzer ─► [HIT] (log-only) ─────┤  Layer 3.5
+EventSemanticAnalyzer ─► [HIT] / [REJECT] ─────┤  Layer 3.5
+       │                                       │
+       ▼                                       │
+updateDiff ─► post.official ─► post.longForm   │
        │                                       │
        ▼                                       │
 PromptBuilder ─► LlmClient (Batch or sync)     │
@@ -580,7 +596,8 @@ status reconciliation + CoveredEvent persist   │
        │                                       │
        ▼                                       │
  ─ ─ maintenance tick (every scheduler.intervalMinutes) ─ ─
-retention cleanup ─► affinity rebuild ─► StatusPoster.post() (admin chat)
+retention cleanup ─► affinity rebuild ─► mute suggestions ─► CLI health
+  ─► feed_stats flush ─► feed candidates ─► StatusPoster.post() (admin chat)
 ```
 
 ---
@@ -1273,7 +1290,7 @@ semanticDedup:            # embedding detector opt-in
 The test suite covers AI clients (OpenAI/Anthropic + their Batch APIs), config parsing &
 validation, the database layer, semantic dedup (`SemanticDedupDetectorTest.kt` exercises hit
 / reject thresholds, hard-filter status gating, candidate scoring; `EventSemanticAnalyzerTest.kt`
-covers the log-only event-level pass), vector math, RSS
+covers the event-level pass), vector math, RSS
 fetching with SSRF rejection, Telegram sender, and end-to-end cycle behaviour with mocked
 providers.
 
@@ -1315,7 +1332,7 @@ next to the golden one and prints the shortlist Jaccard, status / score changes 
 | `rejected_events`    | Step 1's rejected/duplicate extractions kept 30 days for prompt-tuning retrospectives |
 | `llm_calls`          | Per-call token + USD ledger feeding the `/status` cost panel             |
 | `article_embeddings` | One vector per article (Float32 little-endian blob, `dim * 4` bytes)     |
-| `event_embeddings`   | One vector per `(category, event_key)` for the log-only event-level analyzer (Float32 LE blob) |
+| `event_embeddings`   | One vector per `(category, event_key)` for the event-level analyzer, Layer 3.5 (Float32 LE blob) |
 | `digest_messages`    | One row per delivered Telegram message linking `(chat_id, message_id)` → category + `event_key` + article links, for reaction attribution; `variant` tags an experiment arm (`explore` / `persona` / `control`, null otherwise) |
 | `reaction_counts`    | Current aggregated reaction counts per `(chat_id, message_id, emoji)` from `message_reaction_count` updates (replace-all per message) |
 | `bot_state`          | Key/value store for restart-surviving runtime state (the Telegram `getUpdates` offset, tracker message ids + body hashes, `/pause` state as `pause:<category>`) |

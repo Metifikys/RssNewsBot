@@ -59,10 +59,10 @@ class DigestCycle(
     private val statusPoster: StatusPoster? = null,
     private val errorLog: CycleErrorLog = CycleErrorLog(),
     /**
-     * Optional log-only embedding-dedup detector. When non-null, it runs after
+     * Optional embedding-dedup detector (Layer 2). When non-null, it runs after
      * `db.insertArticles(...)` to embed new articles and log near-duplicate
-     * candidates. Never mutates article state. Null in tests / when no category
-     * has opted in.
+     * candidates; with a category's `hardThreshold` set it also marks a near-copy of an
+     * already-sent article DUPLICATE. Null in tests / when no category has opted in.
      */
     private val semanticDedupDetector: SemanticDedupDetector? = null,
     /**
@@ -386,8 +386,9 @@ class DigestCycle(
             return false
         }
 
-        // Log-only embedding dedup detector. Mutates nothing; groups by category
-        // internally, so a per-category subset is fine.
+        // Embedding dedup detector: logs near-duplicates and, with `hardThreshold`, marks
+        // near-copies of sent articles DUPLICATE. Groups by category internally, so a
+        // per-category subset is fine.
         semanticDedupDetector?.detectAndLog(articles)
         return true
     }
